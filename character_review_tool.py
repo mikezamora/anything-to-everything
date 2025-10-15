@@ -81,7 +81,7 @@ class CharacterReviewTool:
             if confirm == 'y':
                 self.analyzer.merge_characters(primary, secondary)
                 self.characters = self.analyzer.characters.copy()
-                print(f"✓ Merged '{secondary}' into '{primary}'")
+                print(f"Merged '{secondary}' into '{primary}'")
                 self.display_characters()
     
     def edit_character_traits(self):
@@ -118,7 +118,7 @@ class CharacterReviewTool:
             if demeanor:
                 char.demeanor = demeanor
             
-            print(f"✓ Updated traits for {name}")
+            print(f"Updated traits for {name}")
     
     def remove_characters(self):
         """Remove false positive characters"""
@@ -142,20 +142,20 @@ class CharacterReviewTool:
             if confirm == 'y':
                 del self.characters[name]
                 del self.analyzer.characters[name]
-                print(f"✓ Removed '{name}'")
+                print(f"Removed '{name}'")
                 self.display_characters()
     
     def save_reviewed_characters(self, output_path: str):
         """Save reviewed characters"""
         self.analyzer.characters = self.characters.copy()
         self.analyzer.save_characters(output_path)
-        print(f"\n✓ Saved reviewed characters to: {output_path}")
+        print(f"\nSaved reviewed characters to: {output_path}")
     
     def create_voice_config_template(self, output_path: str):
         """Create voice configuration template from reviewed characters"""
         character_names = list(self.characters.keys())
         CharacterVoiceMapping.create_template(character_names, output_path)
-        print(f"✓ Created voice config template: {output_path}")
+        print(f"Created voice config template: {output_path}")
     
     def run_interactive_review(self, output_dir: str = "./work"):
         """Run full interactive review process"""
@@ -197,7 +197,7 @@ class CharacterReviewTool:
                 self.create_voice_config_template(str(voice_config_file))
                 
                 print("\n" + "="*70)
-                print("✓ Review complete!")
+                print("Review complete!")
                 print("="*70)
                 print(f"\nFiles created:")
                 print(f"  1. {char_file}")

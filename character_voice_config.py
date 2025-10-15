@@ -14,7 +14,7 @@ class VoiceConfig:
     speaker_audio: str  # Path to speaker reference audio
     emotion_audio: Optional[str] = None  # Path to emotion reference audio
     emotion_alpha: float = 1.0  # Emotion blend strength
-    use_emo_text: bool = True  # Auto-detect emotion from text
+    use_emo_text: bool = False  # Auto-detect emotion from text
     
     def to_dict(self):
         return asdict(self)
@@ -94,7 +94,7 @@ class CharacterVoiceMapping:
             speaker_audio="path/to/narrator_voice.wav",
             emotion_audio=None,
             emotion_alpha=0.7,
-            use_emo_text=True
+            use_emo_text=False
         )
         
         # Create template entries for each character
@@ -104,14 +104,14 @@ class CharacterVoiceMapping:
                 speaker_audio=f"path/to/{char.lower()}_voice.wav",
                 emotion_audio=None,
                 emotion_alpha=1.0,
-                use_emo_text=True
+                use_emo_text=False
             )
         
         # Create default voice
         default = VoiceConfig(
             speaker_audio="path/to/default_voice.wav",
             emotion_alpha=0.8,
-            use_emo_text=True
+            use_emo_text=False
         )
         
         mapping = cls(

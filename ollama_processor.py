@@ -71,14 +71,14 @@ class OllamaProcessor:
             )
             
             if response.status_code == 200:
-                print(f"✓ Unloaded Ollama model '{self.model}' from VRAM")
+                print(f"Unloaded Ollama model '{self.model}' from VRAM")
                 return True
             else:
-                print(f"⚠ Failed to unload Ollama model: {response.status_code}")
+                print(f"Failed to unload Ollama model: {response.status_code}")
                 return False
                 
         except Exception as e:
-            print(f"⚠ Error unloading Ollama model: {e}")
+            print(f"Error unloading Ollama model: {e}")
             return False
     
     def process_text(self, text: str, prompt_template: Optional[str] = None, segment_id: Optional[int] = None) -> str:
@@ -102,6 +102,17 @@ class OllamaProcessor:
             prompt_template = """Clean up the following text for text-to-speech conversion. 
 Remove any formatting artifacts, fix obvious typos, and ensure the text flows naturally when read aloud.
 Do not add or remove content, just clean it up. Return only the cleaned text without any explanation.
+Cleaning up the text may include fixing spacing issues, punctuation, and minor grammar corrections.
+Also focus on making the text sound natural when spoken. And do not change the meaning of the text.
+While editing the text, add *'s around phases that are NOT dialogue (narration, description, character thoughts, etc.) so they can be spoken differently by the TTS.
+For example here is how you should format character thoughts, *I thought to myself, I should have known better.*
+Also when pronouns like he, she, him, her, etc are used in narration or description, or thoughts, replace them with the character's name if known.
+When you encounter a section where a character is reasoning or thinking through something complex, and it is not part of the main dialogue, encapsulate that reasoning within *'s. This helps to differentiate between spoken dialogue and internal thought processes.
+For example: *He pondered the implications of his decision, weighing the pros and cons carefully.* This indicates that the text is a thought or reasoning process, not spoken aloud.
+When a character is speaking, do not add *'s around their dialogue and do not change the content of their speech or the quotes.
+When a piece of text is ambiguous about who is speaking or thinking/reasoning, try to infer the speaker or thinker from context and replace pronouns with the character's name if known and/or add context (e.g., "John said," "Mary thought") to the text for clarity and try to stay in character.
+ONLY use *'s for narration, description, and character thoughts/reasoning. Do NOT use *'s for dialogue or direct quotes and DO NOT use *'s for single words or character names to express emphasis that will break the TTS.
+Do use *'s for wrapping non-dialogue text so it can be spoken differently by the TTS.
 
 Text to clean:
 {text}
@@ -253,7 +264,7 @@ Cleaned text:"""
                 f.write(f"  - Processed text: {self.processed_text_dir}\n")
                 f.write(f"  - Comparisons: {os.path.join(self.work_dir, 'ollama')}\n")
                 f.write(f"{'='*80}\n")
-            print(f"\n✓ Ollama artifacts saved to: {os.path.join(self.work_dir, 'ollama')}")
+            print(f"\nOllama artifacts saved to: {os.path.join(self.work_dir, 'ollama')}")
         
         # Unload the model to free up VRAM for TTS
         print(f"\nUnloading Ollama model to free VRAM for TTS processing...")

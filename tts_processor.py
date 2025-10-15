@@ -5,6 +5,7 @@ import os
 import sys
 import time
 from pathlib import Path
+from typing import Optional
 
 # Add parent directory to path to import IndexTTS2
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -106,7 +107,7 @@ class TTSProcessor:
         return output_path
     
     def process_segments(self,
-                        segments: list,
+                        segments: str,
                         output_dir: str,
                         spk_audio_prompt: str,
                         emo_audio_prompt: str = None,
@@ -117,6 +118,8 @@ class TTSProcessor:
                         interval_silence: int = 200,
                         verbose: bool = False,
                         max_text_tokens_per_segment: int = 120,
+                        index: Optional[int] = None,
+                        index_total: Optional[int] = None,
                         **generation_kwargs):
         """
         Process multiple text segments
@@ -146,9 +149,15 @@ class TTSProcessor:
         print(f"\nProcessing {total} segments with IndexTTS2...")
         
         for i, segment in enumerate(segments):
-            print(f"\n{'='*60}")
-            print(f"Segment {i+1}/{total}")
-            print(f"{'='*60}")
+            if index is not None and index_total is not None:
+                i = index
+                print(f"\n{'='*60}")
+                print(f"Segment {i+1}/{index_total}")
+                print(f"{'='*60}")
+            else: 
+                print(f"\n{'='*60}")
+                print(f"Segment {i+1}/{total}")
+                print(f"{'='*60}")
             
             output_path = os.path.join(output_dir, f"segment_{i+1:04d}.wav")
             
@@ -170,10 +179,10 @@ class TTSProcessor:
                 )
                 
                 audio_files.append(output_path)
-                print(f"✓ Segment {i+1} completed: {output_path}")
+                print(f"Segment {i+1} completed: {output_path}")
                 
             except Exception as e:
-                print(f"✗ Error processing segment {i+1}: {e}")
+                print(f"Error processing segment {i+1}: {e}")
                 # Continue with next segment
                 continue
         

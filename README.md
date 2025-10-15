@@ -4,6 +4,14 @@ Convert EPUB files to audiobooks using IndexTTS2 with support for custom voice c
 
 ## Features
 
+- **Web UI** 🆕: 
+  - Browser-based interface for all features
+  - Job creation and batch processing
+  - Real-time job monitoring
+  - Character detection and management
+  - File upload handling
+  - Live terminal output
+  - See [WEBUI_GUIDE.md](WEBUI_GUIDE.md) for details
 - **EPUB Text Extraction**: Automatically extracts and cleans text from EPUB files with metadata support
 - **Character-Aware Processing** 🆕: 
   - Automatic character detection with gender and demeanor analysis
@@ -15,6 +23,12 @@ Convert EPUB files to audiobooks using IndexTTS2 with support for custom voice c
   - Sentence boundaries
   - Character changes
   - Emotional shifts
+- **Job Queue System** 🆕:
+  - Batch processing for multiple audiobooks
+  - Priority-based queue management
+  - Per-job configuration overrides
+  - Full job tracking and status monitoring
+  - Automated processing workflow
 - **Ollama Integration**: Optional text cleanup and processing using Ollama LLM
 - **Voice Cloning**: Clone any voice using a reference audio sample
 - **Multi-Voice Support** 🆕: Assign different voices to different characters
@@ -35,7 +49,7 @@ Convert EPUB files to audiobooks using IndexTTS2 with support for custom voice c
 2. Install additional dependencies:
 
 ```bash
-pip install ebooklib beautifulsoup4 lxml requests
+pip install ebooklib beautifulsoup4 lxml requests gradio pandas
 ```
 
 ### Optional: Ollama Setup
@@ -56,7 +70,32 @@ To create M4B audiobook files, install FFmpeg:
 
 ## Usage
 
-### Basic Usage
+### Web UI (Recommended)
+
+Launch the browser-based interface:
+
+```bash
+# Basic launch
+python webui.py
+
+# Or use the launcher
+python launch_webui.py
+
+# Windows
+launch_webui.bat
+
+# Custom host/port
+python webui.py --host 0.0.0.0 --port 7860
+
+# Create public share link
+python webui.py --share
+```
+
+Access the UI at `http://localhost:7860`
+
+See [WEBUI_GUIDE.md](WEBUI_GUIDE.md) for complete Web UI documentation.
+
+### Command Line Interface
 
 Convert an EPUB to an audiobook using a speaker reference audio:
 
@@ -411,6 +450,52 @@ Review these files to understand how Ollama modified your text.
 - Reduce `--num-beams` for faster generation
 - Consider using a faster GPU or reducing segment size
 
+## Batch Processing with Job Queue 🆕
+
+For processing multiple audiobooks efficiently, use the job queue system:
+
+### Quick Start
+
+```bash
+# Create jobs
+python create_job.py book1.epub voice.wav -o book1.m4b --priority 10
+python create_job.py book2.epub voice.wav -o book2.m4b --priority 5
+
+# Process all jobs
+python job_processor.py
+```
+
+### Interactive Job Creation
+
+```bash
+python create_job.py
+```
+
+### View Queue Status
+
+```bash
+# List pending jobs
+python job_processor.py --list pending
+
+# Check specific job
+python job_processor.py --status <job-id>
+
+# Cancel a pending job
+python job_processor.py --cancel <job-id>
+```
+
+### Advanced Processing
+
+```bash
+# Process only 5 jobs
+python job_processor.py --max-jobs 5
+
+# Stop on first error
+python job_processor.py --stop-on-error
+```
+
+**See `JOB_QUEUE_GUIDE.md` for complete documentation** and `JOB_QUEUE_QUICK_REFERENCE.md` for a command reference.
+
 ## Examples
 
 ### Simple audiobook from EPUB
@@ -438,6 +523,18 @@ python main.py "short_story.epub" "voice.wav" -o "story.wav" \
   --temperature 0.9 \
   --top-p 0.85 \
   --use-fp16
+```
+
+### Batch processing multiple books
+
+```bash
+# Create multiple jobs
+python create_job.py book1.epub voice.wav -o book1.m4b --priority 10
+python create_job.py book2.epub voice.wav -o book2.m4b --priority 10
+python create_job.py book3.epub voice.wav -o book3.m4b --priority 5
+
+# Process all at once
+python job_processor.py
 ```
 
 ## Module Documentation

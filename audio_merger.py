@@ -108,7 +108,7 @@ class AudioMerger:
         torchaudio.save(output_path, final_waveform, sampling_rate)
         
         duration = final_waveform.shape[1] / sampling_rate
-        print(f"\n✓ Merged audio saved to: {output_path}")
+        print(f"\nMerged audio saved to: {output_path}")
         print(f"  Total duration: {duration:.2f} seconds ({duration/60:.2f} minutes)")
         print(f"  Sampling rate: {sampling_rate} Hz")
         print(f"  Total segments: {len(waveforms)}")
@@ -194,7 +194,7 @@ class AudioMerger:
                                   timeout=600)  # 10 minute timeout
             
             if result.returncode == 0:
-                print(f"✓ M4B file created: {m4b_path}")
+                print(f"M4B file created: {m4b_path}")
                 
                 # Get file sizes for comparison
                 wav_size = os.path.getsize(wav_path) / (1024 * 1024)  # MB
@@ -222,58 +222,75 @@ class AudioMerger:
         """
         Merge audio files and save metadata
         
+        WAV format is ALWAYS saved (lossless master).
+        If output_format='m4b', M4B is created IN ADDITION to WAV.
+        
         Args:
             audio_files (List[str]): List of audio file paths
             output_path (str): Path to save merged audio
             metadata (dict): Metadata to save alongside audio
             sampling_rate (int): Target sampling rate
             output_format (str): Output format ('wav' or 'm4b')
+                - 'wav': Save WAV only
+                - 'm4b': Save both WAV and M4B
             
         Returns:
-            str: Path to merged audio file
+            str: Path to primary output file (WAV if wav-only, M4B if m4b format)
         """
         output_format = output_format.lower()
         
-        # Ensure output path has correct extension
-        if output_format == 'm4b':
-            # First create WAV, then convert to M4B
-            wav_path = output_path.replace('.m4b', '.wav') if output_path.endswith('.m4b') else output_path + '.wav'
-            final_output = output_path if output_path.endswith('.m4b') else output_path.replace('.wav', '.m4b')
+        # Determine WAV path (always saved)
+        if output_path.endswith('.m4b'):
+            wav_path = output_path.replace('.m4b', '.wav')
+        elif output_path.endswith('.wav'):
+            wav_path = output_path
         else:
-            wav_path = output_path if output_path.endswith('.wav') else output_path + '.wav'
-            final_output = wav_path
+            wav_path = output_path + '.wav'
         
-        # Merge audio to WAV first
+        # Merge audio to WAV (always created)
+        print(f"\n{'='*70}")
+        print("Creating WAV file (lossless master)...")
+        print(f"{'='*70}")
         result = self.merge_audio_files(audio_files, wav_path, sampling_rate)
         
         if not result:
             return None
         
-        # Convert to M4B if requested
-        if output_format == 'm4b':
-            if self._convert_to_m4b(wav_path, final_output, metadata):
-                # Optionally remove intermediate WAV file
-                try:
-                    print(f"Removing intermediate WAV file: {wav_path}")
-                    os.remove(wav_path)
-                except Exception as e:
-                    print(f"Warning: Could not remove intermediate WAV file: {e}")
-                result = final_output
-            else:
-                print(f"Warning: M4B conversion failed, keeping WAV file: {wav_path}")
-                result = wav_path
-        
-        # Save metadata text file if provided
-        if result and metadata:
-            if result.endswith('.m4b'):
-                metadata_path = result.replace('.m4b', '_metadata.txt')
-            else:
-                metadata_path = result.replace('.wav', '_metadata.txt')
-                
+        # Save metadata text file for WAV
+        if metadata:
+            metadata_path = wav_path.replace('.wav', '_metadata.txt')
             with open(metadata_path, 'w', encoding='utf-8') as f:
                 for key, value in metadata.items():
                     f.write(f"{key}: {value}\n")
-            print(f"✓ Metadata saved to: {metadata_path}")
+            print(f"Metadata saved to: {metadata_path}")
+        
+        # Create M4B in addition to WAV if requested
+        if output_format == 'm4b':
+            print(f"\n{'='*70}")
+            print("Creating M4B file (compressed audiobook)...")
+            print(f"{'='*70}")
+            
+            # Determine M4B path
+            if output_path.endswith('.m4b'):
+                m4b_path = output_path
+            else:
+                m4b_path = wav_path.replace('.wav', '.m4b')
+            
+            if self._convert_to_m4b(wav_path, m4b_path, metadata):
+                print(f"\nBoth formats created successfully:")
+                print(f"  WAV (lossless): {wav_path}")
+                print(f"  M4B (audiobook): {m4b_path}")
+                
+                # Return M4B as primary output since user requested it
+                result = m4b_path
+            else:
+                print(f"\nM4B conversion failed, but WAV file is available:")
+                print(f"  WAV (lossless): {wav_path}")
+                result = wav_path
+        else:
+            print(f"\nWAV file created:")
+            print(f"  WAV (lossless): {wav_path}")
+            result = wav_path
         
         return result
 

@@ -17,3 +17,7 @@ requests>=2.31.0
 
 # Optional: Progress bars
 tqdm>=4.65.0
+
+# Web UI
+gradio>=4.0.0
+pandas>=2.0.0

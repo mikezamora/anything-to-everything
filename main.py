@@ -65,7 +65,7 @@ Examples:
     
     # Required arguments
     parser.add_argument("epub_file", help="Path to EPUB file to convert")
-    parser.add_argument("speaker_audio", help="Path to speaker reference audio file")
+    parser.add_argument("speaker_audio", nargs='?', default=None, help="Path to speaker reference audio file (optional in character mode with --character-config)")
     
     # Output options
     parser.add_argument("-o", "--output", required=True, help="Path for output audiobook file")
@@ -124,9 +124,25 @@ Examples:
         print(f"Error: EPUB file not found: {args.epub_file}")
         sys.exit(1)
     
-    if not os.path.exists(args.speaker_audio):
-        print(f"Error: Speaker audio file not found: {args.speaker_audio}")
-        sys.exit(1)
+    # Speaker audio validation
+    if not args.character_mode or not args.character_config:
+        # Standard mode: speaker audio is required
+        if not args.speaker_audio:
+            print(f"Error: speaker_audio argument is required (or use --character-mode with --character-config)")
+            sys.exit(1)
+        if not os.path.exists(args.speaker_audio):
+            print(f"Error: Speaker audio file not found: {args.speaker_audio}")
+            sys.exit(1)
+    else:
+        # Character mode with config: speaker audio is optional
+        if args.speaker_audio:
+            if not os.path.exists(args.speaker_audio):
+                print(f"Warning: Speaker audio file not found: {args.speaker_audio} (will use character-specific voices only)")
+                args.speaker_audio = None
+            else:
+                print(f"Using speaker audio as default narrator voice: {args.speaker_audio}")
+        else:
+            print("Character mode: No default speaker audio (using character-specific voices only)")
     
     if args.emo_audio and not os.path.exists(args.emo_audio):
         print(f"Error: Emotion audio file not found: {args.emo_audio}")
@@ -161,7 +177,7 @@ Examples:
     voice_mapping = None
     emotion_library = None
     
-    if args.character_mode or args.detect_characters:
+    if args.detect_characters:
         print("\n[2/6] Analyzing characters...")
         
         # Use Ollama for character detection if requested
@@ -182,7 +198,7 @@ Examples:
         # Save detected characters
         char_file = os.path.join(args.work_dir, "detected_characters.json")
         analyzer.save_characters(char_file)
-        print(f"  ✓ Saved character data to: {char_file}")
+        print(f"  Saved character data to: {char_file}")
         
         # Interactive review if requested
         if args.review_characters:
@@ -202,7 +218,7 @@ Examples:
             EmotionLibrary.create_template(emotion_lib_template)
             
             print("\n" + "="*70)
-            print("✓ Character detection complete!")
+            print("Character detection complete!")
             print("="*70)
             print(f"\nFiles created:")
             print(f"  1. {char_file}")
@@ -214,29 +230,118 @@ Examples:
             print(f"  3. Run converter with --character-mode and --character-config options")
             sys.exit(0)
         
-        # Load voice configuration if provided
-        if args.character_config:
-            if not os.path.exists(args.character_config):
-                print(f"Error: Character config file not found: {args.character_config}")
-                sys.exit(1)
-            voice_mapping = CharacterVoiceMapping.load(args.character_config)
-            print(f"  ✓ Loaded voice configuration: {args.character_config}")
+    # Load voice configuration if provided
+    if args.character_config:
+        # Check if file exists in work dir (copied by job processor) or use provided path
+        work_dir_config = os.path.join(args.work_dir, os.path.basename(args.character_config))
+        if os.path.exists(work_dir_config):
+            config_path = work_dir_config
+            print(f"  Using character config from work directory: {config_path}")
+        elif os.path.exists(args.character_config):
+            config_path = args.character_config
+            print(f"  Using character config from original path: {config_path}")
+        else:
+            print(f"Error: Character config file not found: {args.character_config}")
+            print(f"  Also checked: {work_dir_config}")
+            sys.exit(1)
         
-        # Load emotion library if provided
-        if args.emotion_library:
-            if not os.path.exists(args.emotion_library):
-                print(f"Error: Emotion library not found: {args.emotion_library}")
-                sys.exit(1)
-            emotion_library = EmotionLibrary.load(args.emotion_library)
-            print(f"  ✓ Loaded emotion library: {args.emotion_library}")
+        voice_mapping = CharacterVoiceMapping.load(config_path)
+        print(f"  Loaded voice configuration with {len(voice_mapping.character_voices)} characters")
     
-    # Step 3: Segment text
+    # Load emotion library if provided
+    if args.emotion_library:
+        # Check if file exists in work dir (copied by job processor) or use provided path
+        work_dir_emotion = os.path.join(args.work_dir, os.path.basename(args.emotion_library))
+        if os.path.exists(work_dir_emotion):
+            emotion_path = work_dir_emotion
+            print(f"  Using emotion library from work directory: {emotion_path}")
+        elif os.path.exists(args.emotion_library):
+            emotion_path = args.emotion_library
+            print(f"  Using emotion library from original path: {emotion_path}")
+        else:
+            print(f"Error: Emotion library not found: {args.emotion_library}")
+            print(f"  Also checked: {work_dir_emotion}")
+            sys.exit(1)
+        
+        emotion_library = EmotionLibrary.load(emotion_path)
+        print(f"  Loaded emotion library")
+    
+    # Step 3: Optional Ollama text processing (BEFORE segmentation for better quality)
+    cleaned_segments = None  # Will be set if Ollama processing is used
+    
+    if args.use_ollama:
+        print(f"\n[3/6] Processing text with Ollama ({args.ollama_model})...")
+        ollama = OllamaProcessor(
+            base_url=args.ollama_url, 
+            model=args.ollama_model,
+            work_dir=args.work_dir
+        )
+        
+        if ollama.is_available():
+            # Process the raw text before segmentation
+            print(f"  Cleaning up text for better segmentation...")
+            # Create temporary segments for processing
+            temp_segmenter = TextSegmenter(
+                target_words=args.segment_words,
+                max_words=args.max_words,
+                min_words=args.min_words
+            )
+            temp_segments = temp_segmenter.segment_text(text)
+            
+            # Clean the segments
+            cleaned_segments = ollama.process_segments(temp_segments, show_progress=True)
+            
+            # For character mode, reconstruct cleaned text for character-aware segmentation
+            if args.character_mode:
+                text = " ".join(cleaned_segments)
+                print(f"  Text cleaned and ready for character-aware segmentation")
+            else:
+                # For standard mode, use cleaned segments directly (no need to re-segment)
+                print(f"  Processed {len(cleaned_segments)} cleaned segments")
+        else:
+            print(f"  Ollama not available, skipping text processing")
+    else:
+        print("\n[3/6] Skipping Ollama text processing (not enabled)")
+    
+    # Step 4: Segment text
     if args.character_mode and voice_mapping:
-        print(f"\n[3/6] Creating character-aware segments...")
+        print(f"\n[4/6] Creating character-aware segments...")
+        
+        # Initialize analyzer with known characters from config
+        analyzer = CharacterAnalyzer(
+            use_ollama=False,  # We're not detecting, just using known characters
+            work_dir=args.work_dir
+        )
+        
+        # Load characters from voice mapping config
+        character_names = list(voice_mapping.character_voices.keys())
+        print(f"  Loaded {len(character_names)} characters from config: {', '.join(character_names)}")
+        
+        # Try to load character traits from detected_characters.json
+        detected_chars_file = os.path.join(args.work_dir, "detected_characters.json")
+        if os.path.exists(detected_chars_file):
+            print(f"  Loading character traits from: {detected_chars_file}")
+            analyzer.load_characters(detected_chars_file)
+        else:
+            # Create basic character traits for the known characters
+            from character_analyzer import CharacterTraits
+            print(f"  No detected_characters.json found, using basic character traits")
+            for name in character_names:
+                if name not in analyzer.characters:
+                    analyzer.characters[name] = CharacterTraits(
+                        name=name,
+                        gender="Unknown",
+                        demeanor="Unknown",
+                        appearances=0  # Will be counted during segmentation
+                    )
+        
         char_segmenter = CharacterAwareSegmenter(
             max_words_per_segment=args.max_words,
             min_words_per_segment=args.min_words
         )
+        
+        # Override the segmenter's analyzer with our configured one
+        char_segmenter.analyzer = analyzer
         
         # Create base segments first
         base_segmenter = TextSegmenter(
@@ -255,39 +360,38 @@ Examples:
         print(f"  Dialogue: {stats['dialogue_segments']}, Thoughts: {stats['thought_segments']}, Narration: {stats['narration_segments']}")
         print(f"  Characters in text: {', '.join(stats['characters']) if stats['characters'] else 'None'}")
     else:
-        print(f"\n[3/6] Segmenting text ({args.segment_words} words per segment)...")
-        segmenter = TextSegmenter(
-            target_words=args.segment_words,
-            max_words=args.max_words,
-            min_words=args.min_words
-        )
-        segments = segmenter.segment_text(text)
-        stats = segmenter.get_segment_stats(segments)
-        
-        print(f"  Created {stats['total_segments']} segments")
-        print(f"  Total words: {stats['total_words']}")
-        print(f"  Avg words per segment: {stats['avg_words_per_segment']:.1f}")
-        print(f"  Min/Max words: {stats['min_words']}/{stats['max_words']}")
-    
-    # Step 4: Optional Ollama processing
-    if args.use_ollama and not args.character_mode:
-        print(f"\n[4/6] Processing text with Ollama ({args.ollama_model})...")
-        ollama = OllamaProcessor(
-            base_url=args.ollama_url, 
-            model=args.ollama_model,
-            work_dir=args.work_dir
-        )
-        
-        if ollama.is_available():
-            segments = ollama.process_segments(segments, show_progress=True)
-            print(f"  ✓ Processed {len(segments)} segments")
+        # Standard mode segmentation
+        if cleaned_segments is not None:
+            # Use pre-cleaned segments from Ollama (Step 3)
+            print(f"\n[4/6] Using {len(cleaned_segments)} Ollama-cleaned segments")
+            segments = cleaned_segments
+            
+            # Calculate stats for cleaned segments
+            segmenter = TextSegmenter(
+                target_words=args.segment_words,
+                max_words=args.max_words,
+                min_words=args.min_words
+            )
+            stats = segmenter.get_segment_stats(segments)
+            
+            print(f"  Total words: {stats['total_words']}")
+            print(f"  Avg words per segment: {stats['avg_words_per_segment']:.1f}")
+            print(f"  Min/Max words: {stats['min_words']}/{stats['max_words']}")
         else:
-            print(f"  ⚠ Ollama not available, skipping text processing")
-    else:
-        if not args.character_mode:
-            print("\n[4/6] Skipping Ollama text processing (not enabled)")
-        else:
-            print("\n[4/6] Skipping Ollama (character mode uses built-in processing)")
+            # Create new segments from raw text
+            print(f"\n[4/6] Segmenting text ({args.segment_words} words per segment)...")
+            segmenter = TextSegmenter(
+                target_words=args.segment_words,
+                max_words=args.max_words,
+                min_words=args.min_words
+            )
+            segments = segmenter.segment_text(text)
+            stats = segmenter.get_segment_stats(segments)
+            
+            print(f"  Created {stats['total_segments']} segments")
+            print(f"  Total words: {stats['total_words']}")
+            print(f"  Avg words per segment: {stats['avg_words_per_segment']:.1f}")
+            print(f"  Min/Max words: {stats['min_words']}/{stats['max_words']}")
     
     # Step 5: Initialize TTS
     print("\n[5/6] Initializing IndexTTS2...")
@@ -319,50 +423,63 @@ Examples:
         audio_files = []
         
         for i, char_seg in enumerate(character_segments):
+            print(f"character: {char_seg.character}, is_narration: {char_seg.is_narration}, dominant_emotion: {char_seg.emotional_state.dominant_emotion}")
+
             # Get voice config for this character
             voice_config = voice_mapping.get_voice_for_character(
                 char_seg.character,
                 char_seg.is_narration
             )
-            
+
+            if not os.path.exists(voice_config.speaker_audio):
+                print(f"Error: speaker_audio file not found: {voice_config.speaker_audio}")
+                sys.exit(1)
+
+            print(f"  Loaded speaker_audio: {voice_config.speaker_audio}")
+
             # Get emotion audio if available
             emo_audio = None
             if emotion_library and char_seg.emotional_state.dominant_emotion:
+                print(f"  Using emotion audio for: {char_seg.emotional_state.dominant_emotion}")
                 emo_audio = emotion_library.get_emotion_audio(
                     char_seg.emotional_state.dominant_emotion
                 )
+                print(f"  Loaded emotion_audio: {emo_audio}")
             
             # Override with voice config's emotion audio if specified
             if voice_config.emotion_audio:
+                print(f"  Overriding emotion audio with character-specific file: {voice_config.emotion_audio}")
                 emo_audio = voice_config.emotion_audio
             
             # Convert emotion vector to list if needed
             emo_vector = None
-            if char_seg.emotional_state.emotions:
-                emo_vector = [
-                    char_seg.emotional_state.emotions.get('happy', 0.0),
-                    char_seg.emotional_state.emotions.get('angry', 0.0),
-                    char_seg.emotional_state.emotions.get('sad', 0.0),
-                    char_seg.emotional_state.emotions.get('afraid', 0.0),
-                    char_seg.emotional_state.emotions.get('disgusted', 0.0),
-                    char_seg.emotional_state.emotions.get('melancholic', 0.0),
-                    char_seg.emotional_state.emotions.get('surprised', 0.0),
-                    char_seg.emotional_state.emotions.get('calm', 0.0),
-                ]
+            # if char_seg.emotional_state.emotions:
+            #     emo_vector = [
+            #         char_seg.emotional_state.emotions.get('happy', 0.0),
+            #         char_seg.emotional_state.emotions.get('angry', 0.0),
+            #         char_seg.emotional_state.emotions.get('sad', 0.0),
+            #         char_seg.emotional_state.emotions.get('afraid', 0.0),
+            #         char_seg.emotional_state.emotions.get('disgusted', 0.0),
+            #         char_seg.emotional_state.emotions.get('melancholic', 0.0),
+            #         char_seg.emotional_state.emotions.get('surprised', 0.0),
+            #         char_seg.emotional_state.emotions.get('calm', 0.0),
+            #     ]
             
-            if args.verbose:
-                seg_type = "Dialogue" if char_seg.is_dialogue else "Thought" if char_seg.is_thought else "Narration"
-                print(f"  [{i+1}/{len(character_segments)}] {char_seg.character or 'NARRATOR'} ({seg_type}, {char_seg.emotional_state.dominant_emotion})")
+            # if args.verbose:
+            seg_type = "Dialogue" if char_seg.is_dialogue else "Thought" if char_seg.is_thought else "Narration"
+            print(f"  [{i+1}/{len(character_segments)}] {char_seg.character or 'NARRATOR'} ({seg_type}, {char_seg.emotional_state.dominant_emotion})")
             
             # Process single segment
             seg_audio = tts_processor.process_segments(
                 segments=[char_seg.text],
+                index=i,
+                index_total=len(character_segments),
                 output_dir=segments_dir,
                 spk_audio_prompt=voice_config.speaker_audio,
                 emo_audio_prompt=emo_audio,
-                emo_alpha=voice_config.emotion_alpha,
-                emo_vector=emo_vector,
-                use_emo_text=voice_config.use_emo_text,
+                emo_alpha=1.0,
+                emo_vector=None,
+                use_emo_text=False,
                 interval_silence=args.interval_silence,
                 verbose=False,
                 max_text_tokens_per_segment=args.max_text_tokens,
@@ -388,7 +505,7 @@ Examples:
         )
     
     tts_time = time.time() - start_time
-    print(f"\n  ✓ Generated {len(audio_files)} audio segments")
+    print(f"\n  Generated {len(audio_files)} audio segments")
     print(f"  Total TTS time: {tts_time:.2f} seconds ({tts_time/60:.2f} minutes)")
     
     if not audio_files:
@@ -425,7 +542,7 @@ Examples:
     
     if final_audio:
         print(f"\n{'='*70}")
-        print("✓ Audiobook generation complete!")
+        print("Audiobook generation complete!")
         print(f"{'='*70}")
         print(f"Output file: {final_audio}")
         print(f"Total time: {time.time() - start_time:.2f} seconds")
@@ -438,7 +555,7 @@ Examples:
                     os.remove(audio_file)
                 except:
                     pass
-            print("✓ Cleanup complete")
+            print("Cleanup complete")
         else:
             print(f"\nSegment files kept in: {segments_dir}")
     else:

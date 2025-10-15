@@ -143,13 +143,13 @@ class CharacterAnalyzer:
         """Check if Ollama is available"""
         try:
             import requests
-            response = requests.get(f"{self.ollama_url}/api/tags", timeout=2)
+            response = requests.get(f"{self.ollama_url}/api/tags", timeout=5)
             available = response.status_code == 200
             if available:
-                print(f"  ✓ Ollama available at {self.ollama_url}")
+                print(f"Ollama available at {self.ollama_url}")
             return available
         except:
-            print(f"  ⚠ Ollama not available at {self.ollama_url}")
+            print(f"Ollama not available at {self.ollama_url}")
             return False
     
     def _remove_think_tags(self, text: str) -> str:
@@ -424,12 +424,12 @@ Do not include narrators, places, or non-character entities. Only list actual ch
                                         f.write(f"  - {char.get('name', 'Unknown')} ({char.get('gender', 'unknown')})\n")
                                         f.write(f"    Demeanor: {char.get('demeanor', 'N/A')}\n")
                                 
-                                print(f"    ✓ Processed {window_label}: {len(detected)} characters")
+                                print(f"Processed {window_label}: {len(detected)} characters")
                             else:
-                                print(f"    ⚠ No JSON array found in {window_label}")
+                                print(f"No JSON array found in {window_label}")
                                 
                         except json.JSONDecodeError as e:
-                            print(f"    ⚠ Failed to parse JSON for {window_label}: {e}")
+                            print(f"Failed to parse JSON for {window_label}: {e}")
                             # Save error info
                             comparison_file = comparisons_dir / f"segment_{i+1:04d}_comparison.txt"
                             with open(comparison_file, 'w', encoding='utf-8') as f:
@@ -437,10 +437,10 @@ Do not include narrators, places, or non-character entities. Only list actual ch
                                 f.write(f"ERROR: Failed to parse JSON\n")
                                 f.write(f"Response: {response_text[:500]}\n")
                     else:
-                        print(f"    ⚠ Request failed for {window_label}: {response.status_code}")
+                        print(f"Request failed for {window_label}: {response.status_code}")
                         
                 except requests.RequestException as e:
-                    print(f"    ⚠ Request error for {window_label}: {e}")
+                    print(f"Request error for {window_label}: {e}")
             
             # Merge results from all segments
             characters = self._merge_character_results(all_character_results, text)
@@ -459,7 +459,7 @@ Do not include narrators, places, or non-character entities. Only list actual ch
                     f.write(f"    Demeanor: {traits.demeanor}\n")
                     f.write(f"    Appearances: {traits.appearances}\n")
             
-            print(f"  ✓ Ollama detected {len(characters)} characters")
+            print(f"Ollama detected {len(characters)} characters")
             
             # Still run heuristic detection and merge results
             # heuristic_chars = self._detect_characters_heuristic(text)
@@ -478,7 +478,7 @@ Do not include narrators, places, or non-character entities. Only list actual ch
             return characters
                     
         except Exception as e:
-            print(f"  ⚠ Ollama error: {e}, falling back to heuristic detection")
+            print(f"Ollama error: {e}, falling back to heuristic detection")
         
         # Fallback to heuristic
         return self._detect_characters_heuristic(text)
@@ -811,7 +811,8 @@ Do not include narrators, places, or non-character entities. Only list actual ch
             List of CharacterSegment objects
         """
         # First detect all characters
-        self.detect_characters(text)
+        if not self.characters:
+            self.detect_characters(text)
         
         character_segments = []
         
@@ -849,7 +850,124 @@ Do not include narrators, places, or non-character entities. Only list actual ch
                 )
                 character_segments.append(char_seg)
         
+        # Save debug file with annotated segments
+        self._save_character_segments_debug(character_segments)
+        
         return character_segments
+    
+    def _save_character_segments_debug(self, segments: List[CharacterSegment]):
+        """
+        Save annotated character segments to debug file
+        
+        Args:
+            segments: List of CharacterSegment objects
+        """
+        if not self.work_dir:
+            return
+        
+        debug_file = os.path.join(self.work_dir, "character_segments_debug.txt")
+        
+        try:
+            with open(debug_file, 'w', encoding='utf-8') as f:
+                f.write("=" * 80 + "\n")
+                f.write("CHARACTER SEGMENTS DEBUG OUTPUT\n")
+                f.write("=" * 80 + "\n\n")
+                
+                f.write(f"Total Segments: {len(segments)}\n\n")
+                
+                # Count statistics
+                dialogue_count = sum(1 for s in segments if s.is_dialogue)
+                thought_count = sum(1 for s in segments if s.is_thought)
+                narration_count = sum(1 for s in segments if s.is_narration)
+                
+                f.write(f"Dialogue Segments: {dialogue_count}\n")
+                f.write(f"Thought Segments: {thought_count}\n")
+                f.write(f"Narration Segments: {narration_count}\n\n")
+                
+                # Character statistics
+                character_counts = defaultdict(int)
+                for seg in segments:
+                    if seg.character:
+                        character_counts[seg.character] += 1
+                
+                if character_counts:
+                    f.write("Character Appearances:\n")
+                    for char, count in sorted(character_counts.items(), key=lambda x: x[1], reverse=True):
+                        f.write(f"  - {char}: {count} segments\n")
+                    f.write("\n")
+                
+                f.write("=" * 80 + "\n\n")
+                
+                # Write each segment with annotations
+                for i, seg in enumerate(segments):
+                    f.write(f"SEGMENT {i+1:04d}\n")
+                    f.write("-" * 80 + "\n")
+                    
+                    # Type annotation
+                    if seg.is_dialogue:
+                        seg_type = "DIALOGUE"
+                    elif seg.is_thought:
+                        seg_type = "THOUGHT"
+                    elif seg.is_narration:
+                        seg_type = "NARRATION"
+                    else:
+                        seg_type = "UNKNOWN"
+                    
+                    f.write(f"Type: {seg_type}\n")
+                    
+                    # Character annotation
+                    if seg.character:
+                        f.write(f"Character: {seg.character}\n")
+                    else:
+                        f.write(f"Character: [NARRATOR]\n")
+                    
+                    # Emotion annotation
+                    f.write(f"Emotion: {seg.emotional_state.dominant_emotion} ")
+                    f.write(f"(intensity: {seg.emotional_state.intensity:.2f})\n")
+                    
+                    # Emotion vector
+                    if seg.emotional_state.emotions:
+                        top_emotions = sorted(
+                            seg.emotional_state.emotions.items(),
+                            key=lambda x: x[1],
+                            reverse=True
+                        )[:3]
+                        if top_emotions and top_emotions[0][1] > 0:
+                            emotion_str = ", ".join([f"{e}:{v:.2f}" for e, v in top_emotions if v > 0])
+                            f.write(f"Emotion Vector: {emotion_str}\n")
+                    
+                    f.write("\n")
+                    
+                    # Text content with visual separator
+                    f.write("TEXT:\n")
+                    f.write("┌" + "─" * 78 + "┐\n")
+                    
+                    # Wrap text at 76 characters
+                    text_lines = seg.text.split('\n')
+                    for line in text_lines:
+                        # Word wrap
+                        words = line.split()
+                        current_line = ""
+                        for word in words:
+                            if len(current_line) + len(word) + 1 <= 76:
+                                current_line += (" " if current_line else "") + word
+                            else:
+                                f.write(f"│ {current_line:<76} │\n")
+                                current_line = word
+                        if current_line:
+                            f.write(f"│ {current_line:<76} │\n")
+                    
+                    f.write("└" + "─" * 78 + "┘\n")
+                    f.write("\n\n")
+                
+                f.write("=" * 80 + "\n")
+                f.write("END OF CHARACTER SEGMENTS DEBUG OUTPUT\n")
+                f.write("=" * 80 + "\n")
+            
+            print(f"  Saved character segments debug file: {debug_file}")
+            
+        except Exception as e:
+            print(f"  Warning: Failed to save debug file: {e}")
     
     def save_characters(self, filepath: str):
         """Save detected characters to JSON file"""
