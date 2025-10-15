@@ -52,5 +52,6 @@ MODEL_SETTINGS = {
 OUTPUT_SETTINGS = {
     "work_dir": "./work",        # Working directory for temporary files
     "keep_segments": False,      # Keep individual segment audio files
+    "output_format": "wav",      # Output format: 'wav' or 'm4b'
     "verbose": False,            # Verbose output
 }

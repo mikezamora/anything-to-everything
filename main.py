@@ -14,6 +14,10 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from epub_extractor import EPUBExtractor
 from text_segmenter import TextSegmenter
+from character_analyzer import CharacterAnalyzer
+from character_segmenter import CharacterAwareSegmenter
+from character_voice_config import CharacterVoiceMapping, EmotionLibrary
+from character_review_tool import CharacterReviewTool
 from ollama_processor import OllamaProcessor
 from tts_processor import TTSProcessor
 from audio_merger import AudioMerger
@@ -25,17 +29,37 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Basic usage
+  # Basic usage (WAV output)
   python main.py book.epub speaker.wav -o audiobook.wav
   
-  # With emotion reference
-  python main.py book.epub speaker.wav -o audiobook.wav --emo-audio emotion.wav
+  # M4B audiobook format with metadata
+  python main.py book.epub speaker.wav -o audiobook.m4b --format m4b
+  
+  # Detect characters (heuristic)
+  python main.py book.epub speaker.wav -o output.m4b --detect-characters
+  
+  # Detect characters with Ollama (more accurate, recommended)
+  python main.py book.epub speaker.wav -o output.m4b \\
+    --detect-characters --ollama-character-detection
+  
+  # Character-aware mode with multiple voices
+  python main.py book.epub speaker.wav -o audiobook.m4b \\
+    --format m4b --character-mode \\
+    --character-config work/character_voices.json \\
+    --emotion-library work/emotion_library.json
+  
+  # Interactive character review
+  python main.py book.epub speaker.wav -o audiobook.m4b \\
+    --character-mode --review-characters
+  
+  # With emotion reference (standard mode)
+  python main.py book.epub speaker.wav -o audiobook.m4b --format m4b --emo-audio emotion.wav
   
   # With Ollama text processing
   python main.py book.epub speaker.wav -o audiobook.wav --use-ollama
   
   # Custom segment size and model settings
-  python main.py book.epub speaker.wav -o audiobook.wav --segment-words 400 --use-fp16
+  python main.py book.epub speaker.wav -o audiobook.m4b --format m4b --segment-words 400 --use-fp16
         """
     )
     
@@ -44,7 +68,8 @@ Examples:
     parser.add_argument("speaker_audio", help="Path to speaker reference audio file")
     
     # Output options
-    parser.add_argument("-o", "--output", required=True, help="Path for output audiobook WAV file")
+    parser.add_argument("-o", "--output", required=True, help="Path for output audiobook file")
+    parser.add_argument("--format", choices=['wav', 'm4b'], default='wav', help="Output format: wav or m4b (default: wav)")
     parser.add_argument("--work-dir", default="./work", help="Working directory for temporary files (default: ./work)")
     parser.add_argument("--keep-segments", action="store_true", help="Keep individual segment audio files")
     
@@ -55,6 +80,14 @@ Examples:
     parser.add_argument("--use-ollama", action="store_true", help="Use Ollama for text cleanup")
     parser.add_argument("--ollama-model", default="llama2", help="Ollama model to use (default: llama2)")
     parser.add_argument("--ollama-url", default="http://localhost:11434", help="Ollama API URL")
+    
+    # Character processing options
+    parser.add_argument("--character-mode", action="store_true", help="Enable character-aware processing")
+    parser.add_argument("--character-config", help="Path to character voice configuration JSON")
+    parser.add_argument("--emotion-library", help="Path to emotion reference library JSON")
+    parser.add_argument("--detect-characters", action="store_true", help="Detect characters and create config template")
+    parser.add_argument("--review-characters", action="store_true", help="Interactive character review before processing")
+    parser.add_argument("--ollama-character-detection", action="store_true", help="Use Ollama for advanced character detection (more accurate)")
     
     # TTS options
     parser.add_argument("--emo-audio", help="Path to emotion reference audio file")
@@ -123,24 +156,122 @@ Examples:
         print("Error: No text extracted from EPUB")
         sys.exit(1)
     
-    # Step 2: Segment text
-    print(f"\n[2/6] Segmenting text ({args.segment_words} words per segment)...")
-    segmenter = TextSegmenter(
-        target_words=args.segment_words,
-        max_words=args.max_words,
-        min_words=args.min_words
-    )
-    segments = segmenter.segment_text(text)
-    stats = segmenter.get_segment_stats(segments)
+    # Character detection and configuration (if enabled)
+    character_segments = None
+    voice_mapping = None
+    emotion_library = None
     
-    print(f"  Created {stats['total_segments']} segments")
-    print(f"  Total words: {stats['total_words']}")
-    print(f"  Avg words per segment: {stats['avg_words_per_segment']:.1f}")
-    print(f"  Min/Max words: {stats['min_words']}/{stats['max_words']}")
+    if args.character_mode or args.detect_characters:
+        print("\n[2/6] Analyzing characters...")
+        
+        # Use Ollama for character detection if requested
+        use_ollama_for_chars = args.ollama_character_detection or (args.use_ollama and args.character_mode)
+        
+        analyzer = CharacterAnalyzer(
+            use_ollama=use_ollama_for_chars,
+            ollama_url=args.ollama_url,
+            ollama_model=args.ollama_model
+        )
+        
+        # Detect characters
+        characters = analyzer.detect_characters(text)
+        print(f"  Detected {len(characters)} characters:")
+        for name, traits in sorted(characters.items(), key=lambda x: x[1].appearances, reverse=True):
+            print(f"    - {name}: {traits.gender}, {traits.demeanor} ({traits.appearances} appearances)")
+        
+        # Save detected characters
+        char_file = os.path.join(args.work_dir, "detected_characters.json")
+        analyzer.save_characters(char_file)
+        print(f"  ✓ Saved character data to: {char_file}")
+        
+        # Interactive review if requested
+        if args.review_characters:
+            print("\n[Character Review]")
+            review_tool = CharacterReviewTool(analyzer)
+            review_tool.run_interactive_review(args.work_dir)
+            # Reload potentially updated characters
+            char_file = os.path.join(args.work_dir, "reviewed_characters.json")
+            if os.path.exists(char_file):
+                analyzer.load_characters(char_file)
+        elif args.detect_characters:
+            # Just create template and exit
+            voice_config_template = os.path.join(args.work_dir, "character_voices_template.json")
+            CharacterVoiceMapping.create_template(list(characters.keys()), voice_config_template)
+            
+            emotion_lib_template = os.path.join(args.work_dir, "emotion_library_template.json")
+            EmotionLibrary.create_template(emotion_lib_template)
+            
+            print("\n" + "="*70)
+            print("✓ Character detection complete!")
+            print("="*70)
+            print(f"\nFiles created:")
+            print(f"  1. {char_file}")
+            print(f"  2. {voice_config_template}")
+            print(f"  3. {emotion_lib_template}")
+            print(f"\nNext steps:")
+            print(f"  1. Edit {voice_config_template} to map characters to voice files")
+            print(f"  2. Edit {emotion_lib_template} to add emotion reference files")
+            print(f"  3. Run converter with --character-mode and --character-config options")
+            sys.exit(0)
+        
+        # Load voice configuration if provided
+        if args.character_config:
+            if not os.path.exists(args.character_config):
+                print(f"Error: Character config file not found: {args.character_config}")
+                sys.exit(1)
+            voice_mapping = CharacterVoiceMapping.load(args.character_config)
+            print(f"  ✓ Loaded voice configuration: {args.character_config}")
+        
+        # Load emotion library if provided
+        if args.emotion_library:
+            if not os.path.exists(args.emotion_library):
+                print(f"Error: Emotion library not found: {args.emotion_library}")
+                sys.exit(1)
+            emotion_library = EmotionLibrary.load(args.emotion_library)
+            print(f"  ✓ Loaded emotion library: {args.emotion_library}")
     
-    # Step 3: Optional Ollama processing
-    if args.use_ollama:
-        print(f"\n[3/6] Processing text with Ollama ({args.ollama_model})...")
+    # Step 3: Segment text
+    if args.character_mode and voice_mapping:
+        print(f"\n[3/6] Creating character-aware segments...")
+        char_segmenter = CharacterAwareSegmenter(
+            max_words_per_segment=args.max_words,
+            min_words_per_segment=args.min_words
+        )
+        
+        # Create base segments first
+        base_segmenter = TextSegmenter(
+            target_words=args.segment_words,
+            max_words=args.max_words,
+            min_words=args.min_words
+        )
+        base_segments = base_segmenter.segment_text(text)
+        
+        # Create character-aware segments
+        character_segments = char_segmenter.segment_text(text, base_segments)
+        stats = char_segmenter.get_segment_stats(character_segments)
+        
+        print(f"  Created {stats['total_segments']} character-aware segments")
+        print(f"  Total words: {stats['total_words']}")
+        print(f"  Dialogue: {stats['dialogue_segments']}, Thoughts: {stats['thought_segments']}, Narration: {stats['narration_segments']}")
+        print(f"  Characters in text: {', '.join(stats['characters']) if stats['characters'] else 'None'}")
+    else:
+        print(f"\n[3/6] Segmenting text ({args.segment_words} words per segment)...")
+        segmenter = TextSegmenter(
+            target_words=args.segment_words,
+            max_words=args.max_words,
+            min_words=args.min_words
+        )
+        segments = segmenter.segment_text(text)
+        stats = segmenter.get_segment_stats(segments)
+        
+        print(f"  Created {stats['total_segments']} segments")
+        print(f"  Total words: {stats['total_words']}")
+        print(f"  Avg words per segment: {stats['avg_words_per_segment']:.1f}")
+        print(f"  Min/Max words: {stats['min_words']}/{stats['max_words']}")
+    
+    # Step 4: Optional Ollama processing
+    if args.use_ollama and not args.character_mode:
+        print(f"\n[4/6] Processing text with Ollama ({args.ollama_model})...")
         ollama = OllamaProcessor(
             base_url=args.ollama_url, 
             model=args.ollama_model,
@@ -153,10 +284,13 @@ Examples:
         else:
             print(f"  ⚠ Ollama not available, skipping text processing")
     else:
-        print("\n[3/6] Skipping Ollama text processing (not enabled)")
+        if not args.character_mode:
+            print("\n[4/6] Skipping Ollama text processing (not enabled)")
+        else:
+            print("\n[4/6] Skipping Ollama (character mode uses built-in processing)")
     
-    # Step 4: Initialize TTS
-    print("\n[4/6] Initializing IndexTTS2...")
+    # Step 5: Initialize TTS
+    print("\n[5/6] Initializing IndexTTS2...")
     tts_processor = TTSProcessor(
         cfg_path=args.config,
         model_dir=args.model_dir,
@@ -166,8 +300,8 @@ Examples:
         use_deepspeed=args.use_deepspeed
     )
     
-    # Step 5: Process segments with TTS
-    print(f"\n[5/6] Generating audio with IndexTTS2...")
+    # Step 6: Process segments with TTS
+    print(f"\n[6/6] Generating audio with IndexTTS2...")
     start_time = time.time()
     
     generation_kwargs = {
@@ -179,19 +313,79 @@ Examples:
         "num_beams": args.num_beams,
     }
     
-    audio_files = tts_processor.process_segments(
-        segments=segments,
-        output_dir=segments_dir,
-        spk_audio_prompt=args.speaker_audio,
-        emo_audio_prompt=args.emo_audio,
-        emo_alpha=args.emo_alpha,
-        emo_vector=args.emo_vector,
-        use_emo_text=args.use_emo_text,
-        interval_silence=args.interval_silence,
-        verbose=args.verbose,
-        max_text_tokens_per_segment=args.max_text_tokens,
-        **generation_kwargs
-    )
+    if args.character_mode and character_segments and voice_mapping:
+        # Character-aware TTS processing
+        print(f"  Processing {len(character_segments)} character-aware segments...")
+        audio_files = []
+        
+        for i, char_seg in enumerate(character_segments):
+            # Get voice config for this character
+            voice_config = voice_mapping.get_voice_for_character(
+                char_seg.character,
+                char_seg.is_narration
+            )
+            
+            # Get emotion audio if available
+            emo_audio = None
+            if emotion_library and char_seg.emotional_state.dominant_emotion:
+                emo_audio = emotion_library.get_emotion_audio(
+                    char_seg.emotional_state.dominant_emotion
+                )
+            
+            # Override with voice config's emotion audio if specified
+            if voice_config.emotion_audio:
+                emo_audio = voice_config.emotion_audio
+            
+            # Convert emotion vector to list if needed
+            emo_vector = None
+            if char_seg.emotional_state.emotions:
+                emo_vector = [
+                    char_seg.emotional_state.emotions.get('happy', 0.0),
+                    char_seg.emotional_state.emotions.get('angry', 0.0),
+                    char_seg.emotional_state.emotions.get('sad', 0.0),
+                    char_seg.emotional_state.emotions.get('afraid', 0.0),
+                    char_seg.emotional_state.emotions.get('disgusted', 0.0),
+                    char_seg.emotional_state.emotions.get('melancholic', 0.0),
+                    char_seg.emotional_state.emotions.get('surprised', 0.0),
+                    char_seg.emotional_state.emotions.get('calm', 0.0),
+                ]
+            
+            if args.verbose:
+                seg_type = "Dialogue" if char_seg.is_dialogue else "Thought" if char_seg.is_thought else "Narration"
+                print(f"  [{i+1}/{len(character_segments)}] {char_seg.character or 'NARRATOR'} ({seg_type}, {char_seg.emotional_state.dominant_emotion})")
+            
+            # Process single segment
+            seg_audio = tts_processor.process_segments(
+                segments=[char_seg.text],
+                output_dir=segments_dir,
+                spk_audio_prompt=voice_config.speaker_audio,
+                emo_audio_prompt=emo_audio,
+                emo_alpha=voice_config.emotion_alpha,
+                emo_vector=emo_vector,
+                use_emo_text=voice_config.use_emo_text,
+                interval_silence=args.interval_silence,
+                verbose=False,
+                max_text_tokens_per_segment=args.max_text_tokens,
+                **generation_kwargs
+            )
+            
+            if seg_audio:
+                audio_files.extend(seg_audio)
+    else:
+        # Standard TTS processing
+        audio_files = tts_processor.process_segments(
+            segments=segments if character_segments is None else [seg.text for seg in character_segments],
+            output_dir=segments_dir,
+            spk_audio_prompt=args.speaker_audio,
+            emo_audio_prompt=args.emo_audio,
+            emo_alpha=args.emo_alpha,
+            emo_vector=args.emo_vector,
+            use_emo_text=args.use_emo_text,
+            interval_silence=args.interval_silence,
+            verbose=args.verbose,
+            max_text_tokens_per_segment=args.max_text_tokens,
+            **generation_kwargs
+        )
     
     tts_time = time.time() - start_time
     print(f"\n  ✓ Generated {len(audio_files)} audio segments")
@@ -201,22 +395,32 @@ Examples:
         print("Error: No audio files generated")
         sys.exit(1)
     
-    # Step 6: Merge audio files
-    print(f"\n[6/6] Merging audio segments...")
+    # Step 7: Merge audio files
+    print(f"\n[7/6] Merging audio segments...")
     merger = AudioMerger(silence_duration_ms=args.segment_silence)
     
     merge_metadata = {
         "title": metadata.get('title', 'Unknown'),
         "author": metadata.get('author', 'Unknown'),
+        "album": metadata.get('album', metadata.get('title', 'Unknown')),  # For M4B: use series or title
         "segments": len(audio_files),
         "total_words": stats['total_words'],
         "generation_time_seconds": tts_time
     }
     
+    # Add optional metadata if available
+    if 'publisher' in metadata:
+        merge_metadata['publisher'] = metadata['publisher']
+    if 'date' in metadata:
+        merge_metadata['date'] = metadata['date']
+    if 'series' in metadata:
+        merge_metadata['series'] = metadata['series']
+    
     final_audio = merger.merge_with_metadata(
         audio_files=audio_files,
         output_path=args.output,
-        metadata=merge_metadata
+        metadata=merge_metadata,
+        output_format=args.format
     )
     
     if final_audio:

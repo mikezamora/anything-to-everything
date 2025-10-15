@@ -93,7 +93,7 @@ class EPUBExtractor:
         Extract metadata from the EPUB file
         
         Returns:
-            dict: Metadata dictionary
+            dict: Metadata dictionary with fields for audiobook conversion
         """
         if not self.book:
             if not self.load():
@@ -103,9 +103,60 @@ class EPUBExtractor:
         
         # Extract common metadata
         try:
-            metadata['title'] = self.book.get_metadata('DC', 'title')[0][0] if self.book.get_metadata('DC', 'title') else "Unknown"
-            metadata['author'] = self.book.get_metadata('DC', 'creator')[0][0] if self.book.get_metadata('DC', 'creator') else "Unknown"
-            metadata['language'] = self.book.get_metadata('DC', 'language')[0][0] if self.book.get_metadata('DC', 'language') else "Unknown"
+            title = self.book.get_metadata('DC', 'title')[0][0] if self.book.get_metadata('DC', 'title') else "Unknown"
+            author = self.book.get_metadata('DC', 'creator')[0][0] if self.book.get_metadata('DC', 'creator') else "Unknown"
+            language = self.book.get_metadata('DC', 'language')[0][0] if self.book.get_metadata('DC', 'language') else "Unknown"
+            
+            metadata['title'] = title
+            metadata['author'] = author
+            metadata['language'] = language
+            
+            # For M4B format - album field
+            # Try to get series information first, otherwise use title
+            series = None
+            try:
+                # Check for calibre series metadata
+                series_meta = self.book.get_metadata('OPF', 'meta')
+                for meta in series_meta:
+                    if isinstance(meta, tuple) and len(meta) > 1:
+                        attrs = meta[1]
+                        if isinstance(attrs, dict) and attrs.get('name') == 'calibre:series':
+                            series = attrs.get('content')
+                            break
+            except:
+                pass
+            
+            # Set album: use series if available, otherwise use title
+            if series:
+                metadata['album'] = series
+                metadata['series'] = series
+            else:
+                metadata['album'] = title
+            
+            # Try to extract publisher for additional metadata
+            try:
+                publisher = self.book.get_metadata('DC', 'publisher')
+                if publisher:
+                    metadata['publisher'] = publisher[0][0]
+            except:
+                pass
+            
+            # Try to extract publication date
+            try:
+                date = self.book.get_metadata('DC', 'date')
+                if date:
+                    metadata['date'] = date[0][0]
+            except:
+                pass
+            
+            # Try to extract description/summary
+            try:
+                description = self.book.get_metadata('DC', 'description')
+                if description:
+                    metadata['description'] = description[0][0]
+            except:
+                pass
+                
         except Exception as e:
             print(f"Error extracting metadata: {e}")
         
