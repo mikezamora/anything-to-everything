@@ -67,7 +67,7 @@ class OllamaProcessor:
             response = requests.post(
                 self.api_url,
                 json=payload,
-                timeout=30
+                timeout=300
             )
             
             if response.status_code == 200:
@@ -268,7 +268,7 @@ Cleaned text:"""
         
         # Unload the model to free up VRAM for TTS
         print(f"\nUnloading Ollama model to free VRAM for TTS processing...")
-        self.unload_model()
+        # self.unload_model()
         
         return processed_segments
 

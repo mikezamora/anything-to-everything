@@ -390,7 +390,7 @@ Do not include narrators, places, or non-character entities. Only list actual ch
                             "stream": False,
                             "temperature": 0.3,
                         },
-                        timeout=120
+                        timeout=300
                     )
                     
                     if response.status_code == 200:

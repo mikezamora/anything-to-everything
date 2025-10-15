@@ -1,0 +1,72 @@
+version: '3.8'
+
+services:
+  # Main EPUB to Audiobook service
+  epub-to-audiobook:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: anything-to-everything
+    ports:
+      - "7069:6969"
+    volumes:
+      # Persist data
+      - ./work:/app/work
+      - ./inputs:/app/inputs
+      - ./outputs:/app/outputs
+      - ./uploads:/app/uploads
+      - ./jobs:/app/jobs
+      - ./checkpoints:/app/checkpoints
+      # Mount model cache
+      - huggingface-cache:/root/.cache/huggingface
+    environment:
+      - CUDA_VISIBLE_DEVICES=0
+      - OLLAMA_URL=http://theworld:11434
+    # depends_on:
+    #   - ollama
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: always
+    networks:
+      - epub-network
+
+  # Ollama service for LLM processing
+  # ollama:
+  #   image: ollama/ollama:latest
+  #   container_name: epub-ollama
+  #   ports:
+  #     - "11434:11434"
+  #   volumes:
+  #     - ollama-data:/root/.ollama
+  #   environment:
+  #     - OLLAMA_HOST=0.0.0.0
+  #   deploy:
+  #     resources:
+  #       reservations:
+  #         devices:
+  #           - driver: nvidia
+  #             count: 1
+  #             capabilities: [gpu]
+  #   restart: unless-stopped
+  #   networks:
+  #     - epub-network
+  #   healthcheck:
+  #     test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 3
+
+volumes:
+  # ollama-data:
+  #   driver: local
+  huggingface-cache:
+    driver: local
+
+networks:
+  epub-network:
+    driver: bridge

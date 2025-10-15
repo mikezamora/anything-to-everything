@@ -1,0 +1,67 @@
+# Docker ignore file for EPUB to Audiobook Converter
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+*.log
+
+# Project specific - exclude large generated files
+work/segments/*.wav
+work/ollama/
+work/ollama_characters/
+work/ollama_segmentation/
+work/character_segmentation/
+outputs/*.wav
+outputs/*.m4b
+output_archive/
+
+# Jobs (keep structure but not data)
+jobs/running/*
+jobs/completed/*
+jobs/failed/*
+
+# Uploads (keep structure)
+uploads/epub/*.epub
+uploads/voice/*.wav
+uploads/emotion/*.wav
+
+# Git
+.git/
+.gitignore
+
+# Docker
+.dockerignore
+docker-compose.override.yml
+
+# Documentation (keep in image)
+# README.md
+# QUICKSTART.md
+
+# Temporary files
+*.tmp
+*.temp
+.cache/

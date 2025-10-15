@@ -335,9 +335,16 @@ Examples:
                         appearances=0  # Will be counted during segmentation
                     )
         
+        # Decide whether to use Ollama for character segmentation
+        use_ollama_for_segmentation = args.ollama_character_detection or args.use_ollama
+        
         char_segmenter = CharacterAwareSegmenter(
             max_words_per_segment=args.max_words,
-            min_words_per_segment=args.min_words
+            min_words_per_segment=args.min_words,
+            use_ollama=use_ollama_for_segmentation,
+            ollama_url=args.ollama_url,
+            ollama_model=args.ollama_model,
+            work_dir=args.work_dir
         )
         
         # Override the segmenter's analyzer with our configured one
