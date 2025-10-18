@@ -7,8 +7,8 @@ import time
 from pathlib import Path
 from typing import Optional
 
-# Add parent directory to path to import IndexTTS2
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+# Add lib/index-tts directory to path to import IndexTTS2
+# sys.path.insert(0, str(Path(__file__).parent.parent / "lib" / "index-tts"))
 
 from indextts.infer_v2 import IndexTTS2
 
@@ -17,8 +17,8 @@ class TTSProcessor:
     """Process text segments using IndexTTS2"""
     
     def __init__(self, 
-                 cfg_path="../../checkpoints/config.yaml",
-                 model_dir="../../checkpoints",
+                 cfg_path="./checkpoints/config.yaml",
+                 model_dir="./checkpoints",
                  use_fp16=False,
                  device=None,
                  use_cuda_kernel=None,
@@ -35,6 +35,12 @@ class TTSProcessor:
             use_deepspeed (bool): Whether to use DeepSpeed
         """
         print("Initializing IndexTTS2...")
+        print(f"Config path: {cfg_path}")
+        print(f"Model directory: {model_dir}")
+        print(f"Using FP16: {use_fp16}")
+        print(f"Using CPU: {device}")
+        print(f"Using CUDA kernel: {use_cuda_kernel}")
+        print(f"Using DeepSpeed: {use_deepspeed}")
         self.tts = IndexTTS2(
             cfg_path=cfg_path,
             model_dir=model_dir,
@@ -83,7 +89,20 @@ class TTSProcessor:
         print(f"Processing segment: {len(segment_text)} characters")
         
         start_time = time.time()
-        
+
+        print(f"Using spk_audio_prompt: {spk_audio_prompt}")
+        print(f"Using emo_audio_prompt: {emo_audio_prompt}")
+        print(f"Generating audio at: {output_path}")
+        print(f"Using emo_alpha: {emo_alpha}")
+        print(f"Using emo_vector: {emo_vector}")
+        print(f"Using use_emo_text: {use_emo_text}")
+        print(f"Using emo_text: {emo_text}")
+        print(f"Using random emotion: {use_random}")
+        print(f"Using Interval silence: {interval_silence} ms")
+        print(f"Using Verbose: {verbose}")
+        print(f"Using Max text tokens per segment: {max_text_tokens_per_segment}")
+        print(f"Using Generation kwargs: {generation_kwargs}")
+        print(f"Using Text to process: {segment_text}")
         result = self.tts.infer(
             spk_audio_prompt=spk_audio_prompt,
             text=segment_text,

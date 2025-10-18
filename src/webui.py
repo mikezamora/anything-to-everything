@@ -581,8 +581,8 @@ def refresh_terminal() -> str:
 
 
 # Create Gradio interface
-with gr.Blocks(title="EPUB to Audiobook Converter", theme=gr.themes.Soft()) as app:
-    gr.Markdown("# 📚 EPUB to Audiobook Converter with Job Queue")
+with gr.Blocks(title="Anything to Everything", theme=gr.themes.Soft()) as app:
+    gr.Markdown("# Anything to Everything")
     gr.Markdown("Convert EPUB files to audiobooks with character-aware multi-voice support")
     
     with gr.Tabs():
@@ -633,8 +633,8 @@ with gr.Blocks(title="EPUB to Audiobook Converter", theme=gr.themes.Soft()) as a
                         detect_chars = gr.Checkbox(label="Detect Characters (creates template and exits)", value=False)
                         ollama_char = gr.Checkbox(label="Use Ollama for Character Detection", value=False)
                         
-                        ollama_model = gr.Textbox(label="Ollama Model", value="llama2")
-                        ollama_url = gr.Textbox(label="Ollama URL", value="http://localhost:11434")
+                        ollama_model = gr.Textbox(label="Ollama Model", value="aratan/DeepSeek-R1-32B-Uncensored:latest")
+                        ollama_url = gr.Textbox(label="Ollama URL", value="http://host.docker.internal:11434")
                         
                         segment_words = gr.Slider(100, 1000, value=500, step=50, label="Words per Segment")
                         max_words = gr.Slider(200, 1200, value=600, step=50, label="Max Words per Segment")
@@ -759,8 +759,8 @@ with gr.Blocks(title="EPUB to Audiobook Converter", theme=gr.themes.Soft()) as a
                     gr.Markdown("#### Step 1: Detect Characters")
                     char_epub_path = gr.Textbox(label="EPUB Path", placeholder="Upload EPUB in Create Job tab first")
                     char_use_ollama = gr.Checkbox(label="Use Ollama for Detection", value=True)
-                    char_ollama_model = gr.Textbox(label="Ollama Model", value="llama2")
-                    char_ollama_url = gr.Textbox(label="Ollama URL", value="http://localhost:11434")
+                    char_ollama_model = gr.Textbox(label="Ollama Model", value="aratan/DeepSeek-R1-32B-Uncensored:latest")
+                    char_ollama_url = gr.Textbox(label="Ollama URL", value="http://host.docker.internal:11434")
                     detect_chars_btn = gr.Button("Detect Characters", variant="primary")
                     
                     char_detection_result = gr.Textbox(label="Detection Result", lines=5, interactive=False)

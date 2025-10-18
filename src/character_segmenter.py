@@ -15,8 +15,8 @@ class CharacterAwareSegmenter:
                  split_on_character_change: bool = True,
                  split_on_emotion_change: bool = True,
                  use_ollama: bool = False,
-                 ollama_url: str = "http://localhost:11434",
-                 ollama_model: str = "llama2",
+                 ollama_url: str = "http://host.docker.internal:11434",
+                 ollama_model: str = "aratan/DeepSeek-R1-32B-Uncensored:latest",
                  work_dir: str = "./work"):
         """
         Initialize character-aware segmenter

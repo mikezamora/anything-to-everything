@@ -9,8 +9,8 @@ TEXT_PROCESSING = {
     "max_words": 600,            # Maximum words per segment
     "min_words": 100,            # Minimum words per segment
     "use_ollama": False,         # Enable Ollama text cleanup
-    "ollama_model": "llama2",    # Ollama model to use
-    "ollama_url": "http://localhost:11434",  # Ollama API URL
+    "ollama_model": "aratan/DeepSeek-R1-32B-Uncensored:latest",    # Ollama model to use
+    "ollama_url": "http://host.docker.internal:11434",  # Ollama API URL
 }
 
 # TTS Generation

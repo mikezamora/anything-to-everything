@@ -108,7 +108,7 @@ class CharacterAnalyzer:
     MALE_INDICATORS = ['he', 'him', 'his', 'mr', 'sir', 'lord', 'king', 'prince', 'brother', 'father', 'son', 'man', 'boy', 'gentleman']
     FEMALE_INDICATORS = ['she', 'her', 'hers', 'mrs', 'ms', 'miss', 'lady', 'queen', 'princess', 'sister', 'mother', 'daughter', 'woman', 'girl']
     
-    def __init__(self, use_ollama: bool = False, ollama_url: str = "http://localhost:11434", ollama_model: str = "llama2", work_dir: str = "./work"):
+    def __init__(self, use_ollama: bool = False, ollama_url: str = "http://host.docker.internal:11434", ollama_model: str = "aratan/DeepSeek-R1-32B-Uncensored:latest", work_dir: str = "./work"):
         """
         Initialize character analyzer
         

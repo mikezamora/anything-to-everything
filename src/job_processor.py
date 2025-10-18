@@ -41,7 +41,7 @@ class JobDefinition:
     keep_segments: bool = False
     use_ollama: bool = False
     ollama_model: Optional[str] = None
-    ollama_url: str = "http://localhost:11434"
+    ollama_url: str = "http://host.docker.internal:11434"
     segment_words: int = 500
     character_config: Optional[str] = None
     emotion_library: Optional[str] = None
@@ -102,7 +102,7 @@ class JobDefinition:
         if self.ollama_model:
             args.extend(["--ollama-model", self.ollama_model])
         
-        if self.ollama_url != "http://localhost:11434":
+        if self.ollama_url != "http://host.docker.internal:11434":
             args.extend(["--ollama-url", self.ollama_url])
         
         if self.character_config:
@@ -110,6 +110,8 @@ class JobDefinition:
         
         if self.emotion_library:
             args.extend(["--emotion-library", self.emotion_library])
+
+        # args.append("--use-deepspeed")
         
         return args
 
@@ -286,7 +288,7 @@ class JobQueue:
         job_work_dir.mkdir(parents=True, exist_ok=True)
         
         # Prepare command with job-specific work directory
-        args = ["uv", "run", "-m", "main"] + job_def.to_command_args(work_dir=str(job_work_dir))
+        args = ["uv", "run", "src/main.py"] + job_def.to_command_args(work_dir=str(job_work_dir))
         
         # Create log file
         job_dir = self.jobs_dir / "running" / job_id

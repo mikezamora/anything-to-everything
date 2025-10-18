@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 
 # Add parent directory to path
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+# sys.path.insert(0, str(Path(__file__).parent.parent / "lib" / "index-tts"))
 
 from epub_extractor import EPUBExtractor
 from text_segmenter import TextSegmenter
@@ -78,8 +78,8 @@ Examples:
     parser.add_argument("--max-words", type=int, default=600, help="Maximum words per segment (default: 600)")
     parser.add_argument("--min-words", type=int, default=100, help="Minimum words per segment (default: 100)")
     parser.add_argument("--use-ollama", action="store_true", help="Use Ollama for text cleanup")
-    parser.add_argument("--ollama-model", default="llama2", help="Ollama model to use (default: llama2)")
-    parser.add_argument("--ollama-url", default="http://localhost:11434", help="Ollama API URL")
+    parser.add_argument("--ollama-model", default="aratan/DeepSeek-R1-32B-Uncensored:latest", help="Ollama model to use (default: aratan/DeepSeek-R1-32B-Uncensored:latest)")
+    parser.add_argument("--ollama-url", default="http://host.docker.internal:11434", help="Ollama API URL")
     
     # Character processing options
     parser.add_argument("--character-mode", action="store_true", help="Enable character-aware processing")
@@ -98,8 +98,8 @@ Examples:
     parser.add_argument("--segment-silence", type=int, default=500, help="Silence between segments in ms (default: 500)")
     
     # Model options
-    parser.add_argument("--config", default="../../checkpoints/config.yaml", help="Path to config file")
-    parser.add_argument("--model-dir", default="../../checkpoints", help="Path to model directory")
+    parser.add_argument("--config", default="./checkpoints/config.yaml", help="Path to config file")
+    parser.add_argument("--model-dir", default="./checkpoints", help="Path to model directory")
     parser.add_argument("--use-fp16", action="store_true", help="Use FP16 precision")
     parser.add_argument("--device", help="Device to use (e.g., cuda:0, cpu)")
     parser.add_argument("--no-cuda-kernel", action="store_true", help="Disable CUDA kernel for BigVGAN")
@@ -412,7 +412,7 @@ Examples:
     )
     
     # Step 6: Process segments with TTS
-    print(f"\n[6/6] Generating audio with IndexTTS2...")
+    print(f"\n[6/6] Generating audio with IndexTTS2.....")
     start_time = time.time()
     
     generation_kwargs = {

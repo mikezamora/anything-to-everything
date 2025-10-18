@@ -30,19 +30,7 @@ Thumbs.db
 *.log
 
 # Project specific - exclude large generated files
-work/segments/*.wav
-work/ollama/
-work/ollama_characters/
-work/ollama_segmentation/
-work/character_segmentation/
-outputs/*.wav
-outputs/*.m4b
-output_archive/
-
-# Jobs (keep structure but not data)
-jobs/running/*
-jobs/completed/*
-jobs/failed/*
+data/
 
 # Uploads (keep structure)
 uploads/epub/*.epub

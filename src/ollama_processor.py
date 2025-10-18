@@ -11,7 +11,7 @@ from datetime import datetime
 class OllamaProcessor:
     """Process text using Ollama for cleanup and enhancement"""
     
-    def __init__(self, base_url="http://localhost:11434", model="llama2", work_dir=None):
+    def __init__(self, base_url="http://host.docker.internal:11434", model="aratan/DeepSeek-R1-32B-Uncensored:latest", work_dir=None):
         """
         Initialize Ollama processor
         
