@@ -12,7 +12,7 @@ from pathlib import Path
 # Add parent directory to path
 # sys.path.insert(0, str(Path(__file__).parent.parent / "lib" / "index-tts"))
 
-from epub_extractor import EPUBExtractor
+from text_extractor import TextExtractor
 from text_segmenter import TextSegmenter
 from character_analyzer import CharacterAnalyzer
 from character_segmenter import CharacterAwareSegmenter
@@ -29,8 +29,11 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Basic usage (WAV output)
+  # Basic usage (WAV output) - EPUB
   python main.py book.epub speaker.wav -o audiobook.wav
+  
+  # Basic usage with PDF
+  python main.py document.pdf speaker.wav -o audiobook.wav
   
   # M4B audiobook format with metadata
   python main.py book.epub speaker.wav -o audiobook.m4b --format m4b
@@ -64,7 +67,7 @@ Examples:
     )
     
     # Required arguments
-    parser.add_argument("epub_file", help="Path to EPUB file to convert")
+    parser.add_argument("source_text_file", help="Path to source text file to convert (EPUB or PDF)")
     parser.add_argument("speaker_audio", nargs='?', default=None, help="Path to speaker reference audio file (optional in character mode with --character-config)")
     
     # Output options
@@ -120,8 +123,14 @@ Examples:
     args = parser.parse_args()
     
     # Validate inputs
-    if not os.path.exists(args.epub_file):
-        print(f"Error: EPUB file not found: {args.epub_file}")
+    if not os.path.exists(args.source_text_file):
+        print(f"Error: Source text file not found: {args.source_text_file}")
+        sys.exit(1)
+    
+    # Validate file format
+    if not TextExtractor.is_supported_file(args.source_text_file):
+        supported = ', '.join(TextExtractor.get_supported_extensions())
+        print(f"Error: Unsupported file format. Supported formats: {supported}")
         sys.exit(1)
     
     # Speaker audio validation
@@ -154,12 +163,12 @@ Examples:
     os.makedirs(segments_dir, exist_ok=True)
     
     print("="*70)
-    print("EPUB to Audiobook Converter")
+    print("Text to Audiobook Converter")
     print("="*70)
     
-    # Step 1: Extract text from EPUB
-    print("\n[1/6] Extracting text from EPUB...")
-    extractor = EPUBExtractor(args.epub_file)
+    # Step 1: Extract text from source file
+    print(f"\n[1/6] Extracting text from {Path(args.source_text_file).suffix.upper()} file...")
+    extractor = TextExtractor.create_extractor(args.source_text_file)
     metadata = extractor.get_metadata()
     text = extractor.extract_text()
     
@@ -169,7 +178,7 @@ Examples:
     print(f"  Extracted: {len(text)} characters")
     
     if not text:
-        print("Error: No text extracted from EPUB")
+        print("Error: No text extracted from source file")
         sys.exit(1)
     
     # Character detection and configuration (if enabled)

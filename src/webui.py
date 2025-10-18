@@ -22,10 +22,10 @@ sys.path.insert(0, current_dir)
 from job_processor import JobQueue, JobDefinition, JobStatus
 from character_analyzer import CharacterAnalyzer, CharacterTraits
 from character_voice_config import CharacterVoiceMapping, EmotionLibrary
-from epub_extractor import EPUBExtractor
+from text_extractor import TextExtractor
 
 # Create necessary directories
-os.makedirs("uploads/epub", exist_ok=True)
+os.makedirs("uploads/text", exist_ok=True)  # Combined directory for EPUB and PDF
 os.makedirs("uploads/voice", exist_ok=True)
 os.makedirs("uploads/emotion", exist_ok=True)
 os.makedirs("outputs", exist_ok=True)
@@ -44,6 +44,36 @@ current_epub_text = ""
 current_analyzer = None
 
 
+def get_uploaded_files(file_type: str) -> List[str]:
+    """Get list of uploaded files of given type"""
+    upload_dir = f"uploads/{file_type}"
+    if not os.path.exists(upload_dir):
+        return []
+    
+    files = []
+    for filename in os.listdir(upload_dir):
+        file_path = os.path.join(upload_dir, filename)
+        if os.path.isfile(file_path):
+            files.append(file_path)
+    
+    return sorted(files)
+
+
+def get_uploaded_text_files() -> List[str]:
+    """Get list of uploaded text files (EPUB and PDF)"""
+    return get_uploaded_files("text")
+
+
+def get_uploaded_voice_files() -> List[str]:
+    """Get list of uploaded voice files"""  
+    return get_uploaded_files("voice")
+
+
+def get_uploaded_emotion_files() -> List[str]:
+    """Get list of uploaded emotion files"""
+    return get_uploaded_files("emotion")
+
+
 def log_message(message: str):
     """Add message to terminal log"""
     timestamp = datetime.now().strftime("%H:%M:%S")
@@ -60,26 +90,31 @@ def get_terminal_output():
     return "\n".join(terminal_logs)
 
 
-def upload_epub_file(file) -> Tuple[str, str]:
-    """Handle EPUB file upload"""
+def upload_text_file(file) -> Tuple[str, str]:
+    """Handle text file upload (EPUB or PDF)"""
     if file is None:
         return "", "No file uploaded"
     
     try:
-        # Copy to uploads directory
+        # Validate file format
         filename = os.path.basename(file.name)
-        dest_path = os.path.join("uploads/epub", filename)
+        if not TextExtractor.is_supported_file(filename):
+            supported = ', '.join(TextExtractor.get_supported_extensions())
+            return "", f"Unsupported file format. Supported: {supported}"
+        
+        # Copy to uploads directory
+        dest_path = os.path.join("uploads/text", filename)
         
         # Read and write file
         with open(file.name, 'rb') as src:
             with open(dest_path, 'wb') as dst:
                 dst.write(src.read())
         
-        log_message(f"✓ Uploaded EPUB: {filename}")
+        log_message(f"✓ Uploaded text file: {filename}")
         
         # Extract metadata
         try:
-            extractor = EPUBExtractor(dest_path)
+            extractor = TextExtractor.create_extractor(dest_path)
             metadata = extractor.get_metadata()
             info = f"Title: {metadata.get('title', 'Unknown')}\n"
             info += f"Author: {metadata.get('author', 'Unknown')}\n"
@@ -87,10 +122,10 @@ def upload_epub_file(file) -> Tuple[str, str]:
             return dest_path, info
         except Exception as e:
             log_message(f"⚠ Could not extract metadata: {e}")
-            return dest_path, "EPUB uploaded successfully"
+            return dest_path, "Text file uploaded successfully"
             
     except Exception as e:
-        log_message(f"✗ Failed to upload EPUB: {e}")
+        log_message(f"✗ Failed to upload text file: {e}")
         return "", f"Error: {str(e)}"
 
 
@@ -139,8 +174,55 @@ def upload_emotion_files(files) -> Tuple[str, str]:
         return "", f"Error: {str(e)}"
 
 
+def select_existing_text(selected_text: str) -> Tuple[str, str]:
+    """Handle selection of existing text file"""
+    if not selected_text:
+        return "", ""
+    
+    try:
+        # Get text file metadata
+        extractor = TextExtractor.create_extractor(selected_text)
+        metadata = extractor.get_metadata()
+        
+        info_lines = []
+        for key, value in metadata.items():
+            if value:
+                info_lines.append(f"{key.title()}: {value}")
+        
+        text_info = "\n".join(info_lines)
+        log_message(f"✓ Selected existing text file: {os.path.basename(selected_text)}")
+        
+        return selected_text, text_info
+    except Exception as e:
+        log_message(f"✗ Failed to read text file metadata: {e}")
+        return selected_text, f"Selected: {os.path.basename(selected_text)} (metadata unavailable)"
+
+
+def select_existing_voice(selected_voice: str) -> Tuple[str, str]:
+    """Handle selection of existing voice file"""
+    if not selected_voice:
+        return "", ""
+    
+    log_message(f"✓ Selected existing voice: {os.path.basename(selected_voice)}")
+    return selected_voice, f"Selected: {os.path.basename(selected_voice)}"
+
+
+def select_existing_emotion(selected_emotion: str) -> str:
+    """Handle selection of existing emotion audio file"""
+    if not selected_emotion:
+        return ""
+    
+    log_message(f"✓ Selected existing emotion audio: {os.path.basename(selected_emotion)}")
+    return selected_emotion
+
+
+def refresh_file_lists() -> Tuple[List[str], List[str]]:
+    """Refresh the dropdown lists with current uploaded files"""
+    return get_uploaded_epub_files(), get_uploaded_voice_files()
+
+
 def create_single_job(
-    epub_path: str,
+    source_text_file: str,
     voice_path: str,
     output_name: str,
     format_choice: str,
@@ -162,8 +244,8 @@ def create_single_job(
     """Create a single job"""
     try:
         # Validate inputs
-        if not epub_path or not os.path.exists(epub_path):
-            return "", "Error: Please upload an EPUB file first"
+        if not source_text_file or not os.path.exists(source_text_file):
+            return "", "Error: Please upload a source text file first"
         
         # Voice reference is optional in character mode (can use character-specific voices)
         if not character_mode:
@@ -187,7 +269,7 @@ def create_single_job(
         # Create job definition
         job_def = JobDefinition(
             job_id="",  # Auto-generated
-            epub_path=epub_path,
+            source_text_file=source_text_file,
             output_path=output_path,
             voice_ref_path=voice_path if voice_path else None,
             format=format_choice,
@@ -201,6 +283,7 @@ def create_single_job(
             segment_words=segment_words,
             character_config=character_config if character_config and os.path.exists(character_config) else None,
             emotion_library=emotion_library if emotion_library and os.path.exists(emotion_library) else None,
+            emo_audio_prompt=emo_audio if emo_audio and os.path.exists(emo_audio) else None,
             priority=priority
         )
         
@@ -226,7 +309,7 @@ def get_job_list(status_filter: str = "all") -> pd.DataFrame:
         job_ids = job_queue.list_jobs(status=status)
         
         if not job_ids:
-            return pd.DataFrame(columns=["Job ID", "Status", "Priority", "EPUB", "Output"])
+            return pd.DataFrame(columns=["Job ID", "Status", "Priority", "Source", "Output"])
         
         data = []
         for job_id in job_ids:
@@ -241,7 +324,7 @@ def get_job_list(status_filter: str = "all") -> pd.DataFrame:
                         "Job ID": job_id,
                         "Status": stat,
                         "Priority": job_data.get("priority", 0),
-                        "EPUB": os.path.basename(job_data.get("epub_path", "")),
+                        "Source": os.path.basename(job_data.get("source_text_file", "")),
                         "Output": os.path.basename(job_data.get("output_path", "")),
                     })
                     break
@@ -250,7 +333,7 @@ def get_job_list(status_filter: str = "all") -> pd.DataFrame:
         
     except Exception as e:
         log_message(f"⚠ Error getting job list: {e}")
-        return pd.DataFrame(columns=["Job ID", "Status", "Priority", "EPUB", "Output"])
+        return pd.DataFrame(columns=["Job ID", "Status", "Priority", "Source", "Output"])
 
 
 def get_job_details(job_id: str) -> str:
@@ -427,23 +510,23 @@ def start_single_job(job_id: str) -> str:
         return f"Error: {str(e)}"
 
 
-def detect_characters_from_epub(
-    epub_path: str,
+def detect_characters_from_text(
+    text_path: str,
     use_ollama: bool,
     ollama_model: str,
     ollama_url: str
 ) -> Tuple[str, pd.DataFrame]:
-    """Detect characters from uploaded EPUB"""
+    """Detect characters from uploaded text file (EPUB/PDF)"""
     global current_characters, current_epub_text, current_analyzer
     
     try:
-        if not epub_path or not os.path.exists(epub_path):
-            return "Please upload an EPUB file first", pd.DataFrame()
+        if not text_path or not os.path.exists(text_path):
+            return "Please upload a text file first", pd.DataFrame()
         
-        log_message(f"Detecting characters from {os.path.basename(epub_path)}...")
+        log_message(f"Detecting characters from {os.path.basename(text_path)}...")
         
         # Extract text
-        extractor = EPUBExtractor(epub_path)
+        extractor = TextExtractor.create_extractor(text_path)
         text = extractor.extract_text()
         current_epub_text = text
         
@@ -593,15 +676,32 @@ with gr.Blocks(title="Anything to Everything", theme=gr.themes.Soft()) as app:
             with gr.Row():
                 with gr.Column(scale=1):
                     gr.Markdown("#### Required Files")
-                    epub_upload = gr.File(label="Upload EPUB File", file_types=[".epub"])
-                    epub_path_display = gr.Textbox(label="EPUB Path", interactive=False)
-                    epub_info = gr.Textbox(label="EPUB Info", lines=3, interactive=False)
                     
-                    voice_upload = gr.File(
-                        label="Upload Default Voice Reference (optional in Character Mode)", 
-                        file_types=[".wav", ".mp3", ".flac"]
-                    )
-                    voice_path_display = gr.Textbox(label="Voice Path", interactive=False)
+                    # Text file selection (EPUB/PDF)
+                    gr.Markdown("**Text File (EPUB/PDF):**")
+                    with gr.Row():
+                        text_upload = gr.File(label="Upload New Text File", file_types=[".epub", ".pdf"])
+                        text_dropdown = gr.Dropdown(
+                            label="Or Select Existing Text File", 
+                            choices=get_uploaded_text_files(),
+                            interactive=True
+                        )
+                    text_path_display = gr.Textbox(label="Selected Text File Path", interactive=False)
+                    text_info = gr.Textbox(label="Text File Info", lines=3, interactive=False)
+                    
+                    # Voice file selection
+                    gr.Markdown("**Voice Reference (optional in Character Mode):**")
+                    with gr.Row():
+                        voice_upload = gr.File(
+                            label="Upload New Voice File", 
+                            file_types=[".wav", ".mp3", ".flac"]
+                        )
+                        voice_dropdown = gr.Dropdown(
+                            label="Or Select Existing Voice",
+                            choices=get_uploaded_voice_files(),
+                            interactive=True
+                        )
+                    voice_path_display = gr.Textbox(label="Selected Voice Path", interactive=False)
                     voice_info = gr.Textbox(label="Voice Info", interactive=False)
                     gr.Markdown("💡 *In Character Mode, voice reference is optional if character config has all voices*")
                 
@@ -627,7 +727,16 @@ with gr.Blocks(title="Anything to Everything", theme=gr.themes.Soft()) as app:
                         value="work/emotion_library.json",
                         placeholder="work/emotion_library.json"
                     )
-                    emo_audio = gr.Textbox(label="Emotion Audio Path (optional)", placeholder="path/to/emotion.wav")
+                    # Emotion audio selection
+                    gr.Markdown("**Emotion Audio (optional):**")
+                    with gr.Row():
+                        emo_audio = gr.Textbox(label="Custom Path", placeholder="path/to/emotion.wav", scale=2)
+                        emo_dropdown = gr.Dropdown(
+                            label="Or Select Existing",
+                            choices=get_uploaded_emotion_files(),
+                            interactive=True,
+                            scale=1
+                        )
                     
                     with gr.Accordion("Advanced Settings", open=False):
                         detect_chars = gr.Checkbox(label="Detect Characters (creates template and exits)", value=False)
@@ -645,24 +754,54 @@ with gr.Blocks(title="Anything to Everything", theme=gr.themes.Soft()) as app:
                 job_result = gr.Textbox(label="Result", interactive=False)
                 job_id_output = gr.Textbox(label="Job ID", interactive=False, visible=False)
             
-            # Wire up file uploads
-            epub_upload.upload(
-                upload_epub_file,
-                inputs=[epub_upload],
-                outputs=[epub_path_display, epub_info]
+            # Wire up file uploads and refreshes
+            text_upload.upload(
+                upload_text_file,
+                inputs=[text_upload],
+                outputs=[text_path_display, text_info]
+            ).then(
+                # Refresh dropdown after upload
+                lambda: gr.Dropdown(choices=get_uploaded_text_files()),
+                inputs=[],
+                outputs=[text_dropdown]
             )
             
             voice_upload.upload(
                 upload_voice_file,
                 inputs=[voice_upload],
                 outputs=[voice_path_display, voice_info]
+            ).then(
+                # Refresh dropdown after upload
+                lambda: gr.Dropdown(choices=get_uploaded_voice_files()),
+                inputs=[],
+                outputs=[voice_dropdown]
+            )
+            
+            # Wire up dropdown selections
+            text_dropdown.change(
+                select_existing_text,
+                inputs=[text_dropdown],
+                outputs=[text_path_display, text_info]
+            )
+            
+            voice_dropdown.change(
+                select_existing_voice,
+                inputs=[voice_dropdown],  
+                outputs=[voice_path_display, voice_info]
+            )
+            
+            # Wire up emotion dropdown
+            emo_dropdown.change(
+                select_existing_emotion,
+                inputs=[emo_dropdown],
+                outputs=[emo_audio]
             )
             
             # Wire up job creation
             create_job_btn.click(
                 create_single_job,
                 inputs=[
-                    epub_path_display, voice_path_display, output_name, format_choice, priority,
+                    text_path_display, voice_path_display, output_name, format_choice, priority,
                     detect_chars, ollama_char, character_mode, keep_segments, use_ollama,
                     ollama_model, ollama_url, segment_words, max_words, min_words,
                     emo_audio, character_config, emotion_library
@@ -757,7 +896,7 @@ with gr.Blocks(title="Anything to Everything", theme=gr.themes.Soft()) as app:
             with gr.Row():
                 with gr.Column():
                     gr.Markdown("#### Step 1: Detect Characters")
-                    char_epub_path = gr.Textbox(label="EPUB Path", placeholder="Upload EPUB in Create Job tab first")
+                    char_text_path = gr.Textbox(label="Text File Path", placeholder="Upload text file (EPUB/PDF) in Create Job tab first")
                     char_use_ollama = gr.Checkbox(label="Use Ollama for Detection", value=True)
                     char_ollama_model = gr.Textbox(label="Ollama Model", value="aratan/DeepSeek-R1-32B-Uncensored:latest")
                     char_ollama_url = gr.Textbox(label="Ollama URL", value="http://host.docker.internal:11434")
@@ -807,15 +946,15 @@ with gr.Blocks(title="Anything to Everything", theme=gr.themes.Soft()) as app:
             emotion_dir_display = gr.Textbox(label="Emotion Files Directory", interactive=False)
             
             # Wire up character management
-            epub_path_display.change(
+            text_path_display.change(
                 lambda x: x,
-                inputs=[epub_path_display],
-                outputs=[char_epub_path]
+                inputs=[text_path_display],
+                outputs=[char_text_path]
             )
             
             detect_chars_btn.click(
-                detect_characters_from_epub,
-                inputs=[char_epub_path, char_use_ollama, char_ollama_model, char_ollama_url],
+                detect_characters_from_text,
+                inputs=[char_text_path, char_use_ollama, char_ollama_model, char_ollama_url],
                 outputs=[char_detection_result, characters_table]
             )
             

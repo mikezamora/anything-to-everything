@@ -29,7 +29,7 @@ class JobStatus(Enum):
 class JobDefinition:
     """Job configuration definition"""
     job_id: str
-    epub_path: str
+    source_text_file: str  # Path to source text file (EPUB or PDF)
     output_path: str
     voice_ref_path: Optional[str] = None  # Optional in character mode
     
@@ -45,6 +45,7 @@ class JobDefinition:
     segment_words: int = 500
     character_config: Optional[str] = None
     emotion_library: Optional[str] = None
+    emo_audio_prompt: Optional[str] = None  # Emotion reference audio
     
     # Additional settings
     priority: int = 0  # Higher priority jobs processed first
@@ -69,7 +70,7 @@ class JobDefinition:
         Returns:
             List of command-line arguments
         """
-        args = [self.epub_path]
+        args = [self.source_text_file]
         
         # Add voice_ref_path only if provided (optional in character mode)
         if self.voice_ref_path:
@@ -110,6 +111,9 @@ class JobDefinition:
         
         if self.emotion_library:
             args.extend(["--emotion-library", self.emotion_library])
+        
+        if self.emo_audio_prompt:
+            args.extend(["--emo-audio", self.emo_audio_prompt])
 
         # args.append("--use-deepspeed")
         
@@ -273,7 +277,7 @@ class JobQueue:
         print(f"\n{'='*60}")
         print(f"Processing Job: {job_id}")
         print(f"{'='*60}")
-        print(f"EPUB: {job_def.epub_path}")
+        print(f"Source: {job_def.source_text_file}")
         print(f"Voice: {job_def.voice_ref_path}")
         print(f"Output: {job_def.output_path}")
         print(f"Priority: {job_def.priority}")
