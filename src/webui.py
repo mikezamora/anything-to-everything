@@ -74,6 +74,134 @@ def get_uploaded_emotion_files() -> List[str]:
     return get_uploaded_files("emotion")
 
 
+def get_output_files() -> List[Dict[str, str]]:
+    """Get list of output files with metadata"""
+    output_dir = "outputs"
+    if not os.path.exists(output_dir):
+        return []
+    
+    files = []
+    for filename in os.listdir(output_dir):
+        file_path = os.path.join(output_dir, filename)
+        if os.path.isfile(file_path):
+            stat = os.stat(file_path)
+            files.append({
+                "filename": filename,
+                "path": file_path,
+                "size": stat.st_size,
+                "size_mb": round(stat.st_size / (1024 * 1024), 2),
+                "modified": datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M:%S")
+            })
+    
+    # Sort by modification time (newest first)
+    files.sort(key=lambda x: x["modified"], reverse=True)
+    return files
+
+
+def get_output_files_table() -> pd.DataFrame:
+    """Get output files as a pandas DataFrame for display"""
+    files = get_output_files()
+    if not files:
+        return pd.DataFrame(columns=["Filename", "Size (MB)", "Modified", "Path"])
+    
+    data = []
+    for file in files:
+        data.append([
+            file["filename"],
+            file["size_mb"],
+            file["modified"],
+            file["path"]
+        ])
+    
+    return pd.DataFrame(data, columns=["Filename", "Size (MB)", "Modified", "Path"])
+
+
+def get_output_file_info(filename: str) -> str:
+    """Get detailed information about an output file"""
+    if not filename:
+        return "No file selected"
+    
+    try:
+        file_path = os.path.join("outputs", filename)
+        if not os.path.exists(file_path):
+            return f"File not found: {filename}"
+        
+        stat = os.stat(file_path)
+        
+        info = f"📁 **File Information**\n\n"
+        info += f"**Filename:** {filename}\n"
+        info += f"**Full Path:** {os.path.abspath(file_path)}\n"
+        info += f"**Size:** {stat.st_size:,} bytes ({round(stat.st_size / (1024 * 1024), 2)} MB)\n"
+        info += f"**Created:** {datetime.fromtimestamp(stat.st_ctime).strftime('%Y-%m-%d %H:%M:%S')}\n"
+        info += f"**Modified:** {datetime.fromtimestamp(stat.st_mtime).strftime('%Y-%m-%d %H:%M:%S')}\n"
+        info += f"**Format:** {os.path.splitext(filename)[1][1:].upper()}\n"
+        
+        # Try to find associated job
+        job_found = False
+        for status in ["completed", "failed", "pending", "running"]:
+            status_dir = os.path.join("jobs", status)
+            if os.path.exists(status_dir):
+                for job_file in os.listdir(status_dir):
+                    if job_file.endswith(".json"):
+                        try:
+                            with open(os.path.join(status_dir, job_file), 'r') as f:
+                                job_data = json.load(f)
+                                if job_data.get("output_path") == file_path or \
+                                   job_data.get("output_path") == os.path.abspath(file_path) or \
+                                   os.path.basename(job_data.get("output_path", "")) == filename:
+                                    info += f"\n**Associated Job:**\n"
+                                    info += f"  - Job ID: {job_data.get('job_id', 'Unknown')}\n"
+                                    info += f"  - Status: {status.upper()}\n"
+                                    info += f"  - Source: {os.path.basename(job_data.get('source_text_file', 'Unknown'))}\n"
+                                    if job_data.get("created_at"):
+                                        info += f"  - Created: {job_data['created_at']}\n"
+                                    if job_data.get("completed_at"):
+                                        info += f"  - Completed: {job_data['completed_at']}\n"
+                                    job_found = True
+                                    break
+                        except:
+                            pass
+                    if job_found:
+                        break
+            if job_found:
+                break
+        
+        return info
+    except Exception as e:
+        return f"Error getting file info: {str(e)}"
+
+
+def delete_output_file(filename: str) -> str:
+    """Delete an output file"""
+    if not filename:
+        return "No file selected"
+    
+    try:
+        file_path = os.path.join("outputs", filename)
+        if not os.path.exists(file_path):
+            return f"File not found: {filename}"
+        
+        os.remove(file_path)
+        log_message(f"✓ Deleted output file: {filename}")
+        return f"Successfully deleted: {filename}"
+    except Exception as e:
+        log_message(f"✗ Failed to delete output file {filename}: {e}")
+        return f"Error deleting file: {str(e)}"
+
+
+def download_output_file(filename: str) -> Optional[str]:
+    """Prepare output file for download"""
+    if not filename:
+        return None
+    
+    file_path = os.path.join("outputs", filename)
+    if not os.path.exists(file_path):
+        return None
+    
+    log_message(f"✓ Prepared download: {filename}")
+    return file_path
+
+
 def log_message(message: str):
     """Add message to terminal log"""
     timestamp = datetime.now().strftime("%H:%M:%S")
@@ -989,7 +1117,92 @@ with gr.Blocks(title="Anything to Everything", theme=gr.themes.Soft()) as app:
                 outputs=[emotion_dir_display, emotion_upload_result]
             )
         
-        # Tab 4: Terminal
+        # Tab 4: Output Explorer
+        with gr.Tab("📦 Output Explorer"):
+            gr.Markdown("### Browse and Download Completed Audiobooks")
+            
+            with gr.Row():
+                refresh_outputs_btn = gr.Button("🔄 Refresh Outputs", size="sm")
+                total_outputs_label = gr.Textbox(label="Total Output Files", interactive=False, scale=1)
+            
+            outputs_table = gr.Dataframe(
+                headers=["Filename", "Size (MB)", "Modified", "Path"],
+                label="Output Files",
+                interactive=False,
+                wrap=True
+            )
+            
+            gr.Markdown("### File Actions")
+            
+            with gr.Row():
+                with gr.Column(scale=1):
+                    output_filename_input = gr.Textbox(
+                        label="Select File (enter filename from table above)",
+                        placeholder="audiobook.m4b"
+                    )
+                    
+                    with gr.Row():
+                        get_info_btn = gr.Button("ℹ️ Get Info", size="sm")
+                        download_btn = gr.Button("⬇️ Download", variant="primary", size="sm")
+                        delete_btn = gr.Button("🗑️ Delete", variant="stop", size="sm")
+                    
+                    action_result = gr.Textbox(label="Action Result", interactive=False, lines=3)
+                
+                with gr.Column(scale=2):
+                    file_info_display = gr.Markdown(value="*Select a file to view details*")
+            
+            download_file_output = gr.File(label="Download File", visible=True)
+            
+            # Wire up output explorer
+            def refresh_outputs_table():
+                df = get_output_files_table()
+                count = len(df) if not df.empty else 0
+                return df, f"{count} file(s)"
+            
+            refresh_outputs_btn.click(
+                refresh_outputs_table,
+                outputs=[outputs_table, total_outputs_label]
+            )
+            
+            get_info_btn.click(
+                get_output_file_info,
+                inputs=[output_filename_input],
+                outputs=[file_info_display]
+            )
+            
+            download_btn.click(
+                download_output_file,
+                inputs=[output_filename_input],
+                outputs=[download_file_output]
+            ).then(
+                lambda filename: f"Prepared {filename} for download",
+                inputs=[output_filename_input],
+                outputs=[action_result]
+            )
+            
+            delete_btn.click(
+                delete_output_file,
+                inputs=[output_filename_input],
+                outputs=[action_result]
+            ).then(
+                refresh_outputs_table,
+                outputs=[outputs_table, total_outputs_label]
+            )
+            
+            # Auto-populate on load
+            outputs_table.change(
+                lambda: "",
+                outputs=[output_filename_input]
+            )
+            
+            # Auto-refresh every 10 seconds
+            output_refresh_timer = gr.Timer(10)
+            output_refresh_timer.tick(
+                refresh_outputs_table,
+                outputs=[outputs_table, total_outputs_label]
+            )
+        
+        # Tab 5: Terminal
         with gr.Tab("💻 Terminal"):
             gr.Markdown("### System Logs and Output")
             
