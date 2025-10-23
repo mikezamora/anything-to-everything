@@ -3,7 +3,7 @@ name = "epub-to-audiobook"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = "==3.11.11"
 dependencies = [
     "beautifulsoup4>=4.12.0",
     "ebooklib>=0.18",

@@ -26,8 +26,7 @@ desktop.ini
 
 # IndexTTS.
 /cache/
-/checkpoints/*
-!/checkpoints/*.yaml
+/checkpoints/
 /outputs/
 /output_archive/
 /inputs/
