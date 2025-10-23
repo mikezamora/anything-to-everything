@@ -43,6 +43,7 @@ class JobDefinition:
     ollama_model: Optional[str] = None
     ollama_url: str = "http://host.docker.internal:11434"
     segment_words: int = 500
+    strip_unknown_tokens: bool = True  # Strip problematic tokens for TTS
     character_config: Optional[str] = None
     emotion_library: Optional[str] = None
     emo_audio_prompt: Optional[str] = None  # Emotion reference audio
@@ -114,6 +115,13 @@ class JobDefinition:
         
         if self.emo_audio_prompt:
             args.extend(["--emo-audio", self.emo_audio_prompt])
+        
+        # Add segment words parameter
+        args.extend(["--segment-words", str(self.segment_words)])
+        
+        # Add strip unknown tokens parameter
+        if not self.strip_unknown_tokens:
+            args.append("--disable-strip-unknown-tokens")
 
         # args.append("--use-deepspeed")
         

@@ -80,6 +80,7 @@ Examples:
     parser.add_argument("--segment-words", type=int, default=500, help="Target words per segment (default: 500)")
     parser.add_argument("--max-words", type=int, default=600, help="Maximum words per segment (default: 600)")
     parser.add_argument("--min-words", type=int, default=100, help="Minimum words per segment (default: 100)")
+    parser.add_argument("--disable-strip-unknown-tokens", action="store_true", default=True, help="Do not strip tokens that commonly cause TTS encoding issues (default: False)")
     parser.add_argument("--use-ollama", action="store_true", help="Use Ollama for text cleanup")
     parser.add_argument("--ollama-model", default="aratan/DeepSeek-R1-32B-Uncensored:latest", help="Ollama model to use (default: aratan/DeepSeek-R1-32B-Uncensored:latest)")
     parser.add_argument("--ollama-url", default="http://host.docker.internal:11434", help="Ollama API URL")
@@ -293,7 +294,8 @@ Examples:
             temp_segmenter = TextSegmenter(
                 target_words=args.segment_words,
                 max_words=args.max_words,
-                min_words=args.min_words
+                min_words=args.min_words,
+                strip_unknown_tokens=not args.disable_strip_unknown_tokens
             )
             temp_segments = temp_segmenter.segment_text(text)
             
@@ -363,7 +365,8 @@ Examples:
         base_segmenter = TextSegmenter(
             target_words=args.segment_words,
             max_words=args.max_words,
-            min_words=args.min_words
+            min_words=args.min_words,
+            strip_unknown_tokens=not args.disable_strip_unknown_tokens
         )
         base_segments = base_segmenter.segment_text(text)
         
@@ -386,7 +389,8 @@ Examples:
             segmenter = TextSegmenter(
                 target_words=args.segment_words,
                 max_words=args.max_words,
-                min_words=args.min_words
+                min_words=args.min_words,
+                strip_unknown_tokens=not args.disable_strip_unknown_tokens
             )
             stats = segmenter.get_segment_stats(segments)
             
@@ -399,7 +403,8 @@ Examples:
             segmenter = TextSegmenter(
                 target_words=args.segment_words,
                 max_words=args.max_words,
-                min_words=args.min_words
+                min_words=args.min_words,
+                strip_unknown_tokens=not args.disable_strip_unknown_tokens
             )
             segments = segmenter.segment_text(text)
             stats = segmenter.get_segment_stats(segments)

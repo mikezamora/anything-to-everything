@@ -237,6 +237,7 @@ def create_single_job(
     segment_words: int,
     max_words: int,
     min_words: int,
+    strip_unknown_tokens: bool,
     emo_audio: str,
     character_config: str,
     emotion_library: str,
@@ -281,6 +282,7 @@ def create_single_job(
             ollama_model=ollama_model if use_ollama or ollama_char else None,
             ollama_url=ollama_url,
             segment_words=segment_words,
+            strip_unknown_tokens=strip_unknown_tokens,
             character_config=character_config if character_config and os.path.exists(character_config) else None,
             emotion_library=emotion_library if emotion_library and os.path.exists(emotion_library) else None,
             emo_audio_prompt=emo_audio if emo_audio and os.path.exists(emo_audio) else None,
@@ -748,6 +750,7 @@ with gr.Blocks(title="Anything to Everything", theme=gr.themes.Soft()) as app:
                         segment_words = gr.Slider(100, 1000, value=500, step=50, label="Words per Segment")
                         max_words = gr.Slider(200, 1200, value=600, step=50, label="Max Words per Segment")
                         min_words = gr.Slider(50, 500, value=100, step=50, label="Min Words per Segment")
+                        strip_unknown_tokens = gr.Checkbox(label="Strip Unknown Tokens (recommended)", value=True, info="Remove tokens like === that cause TTS encoding issues")
             
             with gr.Row():
                 create_job_btn = gr.Button("Create Job", variant="primary", size="lg")
@@ -803,7 +806,7 @@ with gr.Blocks(title="Anything to Everything", theme=gr.themes.Soft()) as app:
                 inputs=[
                     text_path_display, voice_path_display, output_name, format_choice, priority,
                     detect_chars, ollama_char, character_mode, keep_segments, use_ollama,
-                    ollama_model, ollama_url, segment_words, max_words, min_words,
+                    ollama_model, ollama_url, segment_words, max_words, min_words, strip_unknown_tokens,
                     emo_audio, character_config, emotion_library
                 ],
                 outputs=[job_id_output, job_result]

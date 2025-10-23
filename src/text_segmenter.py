@@ -8,7 +8,7 @@ from typing import List
 class TextSegmenter:
     """Split text into segments based on word count while respecting sentence boundaries"""
     
-    def __init__(self, target_words=500, max_words=600, min_words=100):
+    def __init__(self, target_words=500, max_words=600, min_words=100, strip_unknown_tokens=True):
         """
         Initialize the text segmenter
         
@@ -16,10 +16,12 @@ class TextSegmenter:
             target_words (int): Target number of words per segment
             max_words (int): Maximum words per segment (hard limit)
             min_words (int): Minimum words for a segment to be considered valid
+            strip_unknown_tokens (bool): Whether to remove tokens that might cause TTS issues
         """
         self.target_words = target_words
         self.max_words = max_words
         self.min_words = min_words
+        self.strip_unknown_tokens = strip_unknown_tokens
     
     def segment_text(self, text: str) -> List[str]:
         """
@@ -31,6 +33,10 @@ class TextSegmenter:
         Returns:
             List[str]: List of text segments
         """
+        # Clean unknown tokens first if enabled
+        if self.strip_unknown_tokens:
+            text = self.clean_unknown_tokens(text)
+        
         # Split into sentences first
         sentences = self._split_into_sentences(text)
         
@@ -99,7 +105,52 @@ class TextSegmenter:
         
         return sentences
     
-    def get_segment_stats(self, segments: List[str]) -> dict:
+    def clean_unknown_tokens(self, text: str) -> str:
+        """
+        Remove tokens that commonly cause TTS encoding issues while preserving normal punctuation
+        
+        Args:
+            text (str): Input text to clean
+            
+        Returns:
+            str: Cleaned text
+        """
+        if not self.strip_unknown_tokens:
+            return text
+        
+        # Define characters to remove (common problematic tokens for TTS)
+        # Keep normal punctuation: . , ! ? : ; " ' ( ) - 
+        # Remove: = # * + ~ ^ @ $ % & | \ / < > [ ] { } _ `
+        problematic_chars = ['=', '#', '*', '+', '~', '^', '@', '$', '%', '&', '|', '\\', '/', '<', '>', '[', ']', '{', '}', '_', '`']
+        
+        cleaned_text = text
+        
+        # Remove standalone problematic characters (surrounded by spaces or at boundaries)
+        for char in problematic_chars:
+            # Remove standalone characters (surrounded by whitespace)
+            pattern = r'\s+' + re.escape(char) + r'+\s+'
+            cleaned_text = re.sub(pattern, ' ', cleaned_text)
+            
+            # Remove at beginning/end of text
+            pattern = r'^' + re.escape(char) + r'+\s*'
+            cleaned_text = re.sub(pattern, '', cleaned_text)
+            
+            pattern = r'\s*' + re.escape(char) + r'+$'
+            cleaned_text = re.sub(pattern, '', cleaned_text)
+            
+            # Remove sequences of the same character (like ===== or ***)
+            pattern = re.escape(char) + r'{2,}'
+            cleaned_text = re.sub(pattern, '', cleaned_text)
+        
+        # Clean up multiple spaces
+        cleaned_text = re.sub(r'\s+', ' ', cleaned_text)
+        
+        # Clean up leading/trailing whitespace
+        cleaned_text = cleaned_text.strip()
+        
+        return cleaned_text
+    
+    def get_segment_info(self, segments: List[str]) -> dict:
         """
         Get statistics about the segments
         
