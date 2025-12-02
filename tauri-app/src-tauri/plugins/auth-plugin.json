@@ -1,0 +1,74 @@
+{
+  "name": "auth-plugin",
+  "plugin_type": "service",
+  "capabilities": [],
+  "version": "0.1.0",
+  "dependencies": {},
+  "wasm_module": "auth_plugin.wasm",
+  "author": "Tauri App",
+  "wasm_config": {
+    "config": {},
+    "allowed_hosts": [],
+    "allowed_paths": {},
+    "memory_max_pages": null
+  },
+  "entry_points": [
+    {
+      "description": "Create a new user account",
+      "name": "signup",
+      "output_format": "json",
+      "function": "signup",
+      "input_format": "json"
+    },
+    {
+      "description": "Authenticate user and create session",
+      "name": "login",
+      "output_format": "json",
+      "function": "login",
+      "input_format": "json"
+    },
+    {
+      "description": "Check if session is valid",
+      "name": "verify_session",
+      "output_format": "json",
+      "function": "verify_session",
+      "input_format": "json"
+    },
+    {
+      "description": "End user session",
+      "name": "logout",
+      "output_format": "json",
+      "function": "logout",
+      "input_format": "json"
+    },
+    {
+      "description": "Get current user information",
+      "name": "get_current_user",
+      "output_format": "json",
+      "function": "get_current_user",
+      "input_format": "json"
+    },
+    {
+      "description": "Verify user email address",
+      "name": "verify_email",
+      "output_format": "json",
+      "function": "verify_email",
+      "input_format": "json"
+    },
+    {
+      "description": "Request password reset",
+      "name": "request_password_reset",
+      "output_format": "json",
+      "function": "request_password_reset",
+      "input_format": "json"
+    },
+    {
+      "description": "Reset user password",
+      "name": "reset_password",
+      "output_format": "json",
+      "function": "reset_password",
+      "input_format": "json"
+    }
+  ],
+  "description": "Authentication plugin with database host functions"
+}

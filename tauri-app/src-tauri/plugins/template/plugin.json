@@ -1,0 +1,49 @@
+{
+  "capabilities": [
+    "json_processing",
+    "host_functions"
+  ],
+  "entry_points": [
+    {
+      "description": "Generate a greeting message",
+      "function": "greet",
+      "output_format": "json",
+      "name": "greet",
+      "input_format": "json"
+    },
+    {
+      "description": "Repeat a message N times",
+      "function": "repeat",
+      "output_format": "json",
+      "name": "repeat",
+      "input_format": "json"
+    },
+    {
+      "description": "Validate input parameters",
+      "function": "validate",
+      "output_format": "json",
+      "name": "validate",
+      "input_format": "json"
+    },
+    {
+      "description": "Get plugin metadata",
+      "function": "get_info",
+      "output_format": "json",
+      "name": "get_info",
+      "input_format": "json"
+    }
+  ],
+  "description": "Template plugin demonstrating Extism WASM capabilities",
+  "name": "template",
+  "plugin_type": "utility",
+  "version": "0.1.0",
+  "author": "Your Name",
+  "wasm_module": "plugin.wasm",
+  "wasm_config": {
+    "config": {},
+    "allowed_paths": [],
+    "memory_max_pages": 5,
+    "allowed_hosts": []
+  },
+  "dependencies": {}
+}

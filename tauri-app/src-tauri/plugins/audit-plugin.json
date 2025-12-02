@@ -1,0 +1,39 @@
+{
+  "name": "audit-plugin",
+  "version": "0.1.0",
+  "description": "Audit logging plugin for tracking user actions and system events",
+  "author": "Tauri App",
+  "plugin_type": "service",
+  "wasm_module": "audit_plugin.wasm",
+  "wasm_config": {
+    "allowed_hosts": [],
+    "allowed_paths": {},
+    "config": {},
+    "memory_max_pages": null
+  },
+  "capabilities": [],
+  "entry_points": [
+    {
+      "name": "create_audit_log",
+      "function": "create_audit_log",
+      "description": "Create a new audit log entry for a user action",
+      "input_format": "json",
+      "output_format": "json"
+    },
+    {
+      "name": "get_user_audit_logs",
+      "function": "get_user_audit_logs",
+      "description": "Get paginated audit logs for a specific user",
+      "input_format": "json",
+      "output_format": "json"
+    },
+    {
+      "name": "get_audit_logs_filtered",
+      "function": "get_audit_logs_filtered",
+      "description": "Get audit logs with filtering options",
+      "input_format": "json",
+      "output_format": "json"
+    }
+  ],
+  "dependencies": {}
+}

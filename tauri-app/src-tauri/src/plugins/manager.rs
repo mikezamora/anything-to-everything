@@ -2,6 +2,7 @@
 
 use super::{PluginLoader, PluginManifest};
 use crate::plugins::manifest::EntryPoint;
+use crate::db::Database;
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -14,9 +15,27 @@ use wasmparser::{Parser, Payload};
 pub struct PluginManager {
     plugins_dir: PathBuf,
     plugins: Arc<RwLock<HashMap<String, PluginLoader>>>,
+    database: Option<Arc<Database>>,
 }
 
 impl PluginManager {
+    /// Create a new plugin manager with database access
+    pub fn new_with_database(plugins_dir: PathBuf, database: Arc<Database>) -> Result<Self> {
+        info!("Initializing plugin manager at {:?} with database", plugins_dir);
+        
+        // Create plugins directory if it doesn't exist
+        if !plugins_dir.exists() {
+            std::fs::create_dir_all(&plugins_dir)
+                .context("Failed to create plugins directory")?;
+        }
+        
+        Ok(Self {
+            plugins_dir,
+            plugins: Arc::new(RwLock::new(HashMap::new())),
+            database: Some(database),
+        })
+    }
+
     /// Create a new plugin manager
     pub fn new(plugins_dir: PathBuf) -> Result<Self> {
         if !plugins_dir.exists() {
@@ -27,6 +46,7 @@ impl PluginManager {
         Ok(PluginManager {
             plugins_dir,
             plugins: Arc::new(RwLock::new(HashMap::new())),
+            database: None,
         })
     }
     
@@ -69,7 +89,13 @@ impl PluginManager {
         let manifest = PluginManifest::load_from_file(manifest_path)?;
         let plugin_name = manifest.name.clone();
         
-        let loader = PluginLoader::load(manifest, plugin_dir)?;
+        // Create host functions if database is available
+        let loader = if let Some(ref db) = self.database {
+            let host_fns = crate::host_functions::register_host_functions(db.clone());
+            PluginLoader::load_with_host_functions(manifest, plugin_dir, host_fns)?
+        } else {
+            PluginLoader::load(manifest, plugin_dir)?
+        };
         
         let mut plugins = self.plugins.write().await;
         plugins.insert(plugin_name, loader);

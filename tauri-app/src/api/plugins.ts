@@ -55,3 +55,21 @@ export async function installPluginFromUrl(url: string): Promise<string> {
 export async function discoverPlugins(): Promise<number> {
   return await invoke<number>("discover_plugins");
 }
+
+// ============================================================================
+// Database Test Functions
+// ============================================================================
+
+/**
+ * Test database connection
+ */
+export async function testDatabaseConnection(): Promise<string> {
+  return await invoke<string>("db_test_connection");
+}
+
+/**
+ * Get database schema version
+ */
+export async function getDatabaseSchemaVersion(): Promise<number> {
+  return await invoke<number>("db_get_schema_version");
+}

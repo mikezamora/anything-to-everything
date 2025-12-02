@@ -2,6 +2,7 @@ import { useState } from "react";
 import reactLogo from "./assets/react.svg";
 import "./App.css";
 import { usePlugins, usePluginExecution, usePluginInstallation, usePluginInfo } from "./hooks/usePlugins";
+import { testDatabaseConnection, getDatabaseSchemaVersion } from "./api/plugins";
 
 function App() {
   const { plugins, loading, error, loadPlugins } = usePlugins();
@@ -11,8 +12,21 @@ function App() {
   const [selectedFunction, setSelectedFunction] = useState<string>("");
   const [inputData, setInputData] = useState<string>('"Hello, World!"');
   const [pluginUrl, setPluginUrl] = useState<string>("");
+  const [dbStatus, setDbStatus] = useState<string>("");
+  const [dbVersion, setDbVersion] = useState<number | null>(null);
   
   const { pluginInfo } = usePluginInfo(selectedPlugin);
+
+  async function handleTestDatabase() {
+    try {
+      const status = await testDatabaseConnection();
+      setDbStatus(status);
+      const version = await getDatabaseSchemaVersion();
+      setDbVersion(version);
+    } catch (err: any) {
+      setDbStatus(`Error: ${err}`);
+    }
+  }
 
   async function handleExecute() {
     if (!selectedPlugin || !selectedFunction) return;
@@ -80,6 +94,23 @@ function App() {
         <p style={{ fontSize: "0.9rem", marginTop: "0.5rem", opacity: 0.7 }}>
           Enter a direct link to a .wasm file or a plugin.json manifest
         </p>
+      </div>
+
+      <div style={{ marginTop: "2rem" }}>
+        <h2>Database Status</h2>
+        <button onClick={handleTestDatabase} style={{ padding: "0.5rem 1rem" }}>
+          Test Database Connection
+        </button>
+        {dbStatus && (
+          <div style={{ marginTop: "1rem" }}>
+            <p style={{ color: dbStatus.includes("Error") ? "red" : "green" }}>
+              {dbStatus}
+            </p>
+            {dbVersion !== null && (
+              <p>Schema Version: {dbVersion}</p>
+            )}
+          </div>
+        )}
       </div>
 
       <div style={{ marginTop: "2rem" }}>

@@ -10,10 +10,17 @@
     "tauri": "tauri"
   },
   "dependencies": {
+    "@hookform/resolvers": "^5.2.2",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-opener": "^2",
+    "clsx": "^2.1.1",
+    "lucide-react": "^0.555.0",
     "react": "^19.1.0",
-    "react-dom": "^19.1.0"
+    "react-dom": "^19.1.0",
+    "react-hook-form": "^7.67.0",
+    "react-router-dom": "^7.9.6",
+    "tailwind-merge": "^3.4.0",
+    "zod": "^4.1.13"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.9.5",

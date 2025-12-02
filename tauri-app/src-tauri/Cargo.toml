@@ -24,8 +24,9 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
 # Plugin system dependencies
-extism = "1.4"
+extism = "1.13"
 extism-manifest = "1.13"
+extism-convert = "1.13"
 tokio = { version = "1.42", features = ["full"] }
 anyhow = "1.0"
 tracing = "0.1"
@@ -33,4 +34,10 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 toml = "0.9"
 reqwest = { version = "0.12", features = ["json"] }
 wasmparser = "0.239"
+
+# Database dependencies
+rusqlite = { version = "0.32", features = ["bundled"] }
+uuid = { version = "1.0", features = ["v4"] }
+chrono = "0.4"
+rand = "0.8"
 

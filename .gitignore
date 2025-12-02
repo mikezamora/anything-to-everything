@@ -34,3 +34,6 @@ desktop.ini
 /jobs/
 /uploads/
 /data/
+
+**/target
+reference-code
