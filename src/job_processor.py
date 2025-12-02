@@ -9,11 +9,17 @@ import time
 import shutil
 import subprocess
 import sys
+import logging
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass, asdict
 from datetime import datetime
 from enum import Enum
+
+from job_executor import JobExecutor
+from job_state import JobState, StepStatus
+
+logger = logging.getLogger(__name__)
 
 
 class JobStatus(Enum):
@@ -269,21 +275,24 @@ class JobQueue:
             dst_dir.parent.mkdir(parents=True, exist_ok=True)
             shutil.move(str(src_dir), str(dst_dir))
     
-    def process_job(self, job_def: JobDefinition) -> JobResult:
+    def process_job(self, job_def: JobDefinition, resume: bool = False) -> JobResult:
         """
-        Process a single job
+        Process a single job with step-based execution and resume support
         
         Args:
             job_def (JobDefinition): Job definition
+            resume (bool): Whether to resume from last completed step
             
         Returns:
             JobResult: Job execution result
         """
+        import processing_steps  # Register all processing steps
+        
         job_id = job_def.job_id
         start_time = datetime.now().isoformat()
         
         print(f"\n{'='*60}")
-        print(f"Processing Job: {job_id}")
+        print(f"{'Resuming' if resume else 'Processing'} Job: {job_id}")
         print(f"{'='*60}")
         print(f"Source: {job_def.source_text_file}")
         print(f"Voice: {job_def.voice_ref_path}")
@@ -291,118 +300,65 @@ class JobQueue:
         print(f"Priority: {job_def.priority}")
         print(f"{'='*60}\n")
         
-        # Move job to running
-        self.move_job(job_id, "pending", "running")
-        
-        # Create job-specific work directory
-        job_dir = self.jobs_dir / "running" / job_id
-        job_work_dir = job_dir / "work"
-        job_work_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Prepare command with job-specific work directory
-        args = ["uv", "run", "src/main.py"] + job_def.to_command_args(work_dir=str(job_work_dir))
-        
-        # Create log file
-        job_dir = self.jobs_dir / "running" / job_id
-        log_file = job_dir / "output.log"
-        
-        try:
-            # Run the job with real-time output to both log file and terminal
-            # Use tee-like functionality to duplicate output to both destinations
-            log_file_handle = open(log_file, 'w', encoding='utf-8', buffering=1)
-            
+        # Move job to running (if not already there from failed state)
+        if not resume:
+            self.move_job(job_id, "pending", "running")
+        else:
+            # For resume, move from failed to running
             try:
-                log_file_handle.write(f"Job ID: {job_id}\n")
-                log_file_handle.write(f"Command: {' '.join(args)}\n")
-                log_file_handle.write(f"Start Time: {start_time}\n")
-                log_file_handle.write(f"{'='*60}\n\n")
-                log_file_handle.flush()
-                
-                # Let subprocess inherit stdout/stderr directly for real-time output
-                # Just write to log file separately
-                process = subprocess.Popen(
-                    args,
-                    cwd=os.getcwd(),
-                    stdout=None,  # Inherit parent's stdout
-                    stderr=None,  # Inherit parent's stderr
-                )
-                
-                # Wait for process to complete
-                returncode = process.wait()
-                
-                # Note: Since we're not capturing output, we can't write it to log in real-time
-                # The log will just contain metadata
-                
-                end_time = datetime.now().isoformat()
-                log_file_handle.write(f"\n{'='*60}\n")
-                log_file_handle.write(f"End Time: {end_time}\n")
-                log_file_handle.write(f"Exit Code: {returncode}\n")
-                
-                # Create a result object that mimics subprocess.run result
-                class Result:
-                    def __init__(self, returncode):
-                        self.returncode = returncode
-                
-                result = Result(returncode)
-                
-            finally:
-                log_file_handle.close()
-            
-            # Read log for result
-            with open(log_file, 'r', encoding='utf-8') as log:
-                output_log = log.read()
-            
-            # Determine status
-            if result.returncode == 0:
-                status = JobStatus.COMPLETED
-                self.move_job(job_id, "running", "completed")
-                print(f"Job {job_id} completed successfully")
-            else:
-                status = JobStatus.FAILED
-                self.move_job(job_id, "running", "failed")
-                print(f"Job {job_id} failed with exit code {result.returncode}")
-            
-            # Create result
-            job_result = JobResult(
-                job_id=job_id,
-                status=status,
-                start_time=start_time,
-                end_time=end_time,
-                exit_code=result.returncode,
-                output_log=output_log
-            )
-            
-            # Save result
-            result_file = self.jobs_dir / status.value / job_id / "result.json"
-            with open(result_file, 'w', encoding='utf-8') as f:
-                json.dump(job_result.to_dict(), f, indent=2)
-            
-            return job_result
-            
-        except Exception as e:
-            end_time = datetime.now().isoformat()
-            error_message = str(e)
-            
-            print(f"Job {job_id} failed with error: {error_message}")
-            
-            # Move to failed
+                self.move_job(job_id, "failed", "running")
+            except:
+                # Already in running, that's fine
+                pass
+        
+        # Use JobExecutor for step-based execution
+        executor = JobExecutor(self.jobs_dir)
+        
+        # Execute job with step tracking and resume support
+        success = executor.execute_job(
+            job_id=job_id,
+            job_data=job_def.to_dict(),
+            resume=resume
+        )
+        
+        end_time = datetime.now().isoformat()
+        
+        # Determine status
+        if success:
+            status = JobStatus.COMPLETED
+            self.move_job(job_id, "running", "completed")
+            print(f"\n✅ Job {job_id} completed successfully")
+        else:
+            status = JobStatus.FAILED
             self.move_job(job_id, "running", "failed")
-            
-            # Create error result
-            job_result = JobResult(
-                job_id=job_id,
-                status=JobStatus.FAILED,
-                start_time=start_time,
-                end_time=end_time,
-                error_message=error_message
-            )
-            
-            # Save result
-            result_file = self.jobs_dir / "failed" / job_id / "result.json"
-            with open(result_file, 'w', encoding='utf-8') as f:
-                json.dump(job_result.to_dict(), f, indent=2)
-            
-            return job_result
+            print(f"\n❌ Job {job_id} failed")
+        
+        # Get job state for detailed results
+        job_state = executor.load_job_state(job_id)
+        error_message = None
+        if job_state:
+            # Find first failed step
+            for step in job_state.steps:
+                if step.status == StepStatus.FAILED:
+                    error_message = step.error
+                    break
+        
+        # Create result
+        job_result = JobResult(
+            job_id=job_id,
+            status=status,
+            start_time=start_time,
+            end_time=end_time,
+            exit_code=0 if success else 1,
+            error_message=error_message
+        )
+        
+        # Save result
+        result_file = self.jobs_dir / status.value / job_id / "result.json"
+        with open(result_file, 'w', encoding='utf-8') as f:
+            json.dump(job_result.to_dict(), f, indent=2)
+        
+        return job_result
     
     def process_queue(self, max_jobs: Optional[int] = None, stop_on_error: bool = False) -> List[JobResult]:
         """
@@ -530,6 +486,96 @@ class JobQueue:
         print(f"Cannot cancel job {job_id} (not found or already running)")
         return False
     
+    def get_job_state(self, job_id: str) -> Optional[JobState]:
+        """
+        Get the state of a job including step progress
+        
+        Args:
+            job_id (str): Job ID
+            
+        Returns:
+            JobState if found, None otherwise
+        """
+        executor = JobExecutor(self.jobs_dir)
+        
+        # Try loading from any status folder
+        for status in ["pending", "running", "completed", "failed"]:
+            job_state = executor.load_job_state(job_id, from_failed=(status == "failed"))
+            if job_state:
+                return job_state
+        
+        return None
+    
+    def get_failed_jobs(self) -> List[str]:
+        """
+        Get all failed job IDs
+        
+        Returns:
+            List of failed job IDs
+        """
+        return self.list_jobs(status="failed")
+    
+    def resume_job(self, job_id: str) -> Optional[JobResult]:
+        """
+        Resume a failed job from the last completed step
+        
+        Args:
+            job_id (str): Job ID to resume
+            
+        Returns:
+            JobResult if job was found and processed, None otherwise
+        """
+        # Check if job exists in failed directory
+        failed_dir = self.jobs_dir / "failed" / job_id
+        if not failed_dir.exists():
+            print(f"Failed job {job_id} not found")
+            logger.warning(f"Attempted to resume non-existent failed job {job_id}")
+            return None
+        
+        # Load job definition
+        job_file = failed_dir / "job_definition.json"
+        if not job_file.exists():
+            print(f"Job definition not found for {job_id}")
+            logger.error(f"Job definition missing for failed job {job_id}")
+            return None
+        
+        with open(job_file, 'r', encoding='utf-8') as f:
+            job_data = json.load(f)
+            job_def = JobDefinition.from_dict(job_data)
+        
+        print(f"\n{'='*60}")
+        print(f"Resuming Failed Job: {job_id}")
+        print(f"{'='*60}")
+        
+        # Get current job state to show progress
+        executor = JobExecutor(self.jobs_dir)
+        job_state = executor.load_job_state(job_id, from_failed=True)
+        
+        if job_state:
+            completed_steps = len(job_state.get_completed_steps())
+            total_steps = job_state.total_steps
+            progress = job_state.get_progress_percentage()
+            
+            print(f"Progress: {completed_steps}/{total_steps} steps completed ({progress:.1f}%)")
+            print(f"Last Error: {job_state.last_error}")
+            
+            # Show completed and pending steps
+            print(f"\nCompleted Steps:")
+            for step in job_state.steps:
+                if step.status == StepStatus.COMPLETED:
+                    print(f"  ✓ {step.step_name}")
+            
+            print(f"\nPending Steps:")
+            for step in job_state.steps:
+                if step.status in [StepStatus.PENDING, StepStatus.FAILED]:
+                    status_icon = "✗" if step.status == StepStatus.FAILED else "○"
+                    print(f"  {status_icon} {step.step_name}")
+        
+        print(f"{'='*60}\n")
+        
+        # Process with resume flag
+        return self.process_job(job_def, resume=True)
+    
     def process_single_job(self, job_id: str) -> Optional[JobResult]:
         """
         Process a specific job by ID
@@ -567,6 +613,8 @@ def main():
                        help="List jobs by status")
     parser.add_argument("--status", help="Get status of specific job ID")
     parser.add_argument("--cancel", help="Cancel a pending job by ID")
+    parser.add_argument("--resume", help="Resume a failed job by ID")
+    parser.add_argument("--resume-all", action="store_true", help="Resume all failed jobs")
     
     args = parser.parse_args()
     
@@ -606,6 +654,46 @@ def main():
     # Handle cancel command
     if args.cancel:
         queue.cancel_job(args.cancel)
+        return
+    
+    # Handle resume command
+    if args.resume:
+        result = queue.resume_job(args.resume)
+        if result and result.status == JobStatus.COMPLETED:
+            print(f"\n✓ Job {args.resume} resumed and completed successfully")
+            sys.exit(0)
+        else:
+            print(f"\n✗ Job {args.resume} failed to complete")
+            sys.exit(1)
+        return
+    
+    # Handle resume all command
+    if args.resume_all:
+        failed_jobs = queue.get_failed_jobs()
+        if not failed_jobs:
+            print("\nNo failed jobs to resume")
+            return
+        
+        print(f"\nResuming {len(failed_jobs)} failed jobs...")
+        results = []
+        for job_id in failed_jobs:
+            result = queue.resume_job(job_id)
+            if result:
+                results.append(result)
+        
+        # Print summary
+        completed = sum(1 for r in results if r.status == JobStatus.COMPLETED)
+        failed = sum(1 for r in results if r.status == JobStatus.FAILED)
+        
+        print(f"\n{'='*60}")
+        print("Resume Summary")
+        print(f"{'='*60}")
+        print(f"Total resumed: {len(results)}")
+        print(f"Completed: {completed}")
+        print(f"Failed: {failed}")
+        print(f"{'='*60}\n")
+        
+        sys.exit(0 if failed == 0 else 1)
         return
     
     # Process queue

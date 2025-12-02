@@ -38,8 +38,8 @@ services:
               capabilities: [gpu]
     restart: always
     # network_mode: host
-    networks:
-      - everything-network
+    # networks:
+    #   - everything-network
     # dns:
     #   - 100.100.100.100
 
@@ -76,5 +76,5 @@ volumes:
     driver: local
 
 networks:
-  everything-network:
-    driver: bridge
+  default:
+    name: everything-network

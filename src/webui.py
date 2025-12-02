@@ -507,7 +507,33 @@ def get_job_details(job_id: str) -> str:
         details += f"Status: {result.status.value}\n"
         details += f"Priority: {job_data.get('priority', 0)}\n\n"
         
-        details += f"EPUB: {job_data.get('epub_path', 'N/A')}\n"
+        # Get step progress if available
+        from job_state import StepStatus
+        job_state = job_queue.get_job_state(full_job_id)
+        if job_state and job_state.steps:
+            progress = job_state.get_progress_percentage()
+            completed = len(job_state.get_completed_steps())
+            total = job_state.total_steps
+            details += f"Progress: {completed}/{total} steps ({progress:.1f}%)\n"
+            
+            if result.status.value == "failed" and job_state.can_resume:
+                details += f"✓ Job can be resumed from last completed step\n"
+            
+            details += f"\nStep Progress:\n"
+            for step in job_state.steps:
+                status_icon = {
+                    StepStatus.COMPLETED: "✓",
+                    StepStatus.FAILED: "✗",
+                    StepStatus.IN_PROGRESS: "⏳",
+                    StepStatus.PENDING: "○",
+                    StepStatus.SKIPPED: "⏭"
+                }.get(step.status, "?")
+                details += f"  {status_icon} {step.step_name}\n"
+                if step.error:
+                    details += f"     Error: {step.error}\n"
+            details += "\n"
+        
+        details += f"Source: {job_data.get('source_text_file', 'N/A')}\n"
         details += f"Voice: {job_data.get('voice_ref_path', 'N/A')}\n"
         details += f"Output: {job_data.get('output_path', 'N/A')}\n"
         details += f"Format: {job_data.get('format', 'wav')}\n\n"
@@ -564,6 +590,54 @@ def cancel_job(job_id: str) -> str:
             return f"Failed to cancel job {full_job_id}"
             
     except Exception as e:
+        return f"Error: {str(e)}"
+
+
+def resume_failed_job(job_id: str) -> str:
+    """Resume a failed job from last completed step"""
+    try:
+        if not job_id:
+            return "Enter a Job ID to resume"
+        
+        # Find full job ID
+        failed_jobs = job_queue.get_failed_jobs()
+        full_job_id = None
+        for jid in failed_jobs:
+            if jid.startswith(job_id) or job_id in jid:
+                full_job_id = jid
+                break
+        
+        if not full_job_id:
+            return f"Failed job '{job_id}' not found"
+        
+        # Get job state to show what will be resumed
+        job_state = job_queue.get_job_state(full_job_id)
+        if job_state:
+            completed = len(job_state.get_completed_steps())
+            total = job_state.total_steps
+            log_message(f"Resuming job {full_job_id} from step {completed + 1}/{total}")
+        else:
+            log_message(f"Resuming job {full_job_id}")
+        
+        # Run in background thread
+        def resume_job_thread():
+            try:
+                result = job_queue.resume_job(full_job_id)
+                if result and result.status.value == "completed":
+                    log_message(f"✓ Job {full_job_id} completed successfully after resume")
+                else:
+                    log_message(f"✗ Job {full_job_id} failed again after resume")
+            except Exception as e:
+                log_message(f"✗ Resume error: {e}")
+        
+        import threading
+        thread = threading.Thread(target=resume_job_thread, daemon=True)
+        thread.start()
+        
+        return f"Resuming job {full_job_id}\nCheck terminal for progress."
+        
+    except Exception as e:
+        log_message(f"✗ Failed to resume job: {e}")
         return f"Error: {str(e)}"
 
 
@@ -961,9 +1035,11 @@ with gr.Blocks(title="Anything to Everything", theme=gr.themes.Soft()) as app:
                 with gr.Column(scale=1):
                     job_id_input = gr.Textbox(label="Job ID (or prefix)", placeholder="Enter job ID...")
                     with gr.Row():
-                        get_details_btn = gr.Button("Get Details", size="sm")
-                        start_single_job_btn = gr.Button("▶️ Start Job", variant="primary", size="sm")
-                        cancel_job_btn = gr.Button("Cancel Job", variant="stop", size="sm")
+                        get_details_btn = gr.Button("ℹ️ Details", size="sm")
+                        start_single_job_btn = gr.Button("▶️ Start", variant="primary", size="sm")
+                    with gr.Row():
+                        resume_job_btn = gr.Button("🔄 Resume Failed", variant="secondary", size="sm")
+                        cancel_job_btn = gr.Button("❌ Cancel", variant="stop", size="sm")
                 
                 with gr.Column(scale=2):
                     job_details_output = gr.Textbox(label="Job Details", lines=20, interactive=False)
@@ -1002,6 +1078,12 @@ with gr.Blocks(title="Anything to Everything", theme=gr.themes.Soft()) as app:
             
             cancel_job_btn.click(
                 cancel_job,
+                inputs=[job_id_input],
+                outputs=[job_details_output]
+            )
+            
+            resume_job_btn.click(
+                resume_failed_job,
                 inputs=[job_id_input],
                 outputs=[job_details_output]
             )
