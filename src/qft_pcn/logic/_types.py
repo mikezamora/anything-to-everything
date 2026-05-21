@@ -1,0 +1,134 @@
+"""Bottom-up type computation for each site of the serialized AST.
+
+Maps a Ty to one of the eight flat tags in encoding.py, with TYPE_ARR_NESTED
+as the overflow slot (the full Ty is then stored in EncodingMeta's
+nested_type_index side table).
+
+This module does NOT do type-checking — sub-project B owns that. Here we
+trust the input AST is well-typed and compute the type of each subexpression.
+"""
+
+from __future__ import annotations
+
+from typing import Optional
+
+from .ast import (Node, Var, Lam, App, IntLit, BoolLit, If, Bin,
+                  Ty, TInt, TBool, TArrow)
+from ._serialize import NodeOccupancy
+from .encoding import (
+    KIND_VAR, KIND_LAM, KIND_APP, KIND_INT, KIND_BOOL, KIND_IF, KIND_BIN,
+    KIND_PAD,
+    TYPE_NONE, TYPE_INT, TYPE_BOOL,
+    TYPE_ARR_II, TYPE_ARR_IB, TYPE_ARR_BI, TYPE_ARR_BB, TYPE_ARR_NESTED,
+)
+
+
+_FLAT_ARROW_TAGS = {
+    (TYPE_INT, TYPE_INT): TYPE_ARR_II,
+    (TYPE_INT, TYPE_BOOL): TYPE_ARR_IB,
+    (TYPE_BOOL, TYPE_INT): TYPE_ARR_BI,
+    (TYPE_BOOL, TYPE_BOOL): TYPE_ARR_BB,
+}
+
+
+def ty_to_tag(ty: Ty) -> tuple[int, Optional[Ty]]:
+    """Map a Ty to a flat type tag.
+
+    Returns (tag, nested_full_ty). nested_full_ty is non-None only when the
+    tag is TYPE_ARR_NESTED — in which case the caller is responsible for
+    storing the full Ty in the meta side table indexed by site.
+    """
+    if isinstance(ty, TInt):
+        return (TYPE_INT, None)
+    if isinstance(ty, TBool):
+        return (TYPE_BOOL, None)
+    if isinstance(ty, TArrow):
+        src_tag, _ = ty_to_tag(ty.src)
+        dst_tag, _ = ty_to_tag(ty.dst)
+        if src_tag in (TYPE_INT, TYPE_BOOL) and dst_tag in (TYPE_INT, TYPE_BOOL):
+            return (_FLAT_ARROW_TAGS[(src_tag, dst_tag)], None)
+        return (TYPE_ARR_NESTED, ty)
+    raise TypeError(f"unknown Ty: {ty!r}")
+
+
+def _compute_ast_type(node: Node, env: list[tuple[str, Ty]]) -> Ty:
+    if isinstance(node, IntLit):
+        return TInt()
+    if isinstance(node, BoolLit):
+        return TBool()
+    if isinstance(node, Var):
+        for name, t in reversed(env):
+            if name == node.name:
+                return t
+        raise KeyError(f"unbound {node.name}")
+    if isinstance(node, Lam):
+        body_ty = _compute_ast_type(node.body,
+                                    env + [(node.param, node.param_ty)])
+        return TArrow(src=node.param_ty, dst=body_ty)
+    if isinstance(node, App):
+        fn_ty = _compute_ast_type(node.fn, env)
+        if isinstance(fn_ty, TArrow):
+            return fn_ty.dst
+        # Ill-typed input: fall back to TInt so encoder doesn't crash.
+        # Sub-project B will reject this at the Hamiltonian level.
+        return TInt()
+    if isinstance(node, If):
+        return _compute_ast_type(node.then_b, env)
+    if isinstance(node, Bin):
+        if node.op in ("+", "-", "*"):
+            return TInt()
+        if node.op in ("<", "=="):
+            return TBool()
+        raise ValueError(f"unknown op {node.op}")
+    raise TypeError(f"unknown Node: {type(node).__name__}")
+
+
+def compute_site_types(root: Node,
+                       sites: list[NodeOccupancy]
+                       ) -> list[int]:
+    """For each site, compute the flat type tag.
+
+    Returns a list of length N. The full Ty for any TYPE_ARR_NESTED entry
+    is stored on the corresponding NodeOccupancy.ty attribute so the
+    encoder can populate meta.nested_type_index.
+    """
+    # First, walk the AST once and gather a (ast_path -> Ty) map.
+    path_to_ty: dict[tuple[int, ...], Ty] = {}
+
+    def _walk(node: Node, env: list[tuple[str, Ty]], path: tuple[int, ...]):
+        ty = _compute_ast_type(node, env)
+        path_to_ty[path] = ty
+        if isinstance(node, Lam):
+            _walk(node.body, env + [(node.param, node.param_ty)],
+                  path + (0,))
+        elif isinstance(node, App):
+            _walk(node.fn, env, path + (0,))
+            _walk(node.arg, env, path + (1,))
+        elif isinstance(node, If):
+            _walk(node.cond, env, path + (0,))
+            _walk(node.then_b, env, path + (1,))
+            _walk(node.else_b, env, path + (2,))
+        elif isinstance(node, Bin):
+            _walk(node.lhs, env, path + (0,))
+            _walk(node.rhs, env, path + (1,))
+
+    _walk(root, [], ())
+
+    # Now produce flat tags per site, in serialization order.
+    tags: list[int] = []
+    for occ in sites:
+        if occ.kind == KIND_PAD:
+            tags.append(TYPE_NONE)
+            occ.ty = None
+            continue
+        ty = path_to_ty.get(occ.ast_path)
+        if ty is None:
+            tags.append(TYPE_NONE)
+            occ.ty = None
+            continue
+        tag, nested = ty_to_tag(ty)
+        tags.append(tag)
+        # Keep the full Ty on the occupancy when nested or for the encoder
+        # to use as needed.
+        occ.ty = nested if nested is not None else ty
+    return tags
