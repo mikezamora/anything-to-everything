@@ -85,3 +85,47 @@ def test_mera_tensor_invalid_kind():
     with pytest.raises(ValueError, match="kind"):
         MERATensor(kind="bogus", layer=0, position=0,
                    array=np.zeros((1, 4, 1), dtype=complex))
+
+
+from src.qft_pcn.qft.mera import MERA
+
+
+def test_mera_n_l_d_local_properties():
+    # Build a minimal valid MERA by hand for shape testing.
+    leaves = [np.zeros((1, 4, 1), dtype=complex) for _ in range(4)]
+    for s in leaves:
+        s[0, 0, 0] = 1.0
+    # L=2 layers since N=4=2^2
+    dis_0 = [np.eye(16, dtype=complex).reshape(4, 4, 4, 4) for _ in range(2)]
+    inter_0 = [np.eye(16, dtype=complex).reshape(4, 4, 4, 4)]
+    iso_0 = [np.zeros((4, 4, 4), dtype=complex) for _ in range(2)]
+    for w in iso_0:
+        for k in range(4):
+            w[k, k // 4, k % 4] = 1.0
+    dis_1 = [np.eye(16, dtype=complex).reshape(4, 4, 4, 4)]
+    inter_1 = []
+    iso_1 = [np.zeros((4, 4, 4), dtype=complex)]
+    for k in range(4):
+        iso_1[0][k, k // 4, k % 4] = 1.0
+    top = np.zeros((4, 4, 1), dtype=complex)
+    top[0, 0, 0] = 1.0
+    m = MERA(
+        leaves=leaves,
+        disentanglers=[dis_0, dis_1],
+        inter_disentanglers=[inter_0, inter_1],
+        isometries=[iso_0, iso_1],
+        top=top,
+        layer_dims=[4, 4],
+    )
+    assert m.N == 4
+    assert m.L == 2
+    assert m.d_local == 4
+
+
+def test_mera_rejects_non_power_of_2_N():
+    with pytest.raises(InvalidLayerCount):
+        MERA(
+            leaves=[np.zeros((1, 4, 1), dtype=complex) for _ in range(3)],
+            disentanglers=[], inter_disentanglers=[], isometries=[],
+            top=np.array([[[1.0]]], dtype=complex), layer_dims=[4],
+        )
