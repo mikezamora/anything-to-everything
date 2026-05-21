@@ -445,5 +445,144 @@ class MERA:
         assert len(rhos) == 2, f"top layer should have 2 sites, got {len(rhos)}"
         rho_l, rho_r = rhos
         T = self.top[..., 0]
-        val = np.einsum('ab,cd,ac,bd->', T, T.conj(), rho_l, rho_r)
+        val = np.einsum('ab,cd,ac,bd->', T, T.conj(), rho_l, rho_r,
+                        optimize='greedy')
         return float(np.real(val))
+
+    # ---- normalization and inner product ---------------------------------
+
+    def normalize(self) -> "MERA":
+        """In-place normalize to <psi|psi> = 1. Returns self for chaining.
+
+        Distributes the rescaling across leaves so no tensor grows huge:
+        each leaf is divided by n^(1/(2N)), giving norm_sq -> 1 exactly.
+        """
+        n = self.norm_sq()
+        if n < 1e-30:
+            raise ValueError("cannot normalize a zero-norm MERA")
+        scale = n ** (0.5 / self.N)
+        for k in range(self.N):
+            self.leaves[k] = self.leaves[k] / scale
+        return self
+
+    def _cross_layer1(self, other: "MERA") -> list[np.ndarray]:
+        """Build layer-1 cross "double" tensors from leaves + layer-0
+        disentangler/isometry.
+
+        At the leaf level the bra and ket SHARE the physical basis index;
+        the elementwise product eta_k[s] = self.leaf_k.conj()[s] *
+        other.leaf_k[s] captures this. Then the pair's effective bra/ket
+        isometries (disentangler composed with isometry) act on the
+        shared physical index pair (s_l, s_r), with eta_l and eta_r
+        weighting the sum.
+
+        Returns a list of (d_up_bra, d_up_ket) = (d_1, d_1) cross
+        tensors, one per layer-0 pair.
+        """
+        N = self.N
+        etas = [self.leaves[k][0, :, 0].conj() * other.leaves[k][0, :, 0]
+                for k in range(N)]
+        out: list[np.ndarray] = []
+        for j in range(N // 2):
+            eta_l = etas[2 * j]
+            eta_r = etas[2 * j + 1]
+            u_b = self.disentanglers[0][j]
+            u_k = other.disentanglers[0][j]
+            w_b = self.isometries[0][j]
+            w_k = other.isometries[0][j]
+            # Effective layer-isometry (w composed with u):
+            #   W[A, s_l, s_r] = sum_{a, b} w[A, a, b] * u[a, b, s_l, s_r]
+            Wb = np.einsum('Aab,abst->Ast', w_b, u_b, optimize='greedy')
+            Wk = np.einsum('Aab,abst->Ast', w_k, u_k, optimize='greedy')
+            # M[A_bra, A_ket] = sum_{s_l, s_r} Wb.conj()[A_bra, s_l, s_r]
+            #                                  * Wk[A_ket, s_l, s_r]
+            #                                  * eta_l[s_l] * eta_r[s_r]
+            M = np.einsum('Bst,Kst,s,t->BK',
+                          Wb.conj(), Wk, eta_l, eta_r,
+                          optimize='greedy')
+            out.append(M)
+        return out
+
+    def _cross_ascend(self, other: "MERA", ell: int,
+                      cross_below: list[np.ndarray]
+                      ) -> list[np.ndarray]:
+        """Ascend cross tensors from layer ell to layer ell+1, for ell >= 1.
+
+        At layer >= 1, bra and ket bonds are independent: cross_below[k]
+        has shape (d_ell_bra, d_ell_ket). The ascent applies self's
+        disentangler+isometry on the bra index and other's on the ket
+        index (no shared-basis collapse).
+        """
+        N = self.N
+        n_above = N // (2 ** (ell + 1))
+        u_b_list = self.disentanglers[ell]
+        u_k_list = other.disentanglers[ell]
+        w_b_list = self.isometries[ell]
+        w_k_list = other.isometries[ell]
+        out: list[np.ndarray] = []
+        for j in range(n_above):
+            ML = cross_below[2 * j]      # (a_b, a_k)
+            MR = cross_below[2 * j + 1]  # (b_b, b_k)
+            u_b = u_b_list[j]
+            u_k = u_k_list[j]
+            w_b = w_b_list[j]
+            w_k = w_k_list[j]
+            # Composed bra/ket layer-isometries:
+            #   Wb[A_b, a_b, b_b] = sum w_b.conj()[A_b, a', b'] *
+            #                            u_b.conj()[a', b', a_b, b_b]
+            #   Wk[A_k, a_k, b_k] = sum w_k[A_k, a', b'] *
+            #                            u_k[a', b', a_k, b_k]
+            Wb = np.einsum('Bxy,xyab->Bab', w_b.conj(), u_b.conj(),
+                           optimize='greedy')
+            Wk = np.einsum('Kxy,xyab->Kab', w_k, u_k,
+                           optimize='greedy')
+            # M_new[A_b, A_k] = sum_{a_b, b_b, a_k, b_k}
+            #     Wb[A_b, a_b, b_b] * Wk[A_k, a_k, b_k]
+            #     * ML[a_b, a_k] * MR[b_b, b_k]
+            M_new = np.einsum('Bab,Kcd,ac,bd->BK',
+                              Wb, Wk, ML, MR,
+                              optimize='greedy')
+            out.append(M_new)
+        return out
+
+    def inner(self, other: "MERA") -> complex:
+        """<self | other>. Self is bra (conjugated), other is ket.
+
+        For self == other this reduces to norm_sq.
+
+        Algorithm: build "double-network" cross tensors layer by layer.
+        Layer 0 → 1 has shared-basis collapse (eta_k = bra.conj() * ket).
+        Layers 1 → L-1 have independent bra/ket bonds. Top contracts
+        with cross at layer L-1 (2 sites).
+        """
+        if other.N != self.N:
+            raise ValueError(f"MERA length mismatch: {self.N} vs {other.N}")
+        if other.L != self.L:
+            raise ValueError(f"MERA L mismatch: {self.L} vs {other.L}")
+        if other.d_local != self.d_local:
+            raise ValueError(
+                f"d_local mismatch: {self.d_local} vs {other.d_local}")
+        L = self.L
+        if L == 1:
+            # N=2: top sits directly above the two leaves (no isometry
+            # ascent consumed in norm_sq either). Contract leaves with
+            # top tensors via shared basis.
+            eta_l = self.leaves[0][0, :, 0].conj() * other.leaves[0][0, :, 0]
+            eta_r = self.leaves[1][0, :, 0].conj() * other.leaves[1][0, :, 0]
+            T_b = self.top[..., 0].conj()
+            T_k = other.top[..., 0]
+            val = np.einsum('st,st,s,t->',
+                            T_b, T_k, eta_l, eta_r,
+                            optimize='greedy')
+            return complex(val)
+        cross = self._cross_layer1(other)
+        for ell in range(1, L - 1):
+            cross = self._cross_ascend(other, ell, cross)
+        assert len(cross) == 2
+        ML, MR = cross
+        T_b = self.top[..., 0].conj()    # (a_l_bra, a_r_bra)
+        T_k = other.top[..., 0]          # (a_l_ket, a_r_ket)
+        val = np.einsum('ab,cd,ac,bd->',
+                        T_b, T_k, ML, MR,
+                        optimize='greedy')
+        return complex(val)

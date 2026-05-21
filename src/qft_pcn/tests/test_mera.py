@@ -213,3 +213,29 @@ def test_norm_sq_for_n_eq_2():
     # Minimal MERA: N=2, L=1.
     m = MERA.vacuum(N=2, d_local=4, chi_layer=4)
     assert abs(m.norm_sq() - 1.0) < 1e-10
+
+
+def test_normalize_makes_norm_sq_one():
+    m = MERA.number_states([2, 0, 1, 0, 0, 0, 0, 0], d=4)
+    # Manually scale up so norm > 1.
+    m.leaves[0] = 3.0 * m.leaves[0]
+    assert m.norm_sq() > 1.0
+    m.normalize()
+    assert abs(m.norm_sq() - 1.0) < 1e-10
+
+
+def test_inner_self_equals_norm_sq():
+    m = MERA.vacuum(N=8, d_local=4)
+    assert abs(m.inner(m) - m.norm_sq()) < 1e-10
+
+
+def test_inner_orthogonal_number_states():
+    a = MERA.number_states([1, 0, 0, 0, 0, 0, 0, 0], d=3)
+    b = MERA.number_states([0, 1, 0, 0, 0, 0, 0, 0], d=3)
+    assert abs(a.inner(b)) < 1e-10
+    assert abs(b.inner(a)) < 1e-10
+
+
+def test_inner_normalized_self_is_one():
+    m = MERA.number_states([2, 1, 0, 1, 0, 0, 0, 0], d=3).normalize()
+    assert abs(m.inner(m) - 1.0) < 1e-10
