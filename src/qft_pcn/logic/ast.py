@@ -418,3 +418,26 @@ def substitute_hole(ast: Node, hole: HoleVar, replacement: Node) -> Node:
             rhs=substitute_hole(ast.rhs, hole, replacement),
         )
     return ast
+
+
+# ---- experimental: recursive fixed-point ----------------------------------
+#
+# Added by sub-project F (spec §7.4). Minimal node for the MERA bond-dim
+# scaling acceptance test; full surface-syntax integration, typing rules,
+# and evaluation rules are deferred to a future sub-project owning
+# recursion.
+
+EXPERIMENTAL_REC = True
+
+
+@dataclass
+class Rec(Node):
+    """Fixed-point: rec f. body, where f is a self-reference inside body.
+
+    EXPERIMENTAL — used by the MERA recursive-Fibonacci bond-dim scaling
+    test (spec §10.5). Surface-syntax parsing, typing rules, and
+    round-trippable encoder support are deferred.
+    """
+    name: str
+    name_ty: Ty
+    body: Node

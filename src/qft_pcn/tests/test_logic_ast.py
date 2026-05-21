@@ -232,3 +232,20 @@ def test_substitute_hole_returns_unchanged_if_not_found():
     ast = Lam(param="x", param_ty=TInt(), body=Var(name="x"))
     replaced = substitute_hole(ast, h, Var(name="x"))
     assert replaced == ast
+
+
+# ---- Task 21: Rec node (EXPERIMENTAL) -----------------------------------
+
+
+def test_experimental_rec_flag_set():
+    from src.qft_pcn.logic.ast import EXPERIMENTAL_REC
+    assert EXPERIMENTAL_REC is True
+
+
+def test_rec_node_construction():
+    from src.qft_pcn.logic.ast import Rec, TInt, TArrow, Lam, Var
+    body = Lam(param="n", param_ty=TInt(), body=Var(name="f"))
+    rec = Rec(name="f", name_ty=TArrow(src=TInt(), dst=TInt()), body=body)
+    assert rec.name == "f"
+    assert isinstance(rec.name_ty, TArrow)
+    assert isinstance(rec.body, Lam)
