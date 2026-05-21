@@ -163,3 +163,31 @@ def test_parse_p5_complex_program():
 def test_parse_rejects_unknown_op():
     with pytest.raises(ValueError, match="unexpected token|unexpected character"):
         parse("2 ** 3")
+
+
+from src.qft_pcn.logic.ast import pretty
+
+
+def test_pretty_roundtrip_simple():
+    src = r"\x:Int. x"
+    assert parse(pretty(parse(src))) == parse(src)
+
+
+def test_pretty_roundtrip_p2():
+    src = r"(\x:Int. x + 1)(2)"
+    assert parse(pretty(parse(src))) == parse(src)
+
+
+def test_pretty_roundtrip_p3():
+    src = r"\f:Int->Int. \x:Int. f (f x)"
+    assert parse(pretty(parse(src))) == parse(src)
+
+
+def test_pretty_roundtrip_p4():
+    src = r"if 1 < 2 then ((\x:Bool. x)(true)) else false"
+    assert parse(pretty(parse(src))) == parse(src)
+
+
+def test_pretty_roundtrip_p5():
+    src = r"(\x:Int. (\y:Int. x + y)(3))(4)"
+    assert parse(pretty(parse(src))) == parse(src)

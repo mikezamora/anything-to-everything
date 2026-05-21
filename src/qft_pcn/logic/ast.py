@@ -295,3 +295,77 @@ def parse(src: str) -> Node:
             f"unexpected trailing token: {p.peek().kind}={p.peek().value!r}"
         )
     return expr
+
+
+# ---- pretty printer -------------------------------------------------------
+
+
+def _pretty_ty(t: Ty) -> str:
+    if isinstance(t, TInt):
+        return "Int"
+    if isinstance(t, TBool):
+        return "Bool"
+    if isinstance(t, TArrow):
+        # Right-associative, so don't paren the right side.
+        left = _pretty_ty(t.src)
+        if isinstance(t.src, TArrow):
+            left = f"({left})"
+        return f"{left}->{_pretty_ty(t.dst)}"
+    raise TypeError(f"unknown Ty: {t!r}")
+
+
+# Precedences: atom > app > mul > add > cmp > if  (higher binds tighter)
+_PREC_ATOM = 100
+_PREC_APP = 60
+_PREC_MUL = 50
+_PREC_ADD = 40
+_PREC_CMP = 30
+_PREC_IF = 10
+_PREC_LAM = 5
+
+
+def _pretty_node(node: Node, ctx_prec: int) -> str:
+    if isinstance(node, Var):
+        return node.name
+    if isinstance(node, IntLit):
+        return str(node.val)
+    if isinstance(node, BoolLit):
+        return "true" if node.val else "false"
+    if isinstance(node, Lam):
+        s = f"\\{node.param}:{_pretty_ty(node.param_ty)}. " \
+            f"{_pretty_node(node.body, _PREC_LAM)}"
+        if ctx_prec > _PREC_LAM:
+            s = f"({s})"
+        return s
+    if isinstance(node, App):
+        s = f"{_pretty_node(node.fn, _PREC_APP)} " \
+            f"{_pretty_node(node.arg, _PREC_APP + 1)}"
+        if ctx_prec > _PREC_APP:
+            s = f"({s})"
+        return s
+    if isinstance(node, If):
+        s = (f"if {_pretty_node(node.cond, _PREC_IF)} "
+             f"then {_pretty_node(node.then_b, _PREC_IF)} "
+             f"else {_pretty_node(node.else_b, _PREC_IF)}")
+        if ctx_prec > _PREC_IF:
+            s = f"({s})"
+        return s
+    if isinstance(node, Bin):
+        op = node.op
+        if op in ("+", "-"):
+            inner_prec = _PREC_ADD
+        elif op == "*":
+            inner_prec = _PREC_MUL
+        else:  # < or ==
+            inner_prec = _PREC_CMP
+        s = (f"{_pretty_node(node.lhs, inner_prec)} {op} "
+             f"{_pretty_node(node.rhs, inner_prec + 1)}")
+        if ctx_prec > inner_prec:
+            s = f"({s})"
+        return s
+    raise TypeError(f"unknown Node: {node!r}")
+
+
+def pretty(node: Node) -> str:
+    """Render an AST back to surface syntax that re-parses to the same AST."""
+    return _pretty_node(node, _PREC_LAM)
