@@ -37,6 +37,8 @@ class SitesOutOfRangeError(BridgeError):      code = "BRIDGE_E_SITES_OUT_OF_RANG
 class TooLargeError(BridgeError):             code = "BRIDGE_E_TOO_LARGE"
 class ConstraintNotAdjacentError(BridgeError):code = "BRIDGE_E_CONSTRAINT_NOT_ADJACENT"
 class NumericFailureError(BridgeError):       code = "BRIDGE_E_NUMERIC_FAILURE"
+class LlmUnavailableError(BridgeError):       code = "BRIDGE_E_LLM_UNAVAILABLE"
+class LlmBadOutputError(BridgeError):         code = "BRIDGE_E_LLM_BAD_OUTPUT"
 class InternalError(BridgeError):             code = "BRIDGE_E_INTERNAL"
 
 
@@ -45,5 +47,6 @@ ALL_CODES: tuple[str, ...] = (
     BadTermError.code, TypeError.code, TermUnsupportedError.code,
     UnsupportedMethodError.code, SitesOutOfRangeError.code,
     TooLargeError.code, ConstraintNotAdjacentError.code,
-    NumericFailureError.code, InternalError.code,
+    NumericFailureError.code, LlmUnavailableError.code,
+    LlmBadOutputError.code, InternalError.code,
 )

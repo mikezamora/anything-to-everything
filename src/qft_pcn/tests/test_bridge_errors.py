@@ -44,6 +44,8 @@ def test_all_codes_set_is_stable():
         "BRIDGE_E_TOO_LARGE",
         "BRIDGE_E_CONSTRAINT_NOT_ADJACENT",
         "BRIDGE_E_NUMERIC_FAILURE",
+        "BRIDGE_E_LLM_UNAVAILABLE",
+        "BRIDGE_E_LLM_BAD_OUTPUT",
         "BRIDGE_E_INTERNAL",
     }
     assert set(ALL_CODES) == expected
