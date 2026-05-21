@@ -58,3 +58,22 @@ def test_resolve_too_many_binders_raises():
     # 8 nested lambdas, but BID_CUTOFF - 1 = 7 allowed.
     with pytest.raises(TooManyBinders):
         resolve_binders(ast, on_var=lambda v, r: None)
+
+
+def test_resolve_multi_var_through_bin_app_if():
+    """All non-Lam/Var traversal arms (Bin, App, If, IntLit, BoolLit)
+    fire correctly, with the callback invoked once per Var."""
+    src = (r"\x:Int. \y:Int. "
+           r"if x < y then x + y else (\f:Int->Int. f y) (\z:Int. z * x)")
+    ast = parse(src)
+    refs = _refs(ast)
+    # Expected Vars in pre-order: x (in `x<y`), y, x (in `x+y`), y,
+    #   f, y, z, x.
+    names = [name for name, _ in refs]
+    assert names == ["x", "y", "x", "y", "f", "y", "z", "x"], names
+    # x in the `x<y` is inside both Lam_x and Lam_y -> depth_from_innermost=1.
+    assert refs[0][1].depth_from_innermost == 1
+    # The z inside `\z. z * x` sees Lam_z as innermost (depth 0); x is 2
+    # levels out (Lam_z then Lam_f) -> depth 2.
+    assert refs[6][1].depth_from_innermost == 0   # z is innermost
+    assert refs[7][1].depth_from_innermost == 2   # x is 2 levels out

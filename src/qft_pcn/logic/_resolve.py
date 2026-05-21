@@ -49,19 +49,27 @@ def resolve_binders(
         if isinstance(node, Lam):
             if len(stack) >= MAX_BINDER_DEPTH:
                 raise TooManyBinders(depth=len(stack) + 1,
-                                     cutoff=MAX_BINDER_DEPTH + 1)
+                                     cutoff=MAX_BINDER_DEPTH)
             stack.append(node)
             _walk(node.body)
             stack.pop()
             return
         if isinstance(node, App):
-            _walk(node.fn); _walk(node.arg); return
+            _walk(node.fn)
+            _walk(node.arg)
+            return
         if isinstance(node, If):
-            _walk(node.cond); _walk(node.then_b); _walk(node.else_b); return
+            _walk(node.cond)
+            _walk(node.then_b)
+            _walk(node.else_b)
+            return
         if isinstance(node, Bin):
-            _walk(node.lhs); _walk(node.rhs); return
+            _walk(node.lhs)
+            _walk(node.rhs)
+            return
         if isinstance(node, (IntLit, BoolLit)):
             return
+        # Defensive: parser only emits the 7 node types handled above.
         raise UnsupportedNode(node_type=type(node).__name__)
 
     _walk(root)
