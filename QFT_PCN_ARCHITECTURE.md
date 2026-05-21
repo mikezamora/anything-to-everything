@@ -761,9 +761,535 @@ This is program synthesis with type-driven guidance. LLMs are demonstrably weak 
 
 **Publishability target**: a workshop paper at NeurIPS or ICML on "Tensor-Network Predictive Coding for Program Synthesis" or similar. Even a negative or partial result is publishable because the method is new.
 
+### 10.8 Lemma library and promotion (hierarchical composition, mechanism 1)
+
+**Goal**: solved sub-problems become persistent, addressable primitives that can be reused as building blocks in larger problems. This is the operational realization of "lemmas → theorems" at the architectural level.
+
+#### Principles
+
+The QPCN's ground state `|Ψ_child⟩` of a Hamiltonian `H_child` is a *proof object* — by the Curry-Howard correspondence, it inhabits the proposition encoded in `H_child`'s constraints. Once that ground state is found:
+
+- The proposition is no longer something to prove; it is an axiom for any higher-level search.
+- The proof object itself is a configuration of operators on a Hilbert space — it can be cached and re-applied.
+- A future QPCN can avoid re-deriving this lemma by *clamping* the corresponding sub-MPS to the cached state.
+
+This is structurally identical to how a mathematician writes "by Lemma 3.2, ..." — they don't re-prove Lemma 3.2 every time they use it. The lemma is a building block. The composition is *referential*, not constructive.
+
+Three observations make this rigorous in our architecture:
+
+1. **Lemmas have type signatures.** A cached ground state inhabits some proposition; that proposition is the lemma's type. Lemma lookup is type-directed.
+2. **Lemmas have provenance.** Each cached lemma records the Hamiltonian it was derived from, the energy gap to first excited state (a proxy for "how certain is this lemma"), and any auxiliary assumptions clamped during its derivation. Lemmas with unverified assumptions are marked conditional.
+3. **Lemmas compose under Curry-Howard.** When the cached `|Ψ_A⟩` proves `proposition_A` and `|Ψ_B⟩` proves `proposition_B`, then a third QPCN can use both as clamps to prove `proposition_A ∧ proposition_B` essentially for free (the composite Hamiltonian has zero residual at those sub-trees).
+
+#### Mechanisms
+
+**Storage layer**:
+- Each lemma stored as `(MPS tensors, proposition_type, derivation_metadata)`.
+- Tensors serialized via numpy `.npz` or HDF5; bond dimensions compressed to the minimum that preserves the lemma's ground-state energy.
+- Optional SVD compression of MPS tensors to reduce storage when bond dimension exceeds what's actually needed for the lemma's information content.
+
+**Indexing layer**:
+- Primary index: by proposition type (computed via the typing-rule Hamiltonian at registration time).
+- Secondary index: by structural fingerprint of the lemma's reduced density matrix at a canonical bond — fast similarity lookup for "is there a lemma roughly shaped like this?".
+- Tertiary index: by derivation cost — when multiple lemmas prove the same thing, prefer the one cheapest to apply.
+
+**Registration**:
+- When a QPCN run completes with residual energy below threshold `ε_register`, the resulting state is offered to the library.
+- A validation pass classically type-checks the decoded AST (if it's a proof) or verifies the constraint satisfaction (if it's a non-proof structure like a chemical configuration).
+- On pass, the lemma is added with all three indices. On fail, the lemma is logged as a near-miss for debugging but not registered.
+
+**Promotion to Hamiltonian primitive**:
+- A new DSL constraint type: `{"kind": "use_lemma", "lemma_id": L, "sites": [i, j, k, ...]}`.
+- The compiler reads the cached lemma's MPS tensors and clamps the specified sites to that state during initialization.
+- Equivalently, it adds a very strong projector `−W |Ψ_L⟩⟨Ψ_L|` to the Hamiltonian, which pulls the sub-MPS into the cached configuration during imag-time relaxation.
+
+**Composition correctness**:
+- When two lemmas are used at sites with shared variables (via the binding-as-entanglement mechanism), the entanglement structure must compose consistently — this is automatically checked by the Hamiltonian's typing constraints.
+- If two clamped lemmas demand incompatible structures, the residual energy at composition becomes positive; this is the analog of "Lemma A and Lemma B are inconsistent."
+
+#### Risks and mitigations
+
+| Risk | Mitigation |
+|---|---|
+| **Lemma drift**: a lemma proved under one set of assumptions may not be valid under another | Store full constraint context with each lemma; lookup with assumption-set matching |
+| **Cache pollution**: bad solutions cached | Validation pass before registration; optional human-in-the-loop confirmation for foundational lemmas |
+| **Lemma explosion**: too many cached, lookup becomes slow | Periodic clustering + pruning; merge near-duplicate lemmas |
+| **Lemma rot**: a lemma's assumptions become invalid because of later library updates | Dependency tracking; invalidate downstream lemmas when an upstream one is revised |
+| **False composition**: two lemmas combined wrongly because their entanglement patterns clash silently | The Hamiltonian's energy gap at composition is the signal; refuse compositions with high residual |
+
+#### Files to create
+
+```
+src/qft_pcn/composition/
+├── __init__.py
+├── lemma_library.py        # storage + indexing + registration
+├── promoter.py             # use_lemma DSL constraint compiler
+└── tests/
+    └── test_lemma_library.py
+```
+
+#### Acceptance test
+
+A two-stage demo: prove a base lemma in QPCN run 1 (e.g., `∀x. x + 0 = x` over a small Peano-arithmetic encoding), register it, then prove a theorem in QPCN run 2 that uses the cached lemma (e.g., `∀x. (x + 0) + 0 = x`). The second run should converge with zero residual energy and complete in substantially fewer Trotter steps than re-deriving from axioms.
+
+### 10.9 Abstraction discovery (hierarchical composition, mechanism 2)
+
+**Goal**: when patterns recur across solved problems, automatically abstract them into new primitive operators that future searches can use directly. This is the operational realization of "discovering a useful concept."
+
+#### Principles
+
+DreamCoder (Ellis et al. 2020/2021) established the wake-sleep paradigm for library learning in program synthesis: alternate between (a) solving problems with the current library and (b) compressing solutions to discover new library entries that capture recurring patterns. After several cycles, the library grows from a small set of primitives to a rich, domain-adapted vocabulary that makes future problems much easier.
+
+We adapt this to tensor-network substrates with one key change: instead of compressing programs via grammar induction, we **cluster reduced density matrices** of solved sub-MPSes. The intuition: if many solved problems share a common substructure, that substructure has a recognizable signature in the reduced density matrix at the bond where the substructure ends. Patterns recur in the *operator-algebra* sense, not just the syntactic one.
+
+This is also closer to how cortex discovers concepts: not by analyzing syntax trees, but by finding statistical regularities in the structure of neural representations.
+
+#### The wake-sleep cycle in detail
+
+```
+INITIALIZE library = { axioms, primitive constructors }
+
+REPEAT:
+    # WAKE phase: solve problems with current library
+    FOR each problem P in current batch:
+        spec = LLM(P)                        # natural language → DSL
+        H = compile(spec, library)
+        |Ψ⟩ = qpcn.relax_to_ground(H)
+        IF residual(H, |Ψ⟩) < ε:
+            register(|Ψ⟩, P, library)
+
+    # DREAM phase: enumerate sub-structures
+    candidates = []
+    FOR each solved problem |Ψ_i⟩ in library:
+        FOR each subtree S in |Ψ_i⟩:
+            ρ_S = reduced_density_matrix(|Ψ_i⟩, S)
+            candidates.append( (S, ρ_S, |Ψ_i⟩) )
+
+    # CLUSTER phase: find recurring patterns
+    clusters = hierarchical_cluster(candidates, distance=trace_distance(ρ_S))
+    significant_clusters = [c for c in clusters if size(c) >= k_min]
+
+    # ABSTRACT phase: promote patterns to primitives
+    FOR each cluster C in significant_clusters:
+        new_primitive = compute_canonical_form(C)
+        new_primitive.provenance = [|Ψ_i⟩ in C]
+        library.add(new_primitive)
+
+    # CONSOLIDATE phase: re-derive solutions using new primitives
+    FOR each |Ψ_i⟩ in library:
+        IF can_be_expressed_using_new_primitives(|Ψ_i⟩):
+            replace with shorter solution
+    prune_redundant_lemmas(library)
+
+UNTIL no new primitives discovered for N cycles
+```
+
+#### Theoretical principles underlying this
+
+1. **Operator-theoretic reuse**: in QFT, *effective operators* emerge at low energies as composites of fundamental ones (e.g., the pion as a composite of quarks). The abstraction-discovery process is the learning analog of effective field theory — discovering composites that simplify the description at a given scale.
+2. **Renormalization group flow**: at each abstraction cycle, low-level details are integrated out, and a coarse-grained library emerges. This is literally RG flow on the operator algebra of the problem domain.
+3. **Solomonoff induction analog**: shorter descriptions are preferred. A library that compresses many solutions has captured genuine structure of the domain; a library that doesn't compress is overfitting.
+4. **Bayesian model selection**: the marginal likelihood of the data under a hypothesis with primitive `P` is higher when `P` appears in many derivations. Promotion threshold `k_min` is the Bayesian evidence threshold.
+
+#### Detailed implementation
+
+**Subtree mining**:
+- For each cached MPS `|Ψ_i⟩`, enumerate sub-MPSes of size `s` for `s ∈ [3, S_max]` (very small or very large subtrees are usually not useful).
+- For each, compute the reduced density matrix at the boundary bond.
+- Hash sub-MPSes by a quick fingerprint (e.g., trace, top singular values) to avoid redundant comparisons.
+
+**Clustering**:
+- Distance metric: trace distance `D(ρ_1, ρ_2) = ½ ||ρ_1 - ρ_2||_1` (or fidelity-based proxy).
+- Algorithm: hierarchical agglomerative clustering with a distance threshold tuned per domain.
+- Significance test: a cluster of size `k` from a candidate set of size `N` has probability `≈ exp(-k log N)` to arise by chance under a uniform null model; reject clusters where `k < k_min(N)`.
+
+**Canonical form computation**:
+- Within a cluster, the operator that minimizes the average trace distance to all members is the cluster's representative.
+- Solve via averaging in the operator basis: `ρ_canonical = (1/|C|) Σ ρ_i`, then re-purify into an MPS of bounded bond dimension.
+
+**Provenance**:
+- Each new primitive remembers the problems it was abstracted from.
+- When a primitive is used, this is logged so that the original problems get "credit" for the discovery.
+- Useful for diagnosing which problems are driving library growth and for pruning primitives that turn out to be useful only for niche problems.
+
+**Consolidation**:
+- Re-derive existing library entries using the new primitives.
+- If a lemma's solution becomes shorter (lower bond-dimension MPS), keep the new derivation.
+- Prune lemmas that are now exact consequences of more primitive lemmas.
+
+#### Risks and mitigations
+
+| Risk | Mitigation |
+|---|---|
+| **Overfitting to training distribution**: discovered primitives only useful for similar problems | Cross-domain validation: test new primitives on a held-out problem set before permanent registration |
+| **Bad abstractions**: noise patterns mistaken for structure | Significance threshold `k_min`; minimum-description-length filter (does the primitive actually compress total library size?) |
+| **Primitives become opaque**: harder to interpret learned operators | Maintain provenance; expose decomposition into older primitives on demand |
+| **Library bloat**: too many primitives slow down search | Periodic pruning: drop primitives not used in N cycles; merge near-duplicates |
+| **Catastrophic compression**: a useful primitive accidentally gets pruned because of a bad cycle | Two-tier library: a stable core (manually curated) and a dynamic outer ring (subject to wake-sleep) |
+
+#### Files to create
+
+```
+src/qft_pcn/composition/
+├── subtree_miner.py        # enumerate sub-MPSes
+├── abstraction.py          # cluster + canonical form computation
+├── wake_sleep.py           # orchestrate the cycle
+└── tests/
+    ├── test_subtree_miner.py
+    └── test_wake_sleep.py
+```
+
+#### Acceptance test
+
+A problem corpus with 5+ problems that share a structural motif (e.g., several proofs that all use induction on natural numbers, but with different inductive predicates). The system should discover the "induction primitive" as a cluster of common substructure, promote it to a library entry, and subsequent inductive proofs should converge in substantially fewer steps using it.
+
+### 10.10 Cross-level message passing (hierarchical composition, mechanism 3)
+
+**Goal**: parent and child QPCNs exchange goals (top-down) and proofs (bottom-up) via the same predictive-coding pattern that single-layer field updates use, generalized to the scale of whole problems.
+
+#### Principles
+
+A single QPCN already does predictive-coding message passing between *layers*: layer `l+1` sends top-down predictions to layer `l`, and layer `l` sends bottom-up precision-weighted errors to layer `l+1`. The free-energy principle says this minimizes a single global objective (variational free energy).
+
+The hierarchical composition extension applies the same pattern at a higher scale, between *whole QPCNs*: parent QPCN sends sub-goals (top-down) to child QPCNs, and child QPCNs send proofs (bottom-up) back. The composition is again unified by a single objective: the joint free energy of the whole hierarchy.
+
+This is *not* an analogy; it's a structural claim. Variational free-energy minimization is scale-invariant: it works at the level of single field updates, at the level of single layers, at the level of single QPCNs, and at the level of compositions of QPCNs. The math is the same equation at every scale.
+
+#### Mechanisms
+
+**Goal graph**:
+- A directed acyclic graph where nodes are sub-problems (DSL specs + their expected proposition types) and edges represent "child must be solved before parent can use its result".
+- Built top-down: the root is the user's target goal; children are sub-goals identified by the parent's Hamiltonian compiler (sites in the parent with high `?`-density or marked as `requires_lemma`).
+- The LLM can suggest sub-goal decompositions when the compiler is unsure how to break down a problem.
+
+**Top-down dispatch**:
+- Parent QPCN's Hamiltonian compilation identifies which sub-trees in its AST encoding correspond to unsolved lemmas or unfilled holes.
+- Each such sub-tree is packaged as a child DSL spec: the type signature at that sub-tree's root is the goal proposition; the constraints from the parent context become the child's boundary conditions.
+- Dispatched as a new QPCN run.
+
+**Bottom-up integration**:
+- Child QPCN's ground state `|Ψ_child⟩` is returned with its residual energy.
+- If residual energy is below threshold: integrate as a clamped sub-MPS in the parent (via the §10.8 lemma-promotion machinery).
+- If residual energy is above threshold: child failed. Parent must:
+  1. Try a different sub-decomposition (ask the LLM for a different proof strategy).
+  2. Lower the child's strength of constraints to allow approximate matching ("treat this as a conjecture").
+  3. Mark this sub-goal as currently unprovable and propagate up — the parent's plan was flawed.
+
+**Concurrency**:
+- Children at the same level in the goal graph are independent; they can be searched in parallel.
+- The lemma library is shared across siblings, so discoveries in one branch immediately benefit others.
+- In a long-running system, this becomes an embarrassingly parallel proof search, like the way mathematicians distribute work on collaborative projects.
+
+**Backtracking and revision**:
+- When a child fails to converge, the failure propagates up the goal graph.
+- The parent's Hamiltonian compiler is invoked with the failure information: "the sub-tree at site k could not be proved with the current decomposition; try a different one."
+- The LLM frontend can be involved here: "I'm stuck on sub-goal X; can you suggest a different proof strategy?"
+
+**Cycle detection**:
+- The goal graph is meant to be acyclic, but bad decomposition heuristics can introduce cycles (e.g., "to prove A, prove B; to prove B, prove A").
+- Maintain a per-search visited set; refuse to dispatch a child whose goal is already being proved as an ancestor.
+- If cycle detected, fall back to LLM-driven decomposition or mark as unprovable.
+
+#### Detailed implementation
+
+**Goal graph operations**:
+- `Node(goal, status, children)`: `goal` is a DSL spec, `status` is one of `pending|active|solved|failed|cycle`, `children` are sub-goals.
+- `dispatch(node)`: spawn a QPCN run for `node.goal`. Returns a future.
+- `integrate(parent, child_result)`: if child succeeded, clamp the corresponding sub-MPS in parent; if failed, set parent's status to `pending_revision`.
+- `revise(node)`: ask the LLM (or a heuristic) for an alternative decomposition.
+
+**Concurrency primitives**:
+- Lightweight: thread pool or asyncio for parallel child dispatch.
+- Heavyweight: distributed execution via something like Ray for cluster-scale problem decomposition.
+
+**LLM involvement**:
+- Always at the root: convert natural language to initial goal graph.
+- At decomposition points: suggest how to break a hard sub-goal into smaller ones.
+- At failure points: suggest alternative strategies when a sub-goal fails.
+
+#### Risks and mitigations
+
+| Risk | Mitigation |
+|---|---|
+| **Deadlock**: cyclic goal graph | Cycle detection; fall back to LLM for alternative decomposition |
+| **Combinatorial explosion**: many decompositions to try | LLM-guided priorities; beam search over decompositions; cache failed approaches |
+| **Resource starvation**: a single bad sub-goal blocks all parallel work | Timeout per child; fail-fast on apparent dead ends |
+| **Stale lemmas**: a lemma proved at low priority becomes critical later | Lazy re-evaluation; the goal graph re-dispatches when assumptions change |
+| **Premature integration**: a child's partial solution accepted too soon | Strict residual-energy threshold at integration; require the child to be in a true ground state, not just a low-energy excited state |
+| **Cascade failures**: one bad child invalidates many ancestors | Quarantine bad sub-graphs; explore alternatives in parallel |
+
+#### Files to create
+
+```
+src/qft_pcn/composition/
+├── goal_graph.py           # DAG of sub-goals
+├── dispatcher.py           # spawn + collect QPCN runs
+├── result_integrator.py    # bottom-up clamping
+├── revision.py             # LLM-guided alternative decomposition
+└── tests/
+    ├── test_goal_graph.py
+    └── test_dispatcher.py
+```
+
+#### Acceptance test
+
+A small inductive proof requiring 3 levels of decomposition: e.g., prove `∀xs : List A. length (reverse xs) = length xs`. The natural decomposition:
+- Level 0 (axioms): definitions of `length`, `reverse`, the constructor `Cons`.
+- Level 1 (lemmas): `length (xs ++ [y]) = length xs + 1`, and `reverse (Cons x xs) = reverse xs ++ [x]`.
+- Level 2 (induction case): the inductive step combining both lemmas.
+- Level 3 (theorem): induction principle applied to the two cases.
+
+The system should solve this by dispatching sub-goals to QPCN children, integrating their results, and surfacing the final proof. Reasonable expectation: completes in under 5 minutes of wall time on a single machine, with `χ_max = 32` per sub-QPCN.
+
+### 10.11 Second milestone: hierarchical proof composition demo
+
+A natural follow-on to §10.7 once §10.8–10.10 are complete. Goal:
+
+> **Solve a small but nontrivial mathematical theorem (PhD-thesis-exercise-level) by hierarchical decomposition, producing a fully verified proof tree where each node was found by a sub-QPCN.**
+
+Target candidates (in increasing difficulty):
+
+1. List-induction theorems on the order of `length (xs ++ ys) = length xs + length ys`.
+2. Algebraic identities like `(a + b)^2 = a^2 + 2ab + b^2` derived from ring axioms.
+3. Small group theory results: every group of order p (prime) is cyclic.
+4. Basic linear algebra: rank-nullity theorem in finite dimensions.
+
+Each demonstrates a new aspect of the architecture: list induction tests the recursive scope machinery (§10.4), algebraic identities test rewriting, group theory tests categorical structure, rank-nullity tests dimensional reasoning.
+
+**Files for the demo**: `src/qft_pcn/composition/demo_hierarchical_proof.py`.
+
+**Publishability target**: a full conference paper (NeurIPS, ICML, or a PLDI/POPL venue) on "Hierarchical Tensor-Network Predictive Coding for Automated Theorem Proving." This is the first result that would be visible to both the ML and PL/formal-methods communities simultaneously.
+
 ---
 
-## 11. Code Layout Reference
+## 11. Hierarchical Composition: Principles and Long-Range Vision
+
+This section captures the deeper conceptual framework underlying §10.8–10.10 and the architectural commitments that follow from it. It is the *why* behind the *what* in the roadmap.
+
+### 11.1 Why hierarchical composition is the right framework
+
+Five independent lines of intellectual support converge on hierarchical composition as the correct mode of operation:
+
+**1. Renormalization group (Wilson 1971).** Physics's foundational insight that effective theories at long distances are systematic coarse-grainings of short-distance theories. The mathematical structure of RG flow — integrating out short-distance modes, identifying fixed points, computing critical exponents — is the same structure that should govern how a learning system aggregates low-level facts into high-level concepts. Wilson's framework gives us the rigorous content of "discovering structure at a scale."
+
+**2. Multi-scale Entanglement Renormalization Ansatz (Vidal 2008).** The realization that quantum states with hierarchical entanglement structure are efficiently representable as a tree of tensor networks. MERA was invented for critical lattice systems (where entanglement is scale-invariant), but the architectural lesson is general: hierarchical tensor decompositions capture problems whose structure is itself hierarchical. Programs, proofs, and chemical structures all have this property.
+
+**3. Curry-Howard correspondence (Howard 1980).** Mathematics has a built-in lemma → theorem → theory hierarchy that is structurally identical to function composition in typed lambda calculus. The hierarchy isn't imposed by mathematicians' habits; it's a logical consequence of how propositions and proofs are related. Any system that proves theorems will naturally exhibit this hierarchy because the proofs themselves are hierarchical.
+
+**4. Hierarchical predictive coding in cortex (Friston, Rao, Ballard).** The empirical observation that cortex is organized as a hierarchy of predictive layers, each predicting the activity of the layer below and being corrected by precision-weighted errors. This is the same structure we are building, just transplanted from neurons to quantum many-body states. The brain has found that hierarchical composition is the right architecture for learning structured environments; we are inheriting that lesson.
+
+**5. Library learning in program synthesis (DreamCoder, Ellis et al. 2020/2021).** The empirical demonstration that growing a domain-specific library through wake-sleep cycles compounds capability in machine learning systems. DreamCoder showed this for programs in classical neural networks; we are extending it to tensor-network substrates.
+
+All five frameworks point at the same answer: **hierarchy is not a convenience for the engineer; it is intrinsic to the problem structure of the domains we are targeting.**
+
+### 11.2 The five composition mechanisms in one frame
+
+Putting §10.4, §10.5, §10.8, §10.9, and §10.10 together, the QPCN system has five distinct mechanisms for hierarchical composition, each with its own role:
+
+| Mechanism | Section | What it does | When it's used |
+|---|---|---|---|
+| **MERA-structured belief field** | §10.4 | Intra-problem hierarchical entanglement | Recursion, nested scopes, scale-invariant structure within one problem |
+| **LLM-driven goal decomposition** | §10.5 | Natural-language → DSL goal graph | Top of the hierarchy; semantic decomposition of user intent |
+| **Lemma library and promotion** | §10.8 | Cached sub-solutions as primitives | Reuse of solved sub-problems across problems |
+| **Abstraction discovery (wake-sleep)** | §10.9 | Pattern → new primitive operator | Open-ended growth of the system's vocabulary over time |
+| **Cross-level message passing** | §10.10 | Goal/proof exchange between QPCN runs | The runtime mechanism by which the composition actually happens |
+
+Together they implement:
+
+```
+                  Open-ended capability growth
+                  ─────────────────────────────
+                              │
+                              ▼
+                    Library compounds via §10.9
+                              │
+                              ▼
+              Solved problems persist via §10.8
+                              │
+                              ▼
+              Decomposition coordinated via §10.10
+                              │
+                              ▼
+              Goal structure suggested via §10.5
+                              │
+                              ▼
+                  Sub-problem solved via §10.4
+                              │
+                              ▼
+                    QPCN inference (built)
+```
+
+Each layer of mechanism is a *control structure* over the layer below. The bottom layer (QPCN inference) is already complete; the upper layers add hierarchical control.
+
+### 11.3 The Wilson RG picture in detail
+
+The most precise mathematical analogy for what hierarchical composition is doing:
+
+**Wilsonian RG (lattice version)**:
+
+```
+H_0 (microscopic Hamiltonian, lattice spacing a)
+  │
+  │  block spins: average over groups of sites
+  ▼
+H_1 (effective Hamiltonian, lattice spacing 2a)
+  │
+  │  block spins again
+  ▼
+H_2 (effective Hamiltonian, lattice spacing 4a)
+  │
+  ▼
+  ...
+  │
+  ▼
+H_∞ (fixed point — universal long-distance behavior)
+```
+
+The effective Hamiltonian at each scale `H_k` contains all the operators that arise from integrating out the short-distance modes of `H_{k-1}`. Most operators die off (irrelevant); a few survive (relevant); the survivors define the universal long-distance behavior.
+
+**Hierarchical QPCN composition**:
+
+```
+H_0 (microscopic Hamiltonian — axioms, definitions, primitives)
+  │
+  │  solve sub-problems, cluster patterns
+  ▼
+H_1 (effective Hamiltonian — lemmas as primitives, common patterns as ops)
+  │
+  │  solve theorems using lemmas, discover meta-patterns
+  ▼
+H_2 (effective Hamiltonian — theorems as primitives, proof techniques as ops)
+  │
+  ▼
+  ...
+  │
+  ▼
+H_∞ (effective Hamiltonian — the full theory)
+```
+
+The structural identity is exact: at each scale, the "primitives" are composite objects of the next scale down, the "relevant operators" are the patterns that recur across problems, and the "fixed point" is the mature theory where new problems can be solved by direct combination of existing concepts without re-deriving them.
+
+The wake-sleep cycle is the operational realization of one step of RG flow: solve problems (microscopic dynamics), discover patterns (block-spin operation), promote primitives (effective Hamiltonian update). After enough cycles, the library has reached an RG fixed point for that domain — the architecture has discovered the natural concept hierarchy.
+
+This is why Wilson's framework, and not just hierarchical-Bayesian inference or recursive neural networks, is the right ancestral framing. The QPCN composition is *doing* the same thing Wilson formalized for physics: finding the right effective description at each scale.
+
+### 11.4 MERA as the substrate that makes this exact rather than analogical
+
+Swingle 2012 showed that the geometry of MERA — its hierarchical tree of tensors — is mathematically equivalent to discrete hyperbolic space (AdS_2). Holographic codes (Pastawski et al. 2015, Hayden et al. 2016) extended this: MERA-like tensor networks are not just metaphors for AdS/CFT, they are honest realizations of it on a lattice.
+
+The implications for our architecture:
+
+1. **The geometric reasoning framing is literal.** When a single QPCN's manifold deforms in response to error stress-energy (§4.1), and that manifold is the substrate for a MERA-structured belief field (§10.4), and the MERA's geometry is AdS-like, then the architecture is *literally* doing inference on a discrete spacetime whose curvature reflects the difficulty of the proof. This is not vocabulary; it's a structural identity that comes for free once MERA is built.
+
+2. **The holographic principle suggests boundary-only specifications work.** In AdS/CFT, the boundary CFT contains all the information of the bulk. Translating: the user's DSL spec at the "boundary" of the hierarchy contains all the information needed to determine the "bulk" proof structure. The proof is uniquely determined by the boundary specification plus the constraints. This is consistent with how mathematics works — a theorem is uniquely determined by its statement plus the axioms, and the proof is just a particular realization of the necessary structure.
+
+3. **Black-hole-like behavior for impossible proofs.** In AdS/CFT, regions of the bulk that are "behind a horizon" cannot be reached from the boundary. The analog: certain proof problems may be *information-theoretically* unreachable from a given set of axioms, and the architecture would manifest this as a sub-graph of the goal graph that no matter how decomposed never converges. This is a meaningful diagnostic — a residual that won't go away signals a genuine logical gap, not just a search difficulty.
+
+These three implications are not metaphorical. They follow from theorems in the MERA/AdS literature applied to our specific architecture. They are research bets that the literature suggests should hold; if they do, the architecture is unusually well-grounded.
+
+### 11.5 Connections to AlphaProof and DreamCoder
+
+The two closest published predecessors:
+
+**AlphaProof (DeepMind 2024)**:
+- Used reinforcement learning over the Lean tactic space to generate proof search policies.
+- Achieved IMO 2024 silver-medal performance (problems P1, P2, P4, P6; missed P3 and P5).
+- *What they have*: massive RL training, sophisticated tactic generation, strong empirical results.
+- *What they don't have*: a substrate with structural correctness guarantees, uncertainty quantification by superposition, or library-learning that compounds across problems.
+- *What we have in common*: the LLM-as-frontend + symbolic-as-solver pattern, hierarchical proof composition.
+- *Where the QPCN differs*: provable correctness at the synthesis step (no hallucinated proofs), and the wake-sleep library growth that AlphaProof currently lacks.
+
+**DreamCoder (Ellis et al. 2020, 2021)**:
+- Established the wake-sleep paradigm for program synthesis: alternate solving with current library and abstracting recurring patterns.
+- Demonstrated open-ended capability growth on list manipulation, drawing, physics laws, recursive programs.
+- *What they have*: the open-ended growth proof of concept, the empirical wake-sleep cycle.
+- *What they don't have*: a quantum substrate, structural correctness guarantees, or geometric coupling.
+- *What we have in common*: §10.9 is directly DreamCoder's mechanism, translated to tensor networks.
+- *Where the QPCN differs*: the substrate guarantees that abstracted primitives are *operator-algebraic* (composable by tensor product) rather than syntactic (composable by code substitution), which gives more rigorous compositionality.
+
+**The synthesis**: AlphaProof + DreamCoder + QPCN substrate = a system that:
+- Has automated proof search at IMO-class capability (AlphaProof contribution),
+- Grows its library through wake-sleep (DreamCoder contribution),
+- Has structural correctness guarantees and uncertainty quantification (QPCN substrate contribution),
+- Has hierarchical composition matching Wilson RG (the architectural integration).
+
+To the best of our knowledge, no published system has all four. That is the publishable contribution and the source of capability beyond either AlphaProof or DreamCoder alone.
+
+### 11.6 Realistic target problems
+
+Mapping the architecture's expected capabilities onto specific problem classes:
+
+**Reachable within 2 years of focused effort** (after §10.1–10.11):
+
+| Domain | Specific target | Why this is tractable |
+|---|---|---|
+| Formal proof assistants | Lean Mathlib lemma generation at the level of `simp` + `linarith` | Type-driven synthesis is the architecture's sweet spot |
+| Quantum chemistry | Ground states of molecules with 50–200 active orbitals | Hierarchical fragment-based decomposition; the canonical MPS/DMRG strength |
+| Combinatorial enumeration | Graphs/codes/designs with specified properties | Constraint satisfaction with structural constraints |
+| Symbolic regression | Recover physics equations from data, à la AI-Feynman | Dimensional analysis as gauge constraint |
+| Inverse materials design | Crystal structures with target band gap or magnetism | Hamiltonian-based scoring of candidate structures |
+| Catalyst design | Catalysts for known reaction classes | Energy-barrier minimization as ground-state search |
+| Small algebraic structures | Classification of groups/rings/algebras of small order | Combinatorial enumeration with algebraic constraints |
+
+**Reachable within 5 years**:
+
+| Domain | Specific target | Caveats |
+|---|---|---|
+| Algebraic topology | New theorems at the level of recent PhD theses | Requires substantial Mathlib integration |
+| Protein design | Novel binding pockets for specific targets | Requires good force-field Hamiltonians |
+| Quantum error correction | New codes beyond known families | Stabilizer formalism maps cleanly |
+| Cryptographic protocols | Verified constructions with given security properties | Requires careful Hamiltonian encoding of security games |
+| Materials with unconventional properties | Topological insulators, room-temperature superconductors | Likely needs experimental loop, not just simulation |
+| Optimal control | Quantum/classical control protocols with constraints | Variational nature matches QPCN paradigm |
+
+**Aspirational and depending on luck**:
+
+| Domain | Specific target | Why uncertain |
+|---|---|---|
+| Millennium Prize problems | Riemann, P vs NP, Yang-Mills mass gap, etc. | Likely require genuine insight beyond structural search; no architecture has solved one to date, and there is no a priori reason to expect this one will |
+| Unsolved open conjectures | Twin primes, Goldbach, ABC, etc. | Same caveat — but AlphaProof's IMO performance shifted the conventional wisdom about what "structural search" can achieve |
+| Drug discovery for novel targets | Treatments for currently-untreatable conditions | Validation loop is in vivo and slow; the architecture would be one tool in a much larger pipeline |
+| Unification frameworks in physics | Quantum gravity, dark matter mechanism | Requires not just deriving consequences but proposing new ontologies; this is currently outside the architecture's hypothesis class |
+
+### 11.7 The compounding capability argument
+
+Most ML architectures have fixed capability after training: they solve some distribution of problems with some accuracy, and that's the end of it. The QPCN with hierarchical composition has a different property: **its capability grows monotonically with use.**
+
+Three mechanisms drive this:
+
+1. **Each solved problem adds a lemma to the library** (§10.8). The library only grows; old lemmas remain available.
+2. **Each wake-sleep cycle adds a primitive to the library** (§10.9). Recurring patterns become accessible vocabulary; future problems become correspondingly easier.
+3. **Each cross-level dispatch improves the decomposition heuristics** (§10.10). The system learns which decompositions work; future attempts on similar problems start from a better prior.
+
+The capability function `C(t)` of the system at time `t` is therefore not constant but increasing:
+
+```
+C(t) = base_capability + integrate(library_growth + abstraction_growth + heuristic_growth, 0, t)
+```
+
+In the long limit, this approaches the "fixed point" of the relevant Wilson RG flow: the system has discovered the natural concept hierarchy of its domain and can solve any problem expressible in that hierarchy by direct combination of library entries.
+
+This is the property that makes the architecture a candidate for *open-ended discovery* rather than just sophisticated solving. A system whose capability is fixed at training time cannot, by construction, discover anything its training data didn't already contain. A system whose capability grows with use can, in principle, reach arbitrary capability given enough cycles.
+
+This is also why the right benchmark for this architecture is not single-shot performance on a fixed test set, but **capability growth curves** over many cycles on increasing problem difficulty. That is what publication around this work should measure.
+
+### 11.8 The pitch for novel results
+
+Putting all of §11 together, the argument for why this could uncover new mathematics/physics/chemistry:
+
+1. The architecture has **correctness guarantees by construction** — anything it outputs is provably consistent with the constraints it was given. False positives are eliminated at the synthesis step.
+2. The architecture has **uncertainty quantification by superposition** — when constraints underdetermine the answer, the ground state is a quantum superposition, and measurement gives a distribution. It doesn't lock onto one wrong answer.
+3. The architecture **grows its library through abstraction** — each solved problem adds primitives to future searches. Capability compounds.
+4. The architecture **composes hierarchically through MERA** — exploiting scale-invariant structure that flat search misses. It can attack problems whose depth makes them inaccessible to single-level methods.
+5. The architecture **shares the LLM-as-frontend + symbolic-as-solver pattern with AlphaProof**, validated to IMO silver-medal level.
+6. The architecture **shares the wake-sleep growth pattern with DreamCoder**, validated for open-ended capability growth.
+7. The combination of (1)–(6) is, to the best of our knowledge, not published.
+
+That is the realistic version of the claim. It is defensible from first principles plus published precedents. The aspirational version — solving Millennium problems — is not defensible from first principles, but neither was AlphaProof's IMO performance before it happened. The principled answer: build the architecture, point it at progressively harder problems, and let the empirical results decide.
+
+---
+
+## 12. Code Layout Reference
 
 ```
 src/qft_pcn/
@@ -795,7 +1321,7 @@ Future additions (planned in §10):
 
 ```
 src/qft_pcn/
-├── logic/
+├── logic/                                       # § 10.1 - 10.3, 10.7
 │   ├── __init__.py
 │   ├── ast.py                          # AST node types
 │   ├── encoder.py                      # AST → MPS encoder
@@ -805,19 +1331,37 @@ src/qft_pcn/
 │   ├── evaluation_hamiltonian.py       # beta-reduction Hamiltonian
 │   ├── debugger.py                     # residual-energy → error report
 │   └── demo_stlc_synthesis.py          # first publishable milestone
-├── qft/
+├── qft/                                         # § 10.4
 │   ├── mera.py                         # MERA state representation
 │   └── mera_evolution.py               # hierarchical TEBD
-└── bridge/
+├── bridge/                                      # § 10.5
+│   ├── __init__.py
+│   ├── api.py                          # RPC server for LLM frontend
+│   ├── dsl.py                          # DSL schema + parser
+│   └── runtime.py                      # problem runner
+└── composition/                                 # § 10.8 - 10.11
     ├── __init__.py
-    ├── api.py                          # RPC server for LLM frontend
-    ├── dsl.py                          # DSL schema + parser
-    └── runtime.py                      # problem runner
+    ├── lemma_library.py                # § 10.8: storage + indexing + registration
+    ├── promoter.py                     # § 10.8: use_lemma DSL constraint compiler
+    ├── subtree_miner.py                # § 10.9: enumerate sub-MPSes
+    ├── abstraction.py                  # § 10.9: cluster + canonical form computation
+    ├── wake_sleep.py                   # § 10.9: orchestrate the cycle
+    ├── goal_graph.py                   # § 10.10: DAG of sub-goals
+    ├── dispatcher.py                   # § 10.10: spawn + collect QPCN runs
+    ├── result_integrator.py            # § 10.10: bottom-up clamping
+    ├── revision.py                     # § 10.10: LLM-guided alternative decomposition
+    ├── demo_hierarchical_proof.py      # § 10.11: second publishable milestone
+    └── tests/
+        ├── test_lemma_library.py
+        ├── test_subtree_miner.py
+        ├── test_wake_sleep.py
+        ├── test_goal_graph.py
+        └── test_dispatcher.py
 ```
 
 ---
 
-## 12. Glossary
+## 13. Glossary
 
 - **PCN** — Predictive Coding Network. A hierarchical generative model with bidirectional prediction and error signals, derived from variational free-energy minimization.
 - **QPCN** — Quantum Predictive Coder. The PCN built on top of a quantum many-body substrate (this work).
@@ -839,10 +1383,19 @@ src/qft_pcn/
 - **AdS/CFT** — Anti-de-Sitter / Conformal Field Theory duality. A holographic correspondence in theoretical physics where a `d`-dimensional quantum field theory equates to a `(d+1)`-dimensional gravity theory.
 - **Gauge invariance** — Invariance of physical observables under local symmetry transformations. In our framing, type-preservation under evaluation.
 - **STLC** — Simply-Typed Lambda Calculus. The minimal typed programming-language calculus.
+- **Lemma promotion** — The mechanism by which a solved sub-QPCN's ground state becomes a clamped primitive in a parent QPCN's Hamiltonian (§10.8).
+- **Wake-sleep cycle** — The alternating phase pattern (solve, then abstract) introduced by Hinton 1995 for sleep-state model refinement and adapted by DreamCoder (Ellis et al. 2020) for library learning in program synthesis. Used in §10.9 to discover new primitive operators from recurring sub-structure.
+- **Goal graph** — A directed acyclic graph of sub-problems where edges represent "child must be solved before parent can integrate its result." Built top-down from the user's goal and consumed bottom-up as sub-QPCN runs complete (§10.10).
+- **Trace distance** — `D(ρ_1, ρ_2) = ½ ||ρ_1 - ρ_2||_1`. The natural metric on quantum states, used in §10.9 for clustering reduced density matrices.
+- **Holographic codes** — Tensor-network quantum codes (Pastawski et al. 2015, Hayden et al. 2016) that realize aspects of AdS/CFT duality on a lattice. Used in §11.4 to argue that the geometric reasoning framing is literal rather than metaphorical.
+- **RG fixed point** — A Hamiltonian invariant under further coarse-graining. In Wilson's framework, the universal long-distance physics is governed by the fixed point. In the QPCN analogy (§11.3), this is the mature library where new problems can be solved by combination of existing concepts without re-derivation.
+- **Curry-Howard correspondence** — The structural identity between (a) propositions and types, and (b) proofs and programs. Howard 1980. The reason types can be encoded as Hamiltonian conservation laws and proofs as ground states (§8).
+- **AlphaProof** — DeepMind 2024's automated theorem prover that achieved IMO 2024 silver-medal performance. The closest published predecessor for QPCN's hierarchical proof composition (§11.5).
+- **DreamCoder** — Ellis et al. 2020/2021 program synthesis system that demonstrated wake-sleep library learning. The direct intellectual ancestor of §10.9.
 
 ---
 
-## 13. Prior Research and Citations
+## 14. Prior Research and Citations
 
 Real published work, no fake URLs. Cited by author and year so they're searchable.
 
@@ -896,9 +1449,38 @@ Real published work, no fake URLs. Cited by author and year so they're searchabl
 ### Physics-aware deep learning
 - Jumper, J. et al. (2021). *Highly accurate protein structure prediction with AlphaFold.* Nature.
 
+### Library learning, program synthesis, automated theorem proving
+- Ellis, K., Wong, C., Nye, M., Sablé-Meyer, M., Cary, L., Morales, L., Hewitt, L., Solar-Lezama, A., & Tenenbaum, J. B. (2020). *DreamCoder: Growing generalizable, interpretable knowledge with wake-sleep Bayesian program learning.* arXiv:2006.08381.
+- Ellis, K. et al. (2021). *DreamCoder: Bootstrapping inductive program synthesis with wake-sleep library learning.* PLDI.
+- Solar-Lezama, A. (2008). *Program Synthesis by Sketching.* PhD thesis, UC Berkeley.
+- Gulwani, S. (2011). *Automating string processing in spreadsheets using input-output examples.* POPL.
+- Polikarpova, N., Kuraj, I., & Solar-Lezama, A. (2016). *Program synthesis from polymorphic refinement types.* PLDI (Synquid).
+- Bornholt, J., Torlak, E., Grossman, D., & Ceze, L. (2013). *Optimizing synthesis with metasketches.* POPL (Rosette).
+- Balog, M., Gaunt, A. L., Brockschmidt, M., Nowozin, S., & Tarlow, D. (2017). *DeepCoder: Learning to write programs.* ICLR.
+- Polu, S., & Sutskever, I. (2020). *Generative language modeling for automated theorem proving.* arXiv:2009.03393 (GPT-f).
+- Han, J. M., Rute, J., Wu, Y., Ayers, E. W., & Polu, S. (2022). *Proof artifact co-training for theorem proving with language models.* ICLR.
+- Yang, K., Swope, A. M., Gu, A., Chalamala, R., Song, P., Yu, S., Godil, S., Prenger, R., & Anandkumar, A. (2023). *LeanDojo: Theorem proving with retrieval-augmented language models.* NeurIPS.
+- AlphaProof team (DeepMind). (2024). *AlphaProof and AlphaGeometry 2.* Public communications and blog posts, July 2024 (IMO silver-medal result).
+- Udrescu, S.-M., & Tegmark, M. (2020). *AI Feynman: A physics-inspired method for symbolic regression.* Science Advances.
+
+### Renormalization group, MERA-as-AdS, holographic codes
+- Wilson, K. G. (1971). *Renormalization group and critical phenomena.* PRB.
+- Hauke, P., Katzgraber, H. G., Lechner, W., Nishimori, H., & Oliver, W. D. (2020). *Perspectives of quantum annealing: Methods and implementations.* Reports on Progress in Physics.
+- Pastawski, F., Yoshida, B., Harlow, D., & Preskill, J. (2015). *Holographic quantum error-correcting codes.* JHEP.
+- Hayden, P., Nezami, S., Qi, X.-L., Thomas, N., Walter, M., & Yang, Z. (2016). *Holographic duality from random tensor networks.* JHEP.
+- Aharonov, D., van Dam, W., Kempe, J., Landau, Z., Lloyd, S., & Regev, O. (2007). *Adiabatic quantum computation is equivalent to standard quantum computation.* SIAM Journal on Computing.
+- Kadowaki, T., & Nishimori, H. (1998). *Quantum annealing in the transverse Ising model.* PRE.
+- Farhi, E., Goldstone, J., Gutmann, S., & Sipser, M. (2001). *Quantum computation by adiabatic evolution.* arXiv:quant-ph/0001106.
+- Farhi, E., Goldstone, J., & Gutmann, S. (2014). *A quantum approximate optimization algorithm.* arXiv:1411.4028 (QAOA).
+- Biamonte, J. D., Faccin, M., & De Domenico, M. (2017). *Complex networks from classical to quantum.* Communications Physics. (Quantum SAT and tensor-network annealing references.)
+
+### Wake-sleep and predictive coding origins
+- Hinton, G. E., Dayan, P., Frey, B. J., & Neal, R. M. (1995). *The "wake-sleep" algorithm for unsupervised neural networks.* Science.
+- Rao, R. P. N., & Ballard, D. H. (1999). *Predictive coding in the visual cortex: a functional interpretation of some extra-classical receptive-field effects.* Nature Neuroscience.
+
 ---
 
-## 14. Closing Notes
+## 15. Closing Notes
 
 This document is the project's persistent state. The branch `claude/qft-pcn-hybrid-architecture-ihCIR` carries:
 
@@ -906,6 +1488,26 @@ This document is the project's persistent state. The branch `claude/qft-pcn-hybr
 - 39 passing tests covering every architectural claim,
 - This document.
 
-The architecture is complete enough that the §10 roadmap is implementable without reconstructing prior work. The next session should start at §10.1 (AST-to-MPS encoder) and proceed through to §10.7 (first publishable milestone, STLC synthesis).
+The architecture is complete enough that the §10 roadmap is implementable without reconstructing prior work.
 
-Nothing in this document is intended as a research promise; it is an engineering plan derived from clear correspondences between domains that, to the best of our knowledge, have not been put together this way before.
+### Recommended build order
+
+**Phase A — Logic substrate** (§10.1–10.3): AST encoder, type-system Hamiltonian compiler, evaluation Hamiltonian. After this phase, the QPCN can typecheck and reduce small lambda-calculus programs.
+
+**Phase B — Hierarchy enablers** (§10.4, §10.5, §10.6): MERA for recursion, LLM bridge, constraint debugger. After this phase, end-to-end demos on Tier 1 challenges (`id`, `const`, `compose`) work.
+
+**Phase C — First publishable milestone** (§10.7): bidirectional STLC type inference for synthesis-with-holes. After this, the architecture has its first benchmarked result.
+
+**Phase D — Hierarchical composition** (§10.8, §10.9, §10.10): lemma library, abstraction discovery, cross-level message passing. This is where the architecture transitions from "sophisticated synthesizer" to "growing reasoning system."
+
+**Phase E — Second publishable milestone** (§10.11): hierarchical proof composition demo. After this, the architecture has results visible to both the ML and PL/formal-methods communities.
+
+**Phase F — Open-ended deployment** (after §10.11): point the system at progressively harder problems from the §11.6 target list and run wake-sleep cycles. Capability grows monotonically with use; the empirical results determine which target classes are within reach.
+
+### Verification of claims
+
+Every architectural claim in this document is backed by either (a) a passing test in `src/qft_pcn/tests/`, (b) a published reference cited in §14, or (c) an explicit acceptance test specified in the corresponding §10 subsection. There are no unsupported assertions about the architecture's current capabilities. Aspirational claims about future capability (§11.6, §11.8) are clearly marked as such and depend on the §10 roadmap being executed.
+
+### Intellectual honesty
+
+Nothing in this document is intended as a research promise. It is an engineering plan derived from correspondences between predictive coding, quantum field theory, tensor-network methods, and program semantics that, to the best of our knowledge, have not been combined this way before. The realistic expectation is significant capability on a specific class of problems (chemistry, gauge theories, formal logic, programming) and zero direct competitiveness on natural-language tasks (which is the LLM's job). The aspirational expectation — uncovering new mathematics or physics through compounding capability over many wake-sleep cycles — is genuinely uncertain but defensible from the same first principles that have led DreamCoder and AlphaProof to results that were aspirational at the time they were proposed.
