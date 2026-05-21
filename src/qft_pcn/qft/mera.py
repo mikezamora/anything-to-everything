@@ -56,3 +56,31 @@ class IsometryViolation(MERAError):
 
 class UnitaryViolation(MERAError):
     """u^dag @ u != I beyond tolerance."""
+
+
+# ---- pure helpers ---------------------------------------------------------
+
+
+def layer_dims(d_local: int, L: int, chi_layer: int = 16) -> list[int]:
+    """Per-layer bond dim schedule: [d_0, d_1, ..., d_{L-1}].
+
+    d_0 = d_local (physical leaf dimension).
+    d_ℓ = min(chi_layer, d_{ℓ-1} ** 2) — would-be exact growth is capped.
+    """
+    if L < 1:
+        raise ValueError(f"L must be >= 1; got {L}")
+    if d_local < 1:
+        raise ValueError(f"d_local must be >= 1; got {d_local}")
+    if chi_layer < 1:
+        raise ValueError(f"chi_layer must be >= 1; got {chi_layer}")
+    dims = [d_local]
+    for _ in range(1, L):
+        dims.append(min(chi_layer, dims[-1] * dims[-1]))
+    return dims
+
+
+def causal_cone_path(leaf: int, L: int) -> list[tuple[int, int]]:
+    """The (layer, position) sequence visited while ascending from `leaf`
+    to the top. Length L.
+    """
+    return [(ell, leaf >> ell) for ell in range(L)]
