@@ -266,3 +266,57 @@ def test_site_tensor_d_local_is_65536():
     tensors = build_site_tensors(sites, types, live)
     for t in tensors:
         assert t.shape[1] == D_LOCAL_5 == 65536
+
+
+def test_bid_bond_extended_dim_is_one_plus_eight_L():
+    """Spec §5.2: bid bond dim = 1 + 8 * |L_i|. For \\x:Int. x with
+    1 live binder, bond 0 dim = 1 + 8 = 9. Tensor shape (1, 65536, 9)."""
+    from src.qft_pcn.logic._typing_extension import compute_tobl_tags
+
+    ast = parse(r"\x:Int. x")
+    sites = serialize_preorder(ast, N=4)
+    types = compute_site_types(ast, sites)
+    live = compute_live_binders(sites)
+    compute_tobl_tags(ast, sites)
+    tensors = build_site_tensors(sites, types, live)
+    # LAM site 0: left bond dim 1, right bond dim 1 + 8*1 = 9.
+    assert tensors[0].shape == (1, 65536, 9)
+    # VAR site 1: left bond dim 9, right bond dim 1.
+    assert tensors[1].shape == (9, 65536, 1)
+    # PAD sites: (1, 65536, 1).
+    assert tensors[2].shape == (1, 65536, 1)
+    assert tensors[3].shape == (1, 65536, 1)
+
+
+def test_bid_bond_only_one_slot_per_channel_populated():
+    """For each binder channel, exactly one of the 8 param_ty slots is
+    populated (the one matching the actual param_ty). The other 7 are 0."""
+    from src.qft_pcn.logic.encoder import encode
+    from src.qft_pcn.logic.encoding import (
+        KIND_LAM, KIND_VAR, KIND_CUTOFF, TYPE_CUTOFF, BID_CUTOFF,
+        VALUE_CUTOFF, TOBL_CUTOFF, TYPE_INT, BID_0, TYPE_ARR_II,
+    )
+
+    state, meta = encode(parse(r"\x:Int. x"), N=8, chi_max=32)
+    T = state.tensors[0]   # LAM site. Shape (1, 65536, 9).
+    # The flat basis index of (kind=LAM, type=ARR_II, bid=BID_0, value=NONE,
+    # tobl=NONE) - well-defined.
+    kind, type_, bid_, value_, tobl_ = KIND_LAM, TYPE_ARR_II, BID_0, 0, 0
+    # _basis_index in 5-species form:
+    flat = ((((kind * TYPE_CUTOFF + type_) * BID_CUTOFF + bid_)
+             * VALUE_CUTOFF + value_) * TOBL_CUTOFF + tobl_)
+    # Slot 1 + 8*0 + TYPE_INT = 1 + 0 + 1 = 2 is populated.
+    populated_slot = 1 + 8 * 0 + TYPE_INT
+    nonzero = [j for j in range(9) if abs(T[0, flat, j]) > 1e-12]
+    assert populated_slot in nonzero, (
+        f"slot {populated_slot} (Lam_x with param_ty=T_INT) should be populated"
+    )
+    # Slots in the same channel-orbit but with different param_ty must be 0:
+    for t_other in range(TOBL_CUTOFF):
+        if t_other == TYPE_INT:
+            continue
+        wrong_slot = 1 + 8 * 0 + t_other
+        assert abs(T[0, flat, wrong_slot]) < 1e-12, (
+            f"slot {wrong_slot} (Lam_x with param_ty=t_other={t_other}) "
+            f"must be 0; got {T[0, flat, wrong_slot]}"
+        )

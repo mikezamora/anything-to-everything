@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from .encoding import BinderHandle, KIND_LAM, KIND_VAR
 from ._serialize import NodeOccupancy
+from ._types import ty_to_tag
 
 
 def compute_live_binders(
@@ -56,3 +57,27 @@ def compute_live_binders(
                 crossing.append(h)
         live.append(crossing)
     return live
+
+
+def compute_channel_param_ty_per_bond(
+    sites: list[NodeOccupancy],
+    live_binders_per_bond: list[list[BinderHandle]],
+) -> list[list[int]]:
+    """For each bond, return a list (parallel to live_binders_per_bond[i])
+    of flat param_ty tags, one per live binder on the bond.
+
+    The binder's param_ty is read from the LAM node at sites[binder.lam_site].
+    """
+    out: list[list[int]] = []
+    for handles in live_binders_per_bond:
+        bond_pts: list[int] = []
+        for h in handles:
+            occ = sites[h.lam_site]
+            assert occ.binder_ref is not None, (
+                f"site {h.lam_site} marked as LAM but no binder_ref"
+            )
+            lam = occ.binder_ref.lam_node
+            tag, _nested = ty_to_tag(lam.param_ty)
+            bond_pts.append(tag)
+        out.append(bond_pts)
+    return out

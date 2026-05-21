@@ -67,3 +67,51 @@ def test_live_binders_ordering_is_declaration_order():
     assert len(handles) == 3
     # Ordered by lam_site (declaration order).
     assert [h.lam_site for h in handles] == [0, 1, 2]
+
+
+def test_compute_channel_param_ty_per_bond_p1():
+    """For \\x:Int. x, bond 0 has one channel with param_ty = TYPE_INT."""
+    from src.qft_pcn.logic.ast import parse
+    from src.qft_pcn.logic._serialize import serialize_preorder
+    from src.qft_pcn.logic._channels import (
+        compute_live_binders, compute_channel_param_ty_per_bond,
+    )
+    from src.qft_pcn.logic.encoding import TYPE_INT
+
+    ast = parse(r"\x:Int. x")
+    sites = serialize_preorder(ast, N=4)
+    live = compute_live_binders(sites)
+    pt = compute_channel_param_ty_per_bond(sites, live)
+    assert len(pt) == 3   # N-1 bonds
+    # Bond 0: one channel (Lam_x), param_ty = Int.
+    assert pt[0] == [TYPE_INT]
+    # Bonds 1, 2: no channels (after Var consumed x).
+    assert pt[1] == []
+    assert pt[2] == []
+
+
+def test_compute_channel_param_ty_per_bond_p3():
+    """\\f:Int->Int. \\x:Int. f x — two binders with distinct param_ty."""
+    from src.qft_pcn.logic.ast import parse
+    from src.qft_pcn.logic._serialize import serialize_preorder
+    from src.qft_pcn.logic._channels import (
+        compute_live_binders, compute_channel_param_ty_per_bond,
+    )
+    from src.qft_pcn.logic.encoding import TYPE_INT, TYPE_ARR_II
+
+    ast = parse(r"\f:Int->Int. \x:Int. f x")
+    sites = serialize_preorder(ast, N=16)
+    live = compute_live_binders(sites)
+    pt = compute_channel_param_ty_per_bond(sites, live)
+    # Layout: LAM_f@0, LAM_x@1, APP@2, VAR_f@3, VAR_x@4, PAD...
+    # Bond 0: between LAM_f@0 and LAM_x@1 — Lam_f live, param_ty = Int->Int.
+    assert pt[0] == [TYPE_ARR_II]
+    # Bond 1: between LAM_x@1 and APP@2 — both Lam_f and Lam_x live.
+    assert pt[1] == [TYPE_ARR_II, TYPE_INT]
+    # Bond 2: between APP@2 and VAR_f@3 — both still live.
+    assert pt[2] == [TYPE_ARR_II, TYPE_INT]
+    # Bond 3: between VAR_f@3 and VAR_x@4 — Lam_f consumed at site 3;
+    #         only Lam_x remains.
+    assert pt[3] == [TYPE_INT]
+    # Bond 4: between VAR_x@4 and PAD@5 — Lam_x consumed; nothing.
+    assert pt[4] == []

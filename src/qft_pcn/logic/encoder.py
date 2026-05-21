@@ -12,7 +12,7 @@ from .encoding import (
 )
 from ._serialize import serialize_preorder
 from ._types import compute_site_types
-from ._channels import compute_live_binders
+from ._channels import compute_live_binders, compute_channel_param_ty_per_bond
 from ._tensors import build_site_tensors
 from ._typing_extension import compute_tobl_tags
 from src.qft_pcn.qft.mps import MPS
@@ -25,6 +25,7 @@ def encode(ast: Node, N: int = 32, chi_max: int = 16
     type_tags = compute_site_types(ast, sites)
     live = compute_live_binders(sites)
     tobl_tags = compute_tobl_tags(ast, sites)
+    channel_pt = compute_channel_param_ty_per_bond(sites, live)
     tensors = build_site_tensors(sites, type_tags, live)
     state = MPS(tensors=tensors)
     state.normalize()
@@ -55,6 +56,6 @@ def encode(ast: Node, N: int = 32, chi_max: int = 16
         live_binders_per_bond=live,
         tobl_per_site=tobl_tags,
         nested_tobl_index=nested_tobl,
-        channel_param_ty_per_bond=[],           # populated in Task 6
+        channel_param_ty_per_bond=channel_pt,
     )
     return state, meta

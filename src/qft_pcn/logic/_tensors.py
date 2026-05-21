@@ -96,131 +96,92 @@ def _local_bid_for_kind(kind: int, occ: NodeOccupancy) -> int:
     return BID_NONE
 
 
+def _bid_channel_slot(
+    channel_index_1_based: int,   # 1-based (1..L)
+    param_ty_tag: int,            # 0..TOBL_CUTOFF-1
+) -> int:
+    """Bond bid-register slot index for a binder's (channel, param_ty) pair.
+
+    Channel indexing:
+      slot 0          : no_info
+      slot 1 + 8*(i-1) + t : channel i (1-based) with param_ty tag t.
+    """
+    assert 1 <= channel_index_1_based, (
+        f"channel index must be >= 1, got {channel_index_1_based}"
+    )
+    assert 0 <= param_ty_tag < TOBL_CUTOFF, (
+        f"param_ty_tag out of range: {param_ty_tag}"
+    )
+    return 1 + 8 * (channel_index_1_based - 1) + param_ty_tag
+
+
+def _bid_bond_dim(L: int) -> int:
+    """Bond dim on the bid register = 1 + 8*L (one no_info slot + 8 slots per
+    live binder)."""
+    return 1 + 8 * L
+
+
 def _bid_bond_tensor_at_site(
     site_idx: int,
     occ: NodeOccupancy,
     local_bid_value: int,
     left_live: list[BinderHandle],
     right_live: list[BinderHandle],
+    left_param_ty: list[int],     # per-channel param_ty for left bond
+    right_param_ty: list[int],    # per-channel param_ty for right bond
 ) -> np.ndarray:
     """Construct the bid-register-only sub-tensor for one site.
 
-    Shape: (|left_live| + 1, BID_CUTOFF, |right_live| + 1).
+    Shape: (1 + 8*L_in, BID_CUTOFF, 1 + 8*L_out).
 
-    Channel ordering at each bond:
-      - index 0: "no_info" channel
-      - index 1: first live binder
-      - index 2: second live binder
-      - ...
+    Per spec §5.2 of B (and §5.4 of A), each binder channel carries an
+    extra param_ty tag. The bond's bid-register basis is:
+        index 0:        |no_info>
+        index 1 + 8(i-1) + t : |channel_i, param_ty=t> for i=1..L, t=0..7
 
-    Tensor entries (all complex, real-valued):
-
-      For a PAD or non-binder, non-var site (just passing channels through):
-        T[ch, BID_NONE, ch'] = 1  iff ch and ch' refer to the same binder
-                                  or both are no_info
-        T[*, BID_NONE, *] = 0    elsewhere
-        T[*, BID_!= NONE, *] = 0  (site has no local bid value)
-
-      For a LAM site introducing binder b which is at right channel c_b:
-        - The new binder enters via the "no_info" left channel and goes
-          out on its own channel.
-        - Pre-existing binders pass through (channel preserved).
-        T[ch, BID_0, ch']
-            = 1 if ch == no_info and ch' == c_b (new binder created)
-            = 1 if ch != no_info and ch' is the same binder (passthrough)
-        all other T entries = 0
-
-      For a VAR site referring to binder b at left channel c_b:
-        - If this is the binder's LAST use, the channel is removed from
-          the right bond (right_live drops it).
-        - If it's not the last use, the channel passes through.
-        T[c_b, BID_local, ch']
-            = 1 if ch' is the same binder b passed through, OR
-            = 1 if ch' = no_info and b is no longer in right_live
-        Other channels pass through normally:
-        T[ch, BID_NONE, ch']
-            = 1 if ch and ch' refer to the same binder, where ch != c_b
-            = 1 if ch == no_info and ch' == no_info
+    For each binder b on a bond, ONLY the slot with t = b.param_ty is nonzero;
+    the other 7 slots in b's orbit are zero.
     """
     L_in = len(left_live)
     L_out = len(right_live)
-    T = np.zeros((L_in + 1, BID_CUTOFF, L_out + 1), dtype=complex)
+    bond_dim_in = _bid_bond_dim(L_in)
+    bond_dim_out = _bid_bond_dim(L_out)
+    T = np.zeros((bond_dim_in, BID_CUTOFF, bond_dim_out), dtype=complex)
 
-    # Pre-compute the mapping from binder handle to channel index on each
-    # side. Channel 0 is no_info, 1..L is binders in order.
-    left_ch = {bh: i + 1 for i, bh in enumerate(left_live)}
-    right_ch = {bh: i + 1 for i, bh in enumerate(right_live)}
     NO_INFO_IN = 0
     NO_INFO_OUT = 0
 
-    # All sites have "no_info passthrough" on the no_info channel by default.
-    # For LAM and VAR sites we override this below — those sites' local bid
-    # is non-NONE, so there is no BID_NONE component of their basis state.
-    if occ.kind != KIND_VAR and occ.kind != KIND_LAM:
+    # Map binder handle -> (channel_index_1_based, param_ty_tag).
+    left_ch_map: dict[BinderHandle, tuple[int, int]] = {}
+    for i, bh in enumerate(left_live):
+        left_ch_map[bh] = (i + 1, left_param_ty[i])
+    right_ch_map: dict[BinderHandle, tuple[int, int]] = {}
+    for i, bh in enumerate(right_live):
+        right_ch_map[bh] = (i + 1, right_param_ty[i])
+
+    def L_slot(bh: BinderHandle) -> int:
+        c, t = left_ch_map[bh]
+        return _bid_channel_slot(c, t)
+
+    def R_slot(bh: BinderHandle) -> int:
+        c, t = right_ch_map[bh]
+        return _bid_channel_slot(c, t)
+
+    # --- Non-binder, non-var, non-PAD passthrough sites (APP / IF / BIN / INT / BOOL / PAD) ---
+    if occ.kind not in (KIND_VAR, KIND_LAM):
+        # local bid = BID_NONE. no_info passes through; each live binder
+        # passes through under its assigned slot.
         T[NO_INFO_IN, BID_NONE, NO_INFO_OUT] = 1.0
-
-    # Common channel passthrough for binders that survive across this bond.
-    # For LAM sites, the new binder goes from no_info_in to its channel_out
-    # under BID_0 — but other binders still pass through under BID_NONE.
-    # For VAR sites, the referenced binder's channel may be consumed.
-    if occ.kind == KIND_VAR:
-        # Determine candidate list. For a plain Var: a single (lam_site, depth)
-        # pair (from binder_site/depth_from_innermost). For a HoleVar-derived
-        # site: every candidate in occ.var_ref.candidates.
-        cands = (occ.var_ref.candidates
-                 if occ.var_ref.candidates
-                 else [(occ.var_ref.binder_site,
-                        occ.var_ref.depth_from_innermost)])
-        amp = 1.0 / np.sqrt(len(cands))
-
-        from .encoding import MAX_BINDER_DEPTH, TooManyBinders
-        ref_handles_used: set[BinderHandle] = set()
-        for cand_lam_site, cand_depth in cands:
-            ref_handle = None
-            for bh in left_live:
-                if bh.lam_site == cand_lam_site:
-                    ref_handle = bh
-                    break
-            if ref_handle is None:
-                raise RuntimeError(
-                    f"VAR site {site_idx}: candidate binder at "
-                    f"lam_site={cand_lam_site} not in left_live "
-                    f"(bookkeeping bug)"
-                )
-            ref_handles_used.add(ref_handle)
-            if cand_depth >= MAX_BINDER_DEPTH:
-                raise TooManyBinders(depth=cand_depth + 1,
-                                     cutoff=MAX_BINDER_DEPTH)
-            local_bid = BID_0 + cand_depth
-            c_in = left_ch[ref_handle]
-            if ref_handle not in right_ch:
-                T[c_in, local_bid, NO_INFO_OUT] = amp
-            else:
-                c_out = right_ch[ref_handle]
-                T[c_in, local_bid, c_out] = amp
-
-        # Pass-through for binders NOT referenced by this use. We co-locate
-        # them on the primary candidate's bid slice (matching the prior
-        # single-candidate behavior — for a concrete Var with one candidate,
-        # this reproduces the old tensor exactly).
-        primary_depth = cands[0][1]
-        local_bid_for_passthrough = BID_0 + primary_depth
-        # no_info passthrough at the primary bid slice.
-        T[NO_INFO_IN, local_bid_for_passthrough, NO_INFO_OUT] = 1.0
         for bh in left_live:
-            if bh in ref_handles_used:
-                continue
-            c_in_other = left_ch[bh]
-            if bh in right_ch:
-                c_out_other = right_ch[bh]
-                T[c_in_other, local_bid_for_passthrough, c_out_other] = 1.0
+            if bh in right_ch_map:
+                T[L_slot(bh), BID_NONE, R_slot(bh)] = 1.0
             else:
-                T[c_in_other, local_bid_for_passthrough, NO_INFO_OUT] = 1.0
+                # Shouldn't happen — non-Var sites don't drop binders.
+                T[L_slot(bh), BID_NONE, NO_INFO_OUT] = 1.0
         return T
 
     if occ.kind == KIND_LAM:
-        # The new binder is the rightmost entry of right_live (declaration
-        # order). Find its channel.
+        # The new binder is the rightmost entry in right_live (declaration order).
         new_binder = None
         for bh in right_live:
             if bh.lam_site == site_idx:
@@ -229,42 +190,67 @@ def _bid_bond_tensor_at_site(
         if new_binder is None:
             raise RuntimeError(
                 f"LAM site {site_idx}: no matching binder in right_live; "
-                f"this is an encoder bug — channels misaligned"
+                f"encoder bug — channels misaligned"
             )
-        c_new_out = right_ch[new_binder]
-        # At a LAM site the local bid value is BID_0 (its own innermost
-        # perspective). All channel mappings happen on that BID slice:
-        #   - no_info_in maps to BOTH no_info_out (passthrough so subsequent
-        #     LAMs can still draw from no_info) and to the new binder's
-        #     channel c_new_out (creating the binder).
-        #   - each pre-existing binder passes through on its own channel.
-        # The default-top no_info-passthrough entry was at BID_NONE; remove
-        # it because at a LAM site the local bid is BID_0 — there is no
-        # BID_NONE component of the site's basis state.
-        T[NO_INFO_IN, BID_NONE, NO_INFO_OUT] = 0.0
-        T[NO_INFO_IN, local_bid_value, NO_INFO_OUT] = 1.0
-        T[NO_INFO_IN, local_bid_value, c_new_out] = 1.0
-        # Existing binders pass through under BID_0 (the LAM's local bid).
+        c_new_out_slot = R_slot(new_binder)
+        # At a LAM the local bid is BID_0 (its own innermost-binder index).
+        # Existing binders pass through under BID_0; the new binder is created
+        # by routing no_info_in -> c_new_out_slot.
+        T[NO_INFO_IN, local_bid_value, NO_INFO_OUT] = 1.0   # passthrough no_info
+        T[NO_INFO_IN, local_bid_value, c_new_out_slot] = 1.0  # create new binder
         for bh in left_live:
-            c_in = left_ch[bh]
-            if bh in right_ch:
-                c_out = right_ch[bh]
-                T[c_in, local_bid_value, c_out] = 1.0
+            if bh in right_ch_map:
+                T[L_slot(bh), local_bid_value, R_slot(bh)] = 1.0
             else:
-                # Shouldn't happen at a LAM site (LAM doesn't drop binders).
-                T[c_in, local_bid_value, NO_INFO_OUT] = 1.0
+                T[L_slot(bh), local_bid_value, NO_INFO_OUT] = 1.0
         return T
 
-    # PAD / APP / IF / INT / BOOL / BIN: pure passthrough.
-    # All left channels go to the matching right channel under BID_NONE.
-    for bh in left_live:
-        c_in = left_ch[bh]
-        if bh in right_ch:
-            c_out = right_ch[bh]
-            T[c_in, BID_NONE, c_out] = 1.0
+    # --- VAR site ---
+    # The referenced binder's channel is consumed (if last use) or passed through.
+    assert occ.var_ref is not None
+    cands = (occ.var_ref.candidates
+             if occ.var_ref.candidates
+             else [(occ.var_ref.binder_site,
+                    occ.var_ref.depth_from_innermost)])
+    amp = 1.0 / np.sqrt(len(cands))
+
+    from .encoding import MAX_BINDER_DEPTH, TooManyBinders
+    ref_handles_used: set[BinderHandle] = set()
+    for cand_lam_site, cand_depth in cands:
+        ref_handle = None
+        for bh in left_live:
+            if bh.lam_site == cand_lam_site:
+                ref_handle = bh
+                break
+        if ref_handle is None:
+            raise RuntimeError(
+                f"VAR site {site_idx}: candidate binder at lam_site="
+                f"{cand_lam_site} not in left_live (bookkeeping bug)"
+            )
+        ref_handles_used.add(ref_handle)
+        if cand_depth >= MAX_BINDER_DEPTH:
+            raise TooManyBinders(depth=cand_depth + 1,
+                                 cutoff=MAX_BINDER_DEPTH)
+        local_bid = BID_0 + cand_depth
+        c_in = L_slot(ref_handle)
+        if ref_handle not in right_ch_map:
+            T[c_in, local_bid, NO_INFO_OUT] = amp
         else:
-            # Binder dropping at a non-VAR site shouldn't happen.
-            T[c_in, BID_NONE, NO_INFO_OUT] = 1.0
+            T[c_in, local_bid, R_slot(ref_handle)] = amp
+
+    # Pass-through for binders NOT referenced by this use, located on the
+    # primary candidate's bid slice.
+    primary_depth = cands[0][1]
+    primary_local_bid = BID_0 + primary_depth
+    T[NO_INFO_IN, primary_local_bid, NO_INFO_OUT] = 1.0
+    for bh in left_live:
+        if bh in ref_handles_used:
+            continue
+        c_in_other = L_slot(bh)
+        if bh in right_ch_map:
+            T[c_in_other, primary_local_bid, R_slot(bh)] = 1.0
+        else:
+            T[c_in_other, primary_local_bid, NO_INFO_OUT] = 1.0
     return T
 
 
@@ -307,34 +293,35 @@ def build_site_tensors(
 ) -> list[np.ndarray]:
     """Top-level builder. Produces the list of N rank-3 site tensors.
 
-    Bond i has dimension |live_binders_per_bond[i]| + 1 (one channel per
-    live binder + no_info). The full site tensor has shape
-    (chi_left, D_LOCAL, chi_right) where chi values come from adjacent
-    bond live-binder counts. Boundary bonds (left of site 0, right of
-    site N-1) are dimension 1.
+    Bond i has dimension 1 + 8 * |live_binders_per_bond[i]| (one no_info
+    slot plus 8 slots per live binder, encoding the binder's param_ty as
+    a real bond DOF, per B's spec §5.2). Boundary bonds (left of site 0,
+    right of site N-1) are dimension 1.
 
     Returns a list of complex numpy arrays.
     """
+    from ._channels import compute_channel_param_ty_per_bond
+    pt_per_bond = compute_channel_param_ty_per_bond(sites, live_binders_per_bond)
+
     N = len(sites)
-    # Boundary-aware live lists: prepend [] for left boundary, append []
-    # for right boundary so live_at_bond[i] = live across bond between
-    # sites i-1 and i.
     bounded_live = [[]] + list(live_binders_per_bond) + [[]]
-    # bounded_live has length N + 1. left_live[k] = bounded_live[k];
-    # right_live[k] = bounded_live[k + 1].
+    bounded_pt = [[]] + pt_per_bond + [[]]
 
     tensors: list[np.ndarray] = []
     for k, occ in enumerate(sites):
         left_live = bounded_live[k]
         right_live = bounded_live[k + 1]
+        left_pt = bounded_pt[k]
+        right_pt = bounded_pt[k + 1]
         type_tag = type_tags[k]
         kind_idx, type_idx, value_idx = _local_kind_type_value(occ, type_tag)
         local_bid = _local_bid_for_kind(occ.kind, occ)
         bid_T = _bid_bond_tensor_at_site(
             site_idx=k, occ=occ, local_bid_value=local_bid,
             left_live=left_live, right_live=right_live,
+            left_param_ty=left_pt, right_param_ty=right_pt,
         )
-        tobl_idx = occ.tobl_tag       # default 0 = TOBL_NONE
+        tobl_idx = occ.tobl_tag
         site_T = _combine_factored_site(
             kind_idx=kind_idx, type_idx=type_idx, value_idx=value_idx,
             tobl_idx=tobl_idx, bid_tensor=bid_T,
