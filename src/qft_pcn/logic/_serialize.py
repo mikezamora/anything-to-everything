@@ -54,6 +54,12 @@ class NodeOccupancy:
     The descriptor records *what* the site holds; the encoder turns these
     into actual MPS tensors. binder_ref / var_ref are non-None only for
     KIND_LAM / KIND_VAR sites respectively.
+
+    tobl_tag is the flat tag of the parent-imposed type obligation at this
+    site (TOBL_NONE if no obligation, e.g. for the root site and for PAD
+    sites). Written by compute_tobl_tags (see _typing_extension.py).
+
+    nested_tobl_ty stores the full Ty when tobl_tag is TOBL_ARR_NESTED.
     """
     kind: int
     ty: Optional[Ty] = None        # the type of the expression at this site
@@ -63,6 +69,8 @@ class NodeOccupancy:
     binder_ref: Optional[BinderRef] = None
     var_ref: Optional[VarRef] = None
     ast_path: tuple[int, ...] = ()  # path from root, for diagnostics
+    tobl_tag: int = 0                       # TOBL_NONE
+    nested_tobl_ty: Optional[Ty] = None     # set when tobl_tag == TOBL_ARR_NESTED
 
 
 def count_nodes(root: Node) -> int:
