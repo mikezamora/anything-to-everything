@@ -261,6 +261,28 @@ def test_qpcn_couples_to_manifold():
         "manifold did not respond to QFT energy density")
 
 
+def test_mps_inner_product_self_equals_norm_sq():
+    """<psi|psi> == ||psi||^2."""
+    psi = MPS.number_states([1, 0, 2, 1], d=4)
+    inner_self = psi.inner(psi)
+    norm_sq = psi.norm_sq()
+    assert abs(inner_self - norm_sq) < 1e-12
+
+
+def test_mps_inner_product_orthogonal_number_states():
+    """<n_a | n_b> = 0 for distinct occupation patterns."""
+    a = MPS.number_states([1, 0, 0, 0], d=3)
+    b = MPS.number_states([0, 1, 0, 0], d=3)
+    assert abs(a.inner(b)) < 1e-12
+    assert abs(b.inner(a)) < 1e-12
+
+
+def test_mps_inner_product_after_normalization():
+    """After normalize(), <psi|psi> == 1."""
+    psi = MPS.number_states([2, 1, 0, 1], d=3).normalize()
+    assert abs(psi.inner(psi) - 1.0) < 1e-10
+
+
 if __name__ == "__main__":
     test_canonical_commutation_relation()
     test_number_operator_diagonal()

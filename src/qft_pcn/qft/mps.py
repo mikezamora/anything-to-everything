@@ -74,6 +74,25 @@ class MPS:
             env = np.einsum('ij,isk,jsl->kl', env, t, t.conj())
         return float(np.real(env[0, 0]))
 
+    def inner(self, other: "MPS") -> complex:
+        """<self | other> contracted by sweeping environment tensors.
+
+        Self is the bra (conjugated), other is the ket. Both MPSes must have
+        the same length and per-site dimension.
+        """
+        if other.N != self.N:
+            raise ValueError(f"MPS length mismatch: {self.N} vs {other.N}")
+        env = np.ones((1, 1), dtype=complex)
+        for k in range(self.N):
+            bra = self.tensors[k].conj()    # (chi_l_self, d, chi_r_self)
+            ket = other.tensors[k]          # (chi_l_other, d, chi_r_other)
+            if bra.shape[1] != ket.shape[1]:
+                raise ValueError(f"site {k} dim mismatch: "
+                                 f"{bra.shape[1]} vs {ket.shape[1]}")
+            # env has shape (chi_l_self, chi_l_other) -> (chi_r_self, chi_r_other)
+            env = np.einsum('ij,isk,jsl->kl', env, bra, ket)
+        return complex(env[0, 0])
+
     def normalize(self) -> "MPS":
         norm = np.sqrt(self.norm_sq())
         if norm < 1e-15:
