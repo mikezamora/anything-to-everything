@@ -239,16 +239,24 @@ class MPS:
             ts[k] = Q.reshape(Q.shape[0], d, chi_r)
             if k - 1 >= 0:
                 ts[k - 1] = np.einsum('rds,st->rdt', ts[k - 1], R)
-        # SVD the boundary matrix between site `bond` and site `bond+1`.
-        # After canonicalization, ts[bond] is left-iso and the residual
-        # is in its right bond; pair it with ts[bond+1] for the SVD.
-        L = ts[bond]            # (chi_l, d, chi_b)
-        R = ts[bond + 1]        # (chi_b, d, chi_r)
-        theta = np.einsum('ism,mtj->istj', L, R)
-        mat = theta.reshape(L.shape[0] * L.shape[1],
-                            R.shape[1] * R.shape[2])
-        s = np.linalg.svd(mat, compute_uv=False)
-        s = s / (np.linalg.norm(s) + 1e-15)
-        s2 = s * s
-        s2 = s2[s2 > 1e-15]
-        return float(-(s2 * np.log(s2)).sum())
+        # After canonicalization, ts[bond] is left-isometric in its first
+        # two indices and ts[bond+1] is right-isometric in its last two.
+        # The Schmidt spectrum across the cut equals the singular values
+        # of the matrix R from the QR of ts[bond+1] reshaped as
+        # (chi_b, d*chi_r) — equivalently the eigenvalues of the chi_b ×
+        # chi_b reduced density matrix on the bond.
+        #
+        # We avoid ever materializing the (chi_l*d) × (d*chi_r) joint
+        # matrix, which is intractable for large d (e.g. d=8192 in the
+        # AST encoder).
+        R = ts[bond + 1]                                # (chi_b, d, chi_r)
+        chi_b, d, chi_r = R.shape
+        # rho_bond[m, m'] = sum_{s, j} R[m, s, j] * conj(R[m', s, j])
+        rho_bond = np.einsum('msj,nsj->mn', R, R.conj())
+        eigs = np.linalg.eigvalsh(rho_bond)
+        eigs = np.real(eigs)
+        total = eigs.sum()
+        if total > 1e-15:
+            eigs = eigs / total
+        eigs = eigs[eigs > 1e-15]
+        return float(-(eigs * np.log(eigs)).sum())
