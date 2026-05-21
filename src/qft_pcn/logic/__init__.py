@@ -58,6 +58,13 @@ from .typing_hamiltonian import (
     RULE_T_BIN_ARITH, RULE_T_BIN_CMP,
     RULE_T_OBLIGATION, RULE_T_VAR, RULE_T_ABS, RULE_T_APP_ARROW,
 )
+from .evaluation_hamiltonian import (
+    EvalHamiltonian, EvalTerm,
+    EvalHamiltonianError, EvalTermNotFound,
+    RULE_R_BETA, RULE_R_ARITH_PRE, RULE_R_ARITH_POST,
+    RULE_R_CMP_PRE, RULE_R_IF,
+)
+from .compose import compose_hamiltonians, ComposedHamiltonian, IncompatibleHamiltonians
 
 __all__ = [
     "encode", "decode", "sample", "DecodeResult", "ast_alpha_eq",
@@ -85,4 +92,9 @@ __all__ = [
     "RULE_T_LIT_INT", "RULE_T_LIT_BOOL",
     "RULE_T_BIN_ARITH", "RULE_T_BIN_CMP",
     "RULE_T_OBLIGATION", "RULE_T_VAR", "RULE_T_ABS", "RULE_T_APP_ARROW",
+    "EvalHamiltonian", "EvalTerm",
+    "EvalHamiltonianError", "EvalTermNotFound",
+    "RULE_R_BETA", "RULE_R_ARITH_PRE", "RULE_R_ARITH_POST",
+    "RULE_R_CMP_PRE", "RULE_R_IF",
+    "compose_hamiltonians", "ComposedHamiltonian", "IncompatibleHamiltonians",
 ]
