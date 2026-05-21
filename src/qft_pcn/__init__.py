@@ -33,6 +33,12 @@ except ImportError:
 from . import logic
 from .logic import encode, decode, sample, parse, pretty
 
+# Sub-project G public surface (LLM bridge).
+from .bridge import (
+    run_problem, diagnose_problem, validate_dsl, Problem,
+    MockLLM, BridgeError,
+)
+
 __all__ = [
     "Manifold2D",
     "Field",
@@ -54,4 +60,11 @@ __all__ = [
     "sample",
     "parse",
     "pretty",
+    # Bridge
+    "run_problem",
+    "diagnose_problem",
+    "validate_dsl",
+    "Problem",
+    "MockLLM",
+    "BridgeError",
 ]
