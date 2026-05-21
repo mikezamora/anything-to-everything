@@ -12,7 +12,7 @@ changes slowest).
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from src.qft_pcn.qft.hamiltonian import FieldSpecies
 from src.qft_pcn.logic.ast import Ty
@@ -136,6 +136,19 @@ SPECIES: tuple[FieldSpecies, ...] = (
 
 
 @dataclass(frozen=True)
+class TypeHoleHandle:
+    """A type-position hole's bookkeeping (sub-project E, spec §5.3).
+
+    hole_site: the site at which the TypeHole was placed (typically a Lam's
+               position when the Lam's param_ty is a TypeHole).
+    candidate_tags: the flat type-register tags (TYPE_INT, TYPE_BOOL,
+                    TYPE_ARR_*) over which the hole is in superposition.
+    """
+    hole_site: int
+    candidate_tags: tuple[int, ...]
+
+
+@dataclass(frozen=True)
 class BinderHandle:
     """Uniquely identifies a binder for cross-bond bookkeeping.
 
@@ -174,6 +187,9 @@ class EncodingMeta:
     tobl_per_site: list[int]
     nested_tobl_index: dict[int, Ty]
     channel_param_ty_per_bond: list[list[int]]
+    # Sub-project E extensions (synthesis):
+    type_holes: dict[int, "TypeHoleHandle"] = field(default_factory=dict)
+    witness_regions: list[tuple[int, int]] = field(default_factory=list)
 
 
 # ---- exception hierarchy --------------------------------------------------
