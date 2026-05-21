@@ -176,6 +176,40 @@ def test_nested_binder_channel_mapping():
     )
 
 
+import math
+
+from src.qft_pcn.logic.ast import HoleVar, Lam, TInt
+from src.qft_pcn.logic._tensors import _basis_index
+
+
+def test_hole_var_creates_superposition_on_bid():
+    """A HoleVar with two candidates produces an equal-amplitude
+    superposition on the bid register at the use site."""
+    h = HoleVar(candidates=["x", "y"])
+    ast = Lam(param="x", param_ty=TInt(),
+              body=Lam(param="y", param_ty=TInt(), body=h))
+    sites = serialize_preorder(ast, N=8)
+    types = compute_site_types(ast, sites)
+    live = compute_live_binders(sites)
+    tensors = build_site_tensors(sites, types, live)
+    # Site 2 is the HOLE site (Lam_x@0, Lam_y@1, HOLE@2).
+    T = tensors[2]
+    # The hole's bid register should have nonzero amplitude on BOTH
+    # binder channels with equal weight 1/sqrt(2).
+    from src.qft_pcn.logic.encoding import (
+        KIND_VAR, TYPE_INT, BID_0, BID_1, VALUE_NONE,
+    )
+    idx_b0 = _basis_index(KIND_VAR, TYPE_INT, BID_0, VALUE_NONE)
+    idx_b1 = _basis_index(KIND_VAR, TYPE_INT, BID_1, VALUE_NONE)
+    expected = 1.0 / math.sqrt(2)
+    # Lam_x channel (1) routes to BID_1 (depth 1), Lam_y channel (2) -> BID_0 (depth 0).
+    # Both go to NO_INFO_OUT (channel 0) since both consumed at this last-use bond.
+    val_x = T[1, idx_b1, 0]   # left ch 1 (Lam_x) -> BID_1 at use, no_info out
+    val_y = T[2, idx_b0, 0]   # left ch 2 (Lam_y) -> BID_0 at use, no_info out
+    assert abs(abs(val_x) - expected) < 1e-10, f"got {val_x}"
+    assert abs(abs(val_y) - expected) < 1e-10, f"got {val_y}"
+
+
 def test_bond_dim_at_least_n_live_plus_one():
     """Spec §7.4 test (structural marker): for every bond, the total bond
     dim must be at least |L_i| + 1. This proves the principled channel

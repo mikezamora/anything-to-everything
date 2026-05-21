@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from .ast import (Node, Var, Lam, App, IntLit, BoolLit, If, Bin,
+from .ast import (Node, Var, Lam, App, IntLit, BoolLit, If, Bin, HoleVar,
                   Ty, TInt, TBool, TArrow)
 from ._serialize import NodeOccupancy
 from .encoding import (
@@ -61,6 +61,16 @@ def _compute_ast_type(node: Node, env: list[tuple[str, Ty]]) -> Ty:
             if name == node.name:
                 return t
         raise KeyError(f"unbound {node.name}")
+    if isinstance(node, HoleVar):
+        # A HoleVar takes the type of its (first) candidate binder. All
+        # candidates are assumed type-compatible at this layer.
+        if not node.candidates:
+            return TInt()
+        first = node.candidates[0]
+        for name, t in reversed(env):
+            if name == first:
+                return t
+        raise KeyError(f"unbound HoleVar candidate {first}")
     if isinstance(node, Lam):
         body_ty = _compute_ast_type(node.body,
                                     env + [(node.param, node.param_ty)])

@@ -16,7 +16,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Optional
 
-from .ast import Node, Var, Lam, App, IntLit, BoolLit, If, Bin, Ty
+from .ast import Node, Var, Lam, App, IntLit, BoolLit, If, Bin, Ty, HoleVar
 from .encoding import (
     KIND_PAD, KIND_VAR, KIND_LAM, KIND_APP, KIND_INT, KIND_BOOL,
     KIND_IF, KIND_BIN, BID_NONE,
@@ -34,9 +34,17 @@ class BinderRef:
 
 @dataclass
 class VarRef:
-    """Attached to VAR sites; identifies the resolved binder."""
+    """Attached to VAR sites; identifies the resolved binder(s).
+
+    For a plain Var: candidates is empty; binder_site/depth_from_innermost
+      describe the single binder.
+    For a HoleVar: candidates is the list of (binder_site, depth) tuples
+      per candidate; binder_site/depth_from_innermost duplicate the
+      innermost candidate's info as the 'primary' for liveness bookkeeping.
+    """
     binder_site: int                 # site index of the binding LAM
     depth_from_innermost: int        # at the use site
+    candidates: list[tuple[int, int]] = field(default_factory=list)
 
 
 @dataclass
@@ -59,7 +67,7 @@ class NodeOccupancy:
 
 def count_nodes(root: Node) -> int:
     """Count AST nodes (used by callers to pre-check N)."""
-    if isinstance(root, (Var, IntLit, BoolLit)):
+    if isinstance(root, (Var, IntLit, BoolLit, HoleVar)):
         return 1
     if isinstance(root, Lam):
         return 1 + count_nodes(root.body)
@@ -88,9 +96,9 @@ def serialize_preorder(root: Node, N: int) -> list[NodeOccupancy]:
     # each Lam node to its site index, which we only learn during the
     # second-pass walk. So we collect Lam->ResolvedRef during the first
     # pass (by node identity), then look up in the second pass.
-    var_refs: dict[int, "ResolvedRef"] = {}   # id(Var node) -> ResolvedRef
-    def _capture(var: Var, ref) -> None:
-        var_refs[id(var)] = ref
+    var_refs: dict[int, list] = {}   # id(Var or HoleVar) -> list[ResolvedRef]
+    def _capture(var, refs) -> None:
+        var_refs[id(var)] = refs
     resolve_binders(root, on_var=_capture)
 
     # Second pass: pre-order traversal, recording site indices for Lams as
@@ -102,12 +110,31 @@ def serialize_preorder(root: Node, N: int) -> list[NodeOccupancy]:
     def _emit(node: Node, ast_path: tuple[int, ...]) -> None:
         idx = len(sites)
         if isinstance(node, Var):
-            ref = var_refs[id(node)]
+            refs = var_refs[id(node)]
+            assert len(refs) == 1
+            ref = refs[0]
             sites.append(NodeOccupancy(
                 kind=KIND_VAR,
                 var_ref=VarRef(
                     binder_site=lam_to_site[id(ref.binder)],
                     depth_from_innermost=ref.depth_from_innermost,
+                ),
+                ast_path=ast_path,
+            ))
+            return
+        if isinstance(node, HoleVar):
+            refs = var_refs[id(node)]
+            primary = min(refs, key=lambda r: r.depth_from_innermost)
+            candidates = [
+                (lam_to_site[id(r.binder)], r.depth_from_innermost)
+                for r in refs
+            ]
+            sites.append(NodeOccupancy(
+                kind=KIND_VAR,
+                var_ref=VarRef(
+                    binder_site=lam_to_site[id(primary.binder)],
+                    depth_from_innermost=primary.depth_from_innermost,
+                    candidates=candidates,
                 ),
                 ast_path=ast_path,
             ))

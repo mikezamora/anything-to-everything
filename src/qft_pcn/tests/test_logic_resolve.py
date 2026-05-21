@@ -11,7 +11,12 @@ from src.qft_pcn.logic.encoding import IllScopedVar, TooManyBinders
 
 def _refs(ast):
     out = []
-    resolve_binders(ast, on_var=lambda var, ref: out.append((var.name, ref)))
+    def cb(var, refs):
+        # For plain Var, refs is singleton. For HoleVar, refs has multiple.
+        # Existing tests expect single-ref output.
+        name = var.name if hasattr(var, 'name') else None
+        out.append((name, refs[0] if refs else None))
+    resolve_binders(ast, on_var=cb)
     return out
 
 
@@ -48,7 +53,7 @@ def test_resolve_shadowing():
 def test_resolve_unbound_raises():
     ast = parse("x")
     with pytest.raises(IllScopedVar, match="Var\\('x'\\)"):
-        resolve_binders(ast, on_var=lambda v, r: None)
+        resolve_binders(ast, on_var=lambda v, rs: None)
 
 
 def test_resolve_too_many_binders_raises():
@@ -57,7 +62,7 @@ def test_resolve_too_many_binders_raises():
     ast = parse(src)
     # 8 nested lambdas, but BID_CUTOFF - 1 = 7 allowed.
     with pytest.raises(TooManyBinders):
-        resolve_binders(ast, on_var=lambda v, r: None)
+        resolve_binders(ast, on_var=lambda v, rs: None)
 
 
 def test_resolve_multi_var_through_bin_app_if():

@@ -7,6 +7,8 @@ computes:
 
 Raises IllScopedVar for unbound references and TooManyBinders if scope
 nesting exceeds MAX_BINDER_DEPTH.
+
+HoleVar nodes resolve every candidate name, yielding a list of ResolvedRef.
 """
 
 from __future__ import annotations
@@ -14,7 +16,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable
 
-from .ast import Node, Var, Lam, App, IntLit, BoolLit, If, Bin
+from .ast import Node, Var, Lam, App, IntLit, BoolLit, If, Bin, HoleVar
 from .encoding import (IllScopedVar, TooManyBinders, UnsupportedNode,
                        MAX_BINDER_DEPTH)
 
@@ -28,9 +30,12 @@ class ResolvedRef:
 
 def resolve_binders(
     root: Node,
-    on_var: Callable[[Var, ResolvedRef], None],
+    on_var: Callable[["Node", list[ResolvedRef]], None],
 ) -> None:
-    """Walk root pre-order. Call on_var(var, ref) for each Var encountered.
+    """Walk root pre-order. Call on_var(node, refs) for each Var/HoleVar.
+
+    For a plain Var, refs is a singleton list. For HoleVar(candidates=[...]),
+    refs is one ResolvedRef per candidate.
 
     The walk also maintains a stack of in-scope binders; visiting a Lam
     pushes it before descending into the body and pops on the way out.
@@ -39,13 +44,26 @@ def resolve_binders(
 
     def _walk(node: Node) -> None:
         if isinstance(node, Var):
-            # Find the innermost binder with matching name.
             for offset, lam in enumerate(reversed(stack)):
                 if lam.param == node.name:
-                    on_var(node, ResolvedRef(binder=lam,
-                                             depth_from_innermost=offset))
+                    on_var(node, [ResolvedRef(binder=lam,
+                                              depth_from_innermost=offset)])
                     return
             raise IllScopedVar(name=node.name)
+        if isinstance(node, HoleVar):
+            refs: list[ResolvedRef] = []
+            for cand in node.candidates:
+                found = False
+                for offset, lam in enumerate(reversed(stack)):
+                    if lam.param == cand:
+                        refs.append(ResolvedRef(
+                            binder=lam, depth_from_innermost=offset))
+                        found = True
+                        break
+                if not found:
+                    raise IllScopedVar(name=cand)
+            on_var(node, refs)
+            return
         if isinstance(node, Lam):
             if len(stack) >= MAX_BINDER_DEPTH:
                 raise TooManyBinders(depth=len(stack) + 1,

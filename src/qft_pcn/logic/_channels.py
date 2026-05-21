@@ -39,8 +39,12 @@ def compute_live_binders(
                                        # LAM at k and the next site at k+1),
                                        # then dropped if never referenced.
         elif occ.kind == KIND_VAR and occ.var_ref is not None:
-            ls = occ.var_ref.binder_site
-            last_use_site[ls] = max(last_use_site.get(ls, ls), k)
+            cands = (occ.var_ref.candidates
+                     if occ.var_ref.candidates
+                     else [(occ.var_ref.binder_site,
+                            occ.var_ref.depth_from_innermost)])
+            for ls, _ in cands:
+                last_use_site[ls] = max(last_use_site.get(ls, ls), k)
 
     # Second pass: compute liveness per bond.
     # A binder is live across bond i iff lam_site <= i AND last_use_site > i.

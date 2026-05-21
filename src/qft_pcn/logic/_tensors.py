@@ -160,60 +160,59 @@ def _bid_bond_tensor_at_site(
     # For LAM sites, the new binder goes from no_info_in to its channel_out
     # under BID_0 — but other binders still pass through under BID_NONE.
     # For VAR sites, the referenced binder's channel may be consumed.
-    consumed_binder: BinderHandle | None = None
     if occ.kind == KIND_VAR:
-        # Identify the binder being referenced. We can recover it from the
-        # left_live channels by matching against the var_ref's binder_site.
-        target_lam_site = occ.var_ref.binder_site
-        ref_handle = None
-        for bh in left_live:
-            if bh.lam_site == target_lam_site:
-                ref_handle = bh
-                break
-        if ref_handle is None:
-            raise RuntimeError(
-                f"VAR site {site_idx} references binder at lam_site="
-                f"{target_lam_site} but it is not in left_live; "
-                f"this is an encoder bug — channel bookkeeping is wrong."
-            )
-        # Is this the binder's last use? It's consumed iff the binder is
-        # not in right_live.
-        if ref_handle not in right_ch:
-            consumed_binder = ref_handle
-        c_in = left_ch[ref_handle]
-        # At a VAR site the local bid value is BID_(depth+1). All channel
-        # entries — the reference path AND the passthroughs of other live
-        # binders — are at that single BID slice so the local-register
-        # marginal is unambiguous when the decoder reads it.
-        if consumed_binder is not None:
-            # The channel is dropped at this bond — emit to no_info_out.
-            T[c_in, local_bid_value, NO_INFO_OUT] = 1.0
-        else:
-            # Pass the channel through.
-            c_out = right_ch[ref_handle]
-            T[c_in, local_bid_value, c_out] = 1.0
+        # Determine candidate list. For a plain Var: a single (lam_site, depth)
+        # pair (from binder_site/depth_from_innermost). For a HoleVar-derived
+        # site: every candidate in occ.var_ref.candidates.
+        cands = (occ.var_ref.candidates
+                 if occ.var_ref.candidates
+                 else [(occ.var_ref.binder_site,
+                        occ.var_ref.depth_from_innermost)])
+        amp = 1.0 / np.sqrt(len(cands))
 
-        # The no_info channel also passes through at the local bid (so
-        # subsequent sites still see a no_info input for any nested LAMs).
-        T[NO_INFO_IN, local_bid_value, NO_INFO_OUT] = 1.0
+        from .encoding import MAX_BINDER_DEPTH, TooManyBinders
+        ref_handles_used: set[BinderHandle] = set()
+        for cand_lam_site, cand_depth in cands:
+            ref_handle = None
+            for bh in left_live:
+                if bh.lam_site == cand_lam_site:
+                    ref_handle = bh
+                    break
+            if ref_handle is None:
+                raise RuntimeError(
+                    f"VAR site {site_idx}: candidate binder at "
+                    f"lam_site={cand_lam_site} not in left_live "
+                    f"(bookkeeping bug)"
+                )
+            ref_handles_used.add(ref_handle)
+            if cand_depth >= MAX_BINDER_DEPTH:
+                raise TooManyBinders(depth=cand_depth + 1,
+                                     cutoff=MAX_BINDER_DEPTH)
+            local_bid = BID_0 + cand_depth
+            c_in = left_ch[ref_handle]
+            if ref_handle not in right_ch:
+                T[c_in, local_bid, NO_INFO_OUT] = amp
+            else:
+                c_out = right_ch[ref_handle]
+                T[c_in, local_bid, c_out] = amp
 
-        # Other channels passthrough at the SAME local bid (so the BID
-        # register at this site has a single definite value across all
-        # paths).
+        # Pass-through for binders NOT referenced by this use. We co-locate
+        # them on the primary candidate's bid slice (matching the prior
+        # single-candidate behavior — for a concrete Var with one candidate,
+        # this reproduces the old tensor exactly).
+        primary_depth = cands[0][1]
+        local_bid_for_passthrough = BID_0 + primary_depth
+        # no_info passthrough at the primary bid slice.
+        T[NO_INFO_IN, local_bid_for_passthrough, NO_INFO_OUT] = 1.0
         for bh in left_live:
-            if bh == ref_handle:
+            if bh in ref_handles_used:
                 continue
             c_in_other = left_ch[bh]
-            # If still live on right, passthrough.
             if bh in right_ch:
                 c_out_other = right_ch[bh]
-                T[c_in_other, local_bid_value, c_out_other] = 1.0
-            # Otherwise the binder is being dropped at this bond despite
-            # not being referenced here — that shouldn't happen if our
-            # liveness analysis is correct (last_use_site logic).
+                T[c_in_other, local_bid_for_passthrough, c_out_other] = 1.0
             else:
-                # Defensive: drop to no_info_out at local bid.
-                T[c_in_other, local_bid_value, NO_INFO_OUT] = 1.0
+                T[c_in_other, local_bid_for_passthrough, NO_INFO_OUT] = 1.0
         return T
 
     if occ.kind == KIND_LAM:
