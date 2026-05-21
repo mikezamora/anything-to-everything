@@ -127,6 +127,48 @@ def test_pad_site_is_vacuum_amplitude():
         assert abs(T[0, other, 0]) < 1e-12
 
 
+def test_unused_binder_does_not_crash():
+    """Lam_y is introduced but never used; must not crash, and bond dim
+    immediately after Lam_y must include Lam_y as a live channel."""
+    ast = parse(r"\x:Int. \y:Int. x")
+    sites = serialize_preorder(ast, N=8)
+    types = compute_site_types(ast, sites)
+    live = compute_live_binders(sites)
+    tensors = build_site_tensors(sites, types, live)
+    # Layout: LAM_x@0, LAM_y@1, VAR_x@2, PAD@3, ...
+    # Bond 0 (between LAM_x and LAM_y): only Lam_x live (1 channel + no_info = dim 2)
+    assert tensors[0].shape[2] == 2
+    # Bond 1 (between LAM_y and VAR_x): both Lam_x AND Lam_y live (2 channels + no_info = dim 3)
+    assert tensors[1].shape[2] == 3
+    # Bond 2 (between VAR_x and PAD): nothing live
+    assert tensors[2].shape[2] == 1
+
+
+def test_nested_binder_channel_mapping():
+    """For \\x. \\y. x, Var x must read from channel 1 (Lam_x) under BID_1
+    (depth-from-innermost = 1), and Var y would read from channel 2 (Lam_y)
+    under BID_0 — exercises the depth->local_bid mapping for non-innermost
+    binders."""
+    from src.qft_pcn.logic.encoding import (
+        KIND_VAR, TYPE_INT, BID_0, BID_1, VALUE_NONE,
+    )
+    ast = parse(r"\x:Int. \y:Int. x")
+    sites = serialize_preorder(ast, N=8)
+    types = compute_site_types(ast, sites)
+    live = compute_live_binders(sites)
+    tensors = build_site_tensors(sites, types, live)
+    # Var_x is at site 2. Its left_live should be [Lam_x, Lam_y].
+    # Lam_x is channel 1 (declared first); Lam_y is channel 2.
+    # Var_x reads channel 1 under BID_1 (depth=1 from innermost which is Lam_y).
+    var_x = tensors[2]   # shape: (3, 8192, 1) — 2 binders left, both consumed (Lam_y is unused so it gets dropped too at this bond)
+    idx = _basis_index(KIND_VAR, TYPE_INT, BID_1, VALUE_NONE)
+    # The "consumed" path emits to NO_INFO_OUT (channel index 0 on the right).
+    assert abs(var_x[1, idx, 0] - 1.0) < 1e-12, (
+        f"VAR_x should read channel 1 (Lam_x) under BID_1, got "
+        f"{var_x[1, idx, 0]}"
+    )
+
+
 def test_bond_dim_at_least_n_live_plus_one():
     """Spec §7.4 test (structural marker): for every bond, the total bond
     dim must be at least |L_i| + 1. This proves the principled channel

@@ -84,7 +84,10 @@ def _local_bid_for_kind(kind: int, occ: NodeOccupancy) -> int:
     if kind == KIND_LAM:
         return BID_0   # "I am introducing a new binder; it is my innermost"
     if kind == KIND_VAR:
+        from .encoding import TooManyBinders, MAX_BINDER_DEPTH
         depth = occ.var_ref.depth_from_innermost
+        if depth >= MAX_BINDER_DEPTH:
+            raise TooManyBinders(depth=depth + 1, cutoff=MAX_BINDER_DEPTH)
         # BID_0 .. BID_6 occupy indices 1..7. BID_k = k + 1.
         return BID_0 + depth
     return BID_NONE

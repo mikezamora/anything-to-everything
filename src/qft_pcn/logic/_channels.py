@@ -34,7 +34,10 @@ def compute_live_binders(
             handle = BinderHandle(lam_site=k, depth_at_lam=depth)
             binder_lam_site[k] = len(binders)
             binders.append(handle)
-            last_use_site[k] = k       # if never used, last_use = lam_site
+            last_use_site[k] = k + 1   # the LAM site itself counts as a use;
+                                       # the binder is live on bond k (between
+                                       # LAM at k and the next site at k+1),
+                                       # then dropped if never referenced.
         elif occ.kind == KIND_VAR and occ.var_ref is not None:
             ls = occ.var_ref.binder_site
             last_use_site[ls] = max(last_use_site.get(ls, ls), k)
