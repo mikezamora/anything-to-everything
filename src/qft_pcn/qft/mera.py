@@ -426,28 +426,16 @@ class MERA:
         return rhos_new
 
     def norm_sq(self) -> float:
-        """<psi|psi> via layer-by-layer ascending of the density matrices.
+        """<psi|psi>.
 
-        For the top: rho_l, rho_r are layer-(L-1) reduced densities on the
-        two top sites. The top tensor T_top: (d_{L-1}, d_{L-1}, 1) is the
-        wavefunction amplitudes on these two sites.
+        Computed as inner(self, self) via the double-network cross-tensor
+        algorithm — this is correct for ARBITRARY MERA states (not just
+        product MERAs). The previous "product-state factored" form
+        (<top|rho_l⊗rho_r|top>) was only correct when each layer's reduced
+        density factorized across pairs, which fails as soon as a gate
+        application entangles adjacent leaves.
         """
-        L = self.L
-        if L == 1:
-            # N = 2: leaves themselves are the top sites.
-            rhos = self._layer_density(0)
-            rho_l, rho_r = rhos[0], rhos[1]
-            T = self.top[..., 0]
-            val = np.einsum('ab,cd,ac,bd->', T, T.conj(), rho_l, rho_r)
-            return float(np.real(val))
-        # General L>=2: ascend to layer L-1 (2 sites), then contract with top.
-        rhos = self._layer_density(L - 1)
-        assert len(rhos) == 2, f"top layer should have 2 sites, got {len(rhos)}"
-        rho_l, rho_r = rhos
-        T = self.top[..., 0]
-        val = np.einsum('ab,cd,ac,bd->', T, T.conj(), rho_l, rho_r,
-                        optimize='greedy')
-        return float(np.real(val))
+        return float(np.real(self.inner(self)))
 
     # ---- normalization and inner product ---------------------------------
 
@@ -746,6 +734,198 @@ class MERA:
                       psi_post.conj(), op4, psi_post,
                       optimize='greedy')
         return complex(e)
+
+    # ---- structural helpers -----------------------------------------------
+
+    def bond_dimensions(self) -> list[int]:
+        """Per-layer max bond dimension (spec §6.2).
+
+        Entry ℓ is the maximum across isometries at layer ℓ of their FIRST
+        index (the "out" / coarse-grained dim). For a vacuum/product MERA
+        with uniform chi_layer, returns [layer_dims[1], ..., layer_dims[L-1],
+        layer_dims[L-1]].
+        """
+        out: list[int] = []
+        for ell in range(self.L):
+            iso_layer = self.isometries[ell]
+            out.append(max(w.shape[0] for w in iso_layer) if iso_layer else 0)
+        return out
+
+    def layer_metric(self, layer: int) -> np.ndarray:
+        """Effective metric tensor at the given layer (spec §6.3).
+
+        Default: identity. Future sub-projects coupling QPCN curvature to
+        the substrate will mutate this to reflect bulk geometry at radial
+        coordinate = layer index.
+        """
+        if not 0 <= layer < self.L:
+            raise IndexError(f"layer {layer} out of range [0, {self.L})")
+        return np.eye(self.layer_dims[layer], dtype=complex)
+
+    # ---- entanglement entropy ---------------------------------------------
+
+    def _is_product(self) -> bool:
+        """True if all disentanglers (intra + inter, every layer) are the
+        identity. Used as the product-state entropy fast path.
+        """
+        for layer in self.disentanglers:
+            for u in layer:
+                d = u.shape[0]
+                if not np.allclose(u.reshape(d * d, d * d),
+                                   np.eye(d * d), atol=1e-12):
+                    return False
+        for layer in self.inter_disentanglers:
+            for u in layer:
+                d = u.shape[0]
+                if not np.allclose(u.reshape(d * d, d * d),
+                                   np.eye(d * d), atol=1e-12):
+                    return False
+        return True
+
+    def entanglement_entropy(self, cut: int) -> float:
+        """Von Neumann entropy across the cut after leaf `cut`.
+
+        Spec §5.8. For product MERAs (identity disentanglers) returns 0
+        without materializing. Otherwise materializes the full statevector
+        (cost O(d_local^N)) — acceptable only for the small acceptance-test
+        sizes (N <= 8, d_local <= 4); production optimization via the
+        descending superoperator is a follow-on.
+        """
+        if not 0 <= cut < self.N - 1:
+            raise ValueError(
+                f"cut {cut} out of range [0, {self.N - 1})")
+        if self._is_product():
+            return 0.0
+        psi = self._materialize()      # shape (d_local,) * N
+        N = self.N
+        d = self.d_local
+        left_size = cut + 1
+        right_size = N - left_size
+        psi_mat = psi.reshape(d ** left_size, d ** right_size)
+        # Schmidt SVD across the cut → eigvals of reduced density.
+        sv = np.linalg.svd(psi_mat, compute_uv=False)
+        p = sv * sv
+        total = p.sum()
+        if total > 1e-15:
+            p = p / total
+        p = p[p > 1e-15]
+        return float(-(p * np.log(p)).sum())
+
+    def _materialize(self) -> np.ndarray:
+        """Dense state vector, shape (d_local,) * N.
+
+        Cost O(d_local^N) — do NOT call from production code paths. Only
+        used by `_entropy_general` on tiny N for the acceptance tests.
+
+        Construction: start with the leaf product, then apply each layer's
+        intra- then inter-pair disentanglers IN LEAF SPACE. Higher layers
+        (>= 1) act in a coarse basis and would need to be lifted through
+        the isometries to act on leaves; we assert here that higher layers
+        are identity, matching the from_product + apply_two_site_gate
+        contract of sub-project F.
+        """
+        # Validate the "only layer-0 disentanglers may be non-identity"
+        # invariant. Anything else would require lifting higher-layer
+        # disentanglers back to leaf space, which is outside F's scope.
+        for ell in range(1, self.L):
+            for u in self.disentanglers[ell]:
+                d = u.shape[0]
+                if not np.allclose(u.reshape(d * d, d * d),
+                                   np.eye(d * d), atol=1e-10):
+                    raise NotImplementedError(
+                        f"_materialize: layer {ell} disentangler is "
+                        "non-identity; not yet supported")
+            for u in self.inter_disentanglers[ell]:
+                d = u.shape[0]
+                if not np.allclose(u.reshape(d * d, d * d),
+                                   np.eye(d * d), atol=1e-10):
+                    raise NotImplementedError(
+                        f"_materialize: layer {ell} inter-disentangler is "
+                        "non-identity; not yet supported")
+        d = self.d_local
+        N = self.N
+        # Build leaf product.
+        psi = self.leaves[0][0, :, 0].astype(complex)
+        for k in range(1, N):
+            psi = np.tensordot(psi, self.leaves[k][0, :, 0], axes=0)
+        # shape: (d, d, ..., d) with N axes.
+        # Apply layer-0 intra-pair disentanglers on (2j, 2j+1).
+        for j in range(N // 2):
+            u = self.disentanglers[0][j]   # (out_l, out_r, in_l, in_r)
+            psi = np.tensordot(u, psi, axes=([2, 3], [2 * j, 2 * j + 1]))
+            # tensordot puts contracted axes' output at front (out_l, out_r,
+            # then the remaining axes in order).
+            psi = np.moveaxis(psi, [0, 1], [2 * j, 2 * j + 1])
+        # Apply layer-0 inter-pair disentanglers on (2j+1, 2j+2).
+        for j in range(max(0, N // 2 - 1)):
+            u = self.inter_disentanglers[0][j]
+            left = 2 * j + 1
+            right = 2 * j + 2
+            psi = np.tensordot(u, psi, axes=([2, 3], [left, right]))
+            psi = np.moveaxis(psi, [0, 1], [left, right])
+        return psi
+
+    # ---- two-site gate application ----------------------------------------
+
+    def apply_two_site_gate(self, leaf: int, gate: np.ndarray,
+                            chi_max: int = 16,
+                            eps: float = 1e-12) -> float:
+        """In-place: apply `gate` (d^2 x d^2) at leaves (leaf, leaf+1).
+
+        Per spec §5.6, the gate absorbs into a layer-0 disentangler:
+        intra-pair (disentanglers[0][leaf//2]) if leaf is even, else
+        inter-pair (inter_disentanglers[0][(leaf-1)//2]). Higher-layer
+        tensors are NOT modified — this is the causal-cone bound at
+        encoder-time.
+
+        Returns the truncation error (sum of discarded squared singular
+        values relative to total). For unitary gates this is ~0.
+        """
+        if not 0 <= leaf < self.N - 1:
+            raise ValueError(
+                f"leaf {leaf} invalid for two-site gate (N={self.N})")
+        d = self.d_local
+        if gate.shape != (d * d, d * d):
+            raise ValueError(
+                f"gate shape {gate.shape}, expected ({d * d}, {d * d})")
+        g4 = gate.reshape(d, d, d, d)   # (out_l, out_r, in_l, in_r)
+        if leaf % 2 == 0:
+            j = leaf // 2
+            u_old = self.disentanglers[0][j]
+            # u_new[A, B, s, t] = sum_{a, b} g4[A, B, a, b] * u_old[a, b, s, t]
+            u_new = np.einsum('ABab,abst->ABst', g4, u_old,
+                              optimize='greedy')
+        else:
+            j_inter = (leaf - 1) // 2
+            u_old = self.inter_disentanglers[0][j_inter]
+            u_new = np.einsum('ABab,abst->ABst', g4, u_old,
+                              optimize='greedy')
+        mat = u_new.reshape(d * d, d * d)
+        # SVD for principled non-unitary handling (e.g. imag-time Trotter).
+        U, S, Vh = np.linalg.svd(mat, full_matrices=False)
+        if S.size:
+            tol = eps * S[0]
+            keep_mask = S > tol
+        else:
+            keep_mask = np.zeros(0, dtype=bool)
+        U_kept = U[:, keep_mask][:, :chi_max]
+        S_kept = S[keep_mask][:chi_max]
+        Vh_kept = Vh[keep_mask][:chi_max]
+        norm_sq_full = float((S * S).sum())
+        kept_norm_sq = float((S_kept * S_kept).sum())
+        trunc_err = max(0.0, 1.0 - (kept_norm_sq / norm_sq_full
+                                    if norm_sq_full > 0 else 1.0))
+        recon = (U_kept * S_kept) @ Vh_kept
+        if recon.shape != (d * d, d * d):
+            full = np.zeros((d * d, d * d), dtype=complex)
+            full[:recon.shape[0], :recon.shape[1]] = recon
+            recon = full
+        recon4 = recon.reshape(d, d, d, d)
+        if leaf % 2 == 0:
+            self.disentanglers[0][leaf // 2] = recon4
+        else:
+            self.inter_disentanglers[0][(leaf - 1) // 2] = recon4
+        return trunc_err
 
     def apply_local_gate(self, leaf: int, gate: np.ndarray) -> None:
         """In-place: leaf <- gate @ leaf on the physical index.

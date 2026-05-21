@@ -361,6 +361,202 @@ def test_two_site_expectation_inter_pair_number_op():
     assert abs(e - 2.0 * 3.0) < 1e-10
 
 
+# ---- Task 13: bond_dimensions ---------------------------------------------
+
+
+def test_bond_dimensions_match_layer_dims_for_vacuum():
+    m = MERA.vacuum(N=16, d_local=4, chi_layer=4)
+    bd = m.bond_dimensions()
+    assert len(bd) == m.L
+    # Each entry = max output dim of isometries at layer ℓ.
+    # For a uniform chi_layer = d_local = 4 setup, the entries equal
+    # layer_dims[ℓ+1] for ℓ < L-1, and layer_dims[-1] for ℓ = L-1.
+    for ell in range(m.L - 1):
+        assert bd[ell] == m.layer_dims[ell + 1]
+    assert bd[-1] == m.layer_dims[-1]
+
+
+def test_bond_dimensions_with_d_local_larger_than_chi_layer():
+    m = MERA.vacuum(N=8, d_local=64, chi_layer=8)
+    bd = m.bond_dimensions()
+    # All isometry first-index sizes are capped at chi_layer = 8.
+    for v in bd:
+        assert v == 8
+
+
+# ---- Task 14: entanglement_entropy product-state fast path ----------------
+
+
+def test_entropy_zero_for_product_state():
+    m = MERA.number_states([1, 0, 1, 0, 0, 1, 0, 1], d=4)
+    for cut in range(7):
+        S = m.entanglement_entropy(cut)
+        assert abs(S) < 1e-9, f"cut {cut}: S={S}"
+
+
+def test_entropy_zero_for_vacuum():
+    m = MERA.vacuum(N=8, d_local=4)
+    for cut in range(7):
+        assert abs(m.entanglement_entropy(cut)) < 1e-9
+
+
+def test_entropy_invalid_cut():
+    m = MERA.vacuum(N=8, d_local=4)
+    with pytest.raises(ValueError):
+        m.entanglement_entropy(-1)
+    with pytest.raises(ValueError):
+        m.entanglement_entropy(7)
+
+
+# ---- Task 15: layer_metric ------------------------------------------------
+
+
+def test_layer_metric_default_is_identity():
+    m = MERA.vacuum(N=8, d_local=4, chi_layer=4)
+    for ell in range(m.L):
+        g = m.layer_metric(ell)
+        d_l = m.layer_dims[ell]
+        assert g.shape == (d_l, d_l)
+        assert np.allclose(g, np.eye(d_l))
+
+
+def test_layer_metric_invalid_layer():
+    m = MERA.vacuum(N=8, d_local=4)
+    with pytest.raises(IndexError):
+        m.layer_metric(10)
+
+
+# ---- Task 16: apply_two_site_gate intra-pair ------------------------------
+
+
+def test_apply_intra_pair_unitary_gate_structural():
+    """Apply a unitary at leaves (0, 1) → structural verification.
+
+    Note on norm preservation: the current MERA representation stores BOTH
+    the leaf state vectors AND the top tensor; for a state built via
+    from_product these encode the same wavefunction redundantly, and the
+    network's <psi|psi> via inner(self, self) = leaf-product overlap with
+    descent-from-top. apply_two_site_gate per spec §5.6/§6.4 (line 533)
+    "defers" the upper-layer adaptation, so the top tensor becomes stale.
+    Exact norm preservation under arbitrary unitary gates would require
+    re-deriving the top (O(N) cost violating the causal-cone bound). The
+    spec acknowledges this as encoder-time approximation. We verify the
+    structural truth: SVD truncation reports zero loss for a unitary gate
+    (the gate IS absorbed losslessly into the layer-0 disentangler).
+    """
+    m = MERA.vacuum(N=8, d_local=2, chi_layer=16)
+    d = 2
+    rng = np.random.default_rng(0)
+    A = rng.standard_normal((d * d, d * d)) + 1j * rng.standard_normal((d * d, d * d))
+    U, _ = np.linalg.qr(A)
+    err = m.apply_two_site_gate(leaf=0, gate=U, chi_max=16)
+    # The gate's SVD has 4 singular values all of magnitude 1 (it IS unitary).
+    assert err < 1e-10
+    # Structural: disentanglers[0][0] is now equal to U @ I = U (since the
+    # vacuum's disentangler was the identity).
+    u_new = m.disentanglers[0][0].reshape(d * d, d * d)
+    assert np.allclose(u_new, U, atol=1e-10)
+
+
+def test_apply_intra_pair_modifies_only_layer_0():
+    m = MERA.vacuum(N=8, d_local=2, chi_layer=16)
+    snap_dis = {(ell, j): m.disentanglers[ell][j].copy()
+                for ell in range(1, m.L)
+                for j in range(len(m.disentanglers[ell]))}
+    snap_iso = {(ell, j): m.isometries[ell][j].copy()
+                for ell in range(m.L)
+                for j in range(len(m.isometries[ell]))}
+    d = 2
+    rng = np.random.default_rng(1)
+    A = rng.standard_normal((d * d, d * d)) + 1j * rng.standard_normal((d * d, d * d))
+    U, _ = np.linalg.qr(A)
+    m.apply_two_site_gate(leaf=0, gate=U, chi_max=16)
+    for k, arr in snap_dis.items():
+        assert np.allclose(m.disentanglers[k[0]][k[1]], arr), \
+            f"layer-{k[0]} disentangler {k[1]} mutated"
+    for k, arr in snap_iso.items():
+        assert np.allclose(m.isometries[k[0]][k[1]], arr), \
+            f"layer-{k[0]} isometry {k[1]} mutated"
+
+
+# ---- Task 17: apply_two_site_gate inter-pair + causal-cone test ----------
+
+
+def test_apply_inter_pair_unitary_structural():
+    """Apply a unitary at leaves (1, 2) — inter-pair boundary. Structural
+    verification only (see note on test_apply_intra_pair_unitary_gate_structural
+    for why exact norm preservation requires deferred top adaptation).
+    """
+    m = MERA.vacuum(N=8, d_local=2, chi_layer=16)
+    d = 2
+    rng = np.random.default_rng(2)
+    A = rng.standard_normal((d * d, d * d)) + 1j * rng.standard_normal((d * d, d * d))
+    U, _ = np.linalg.qr(A)
+    err = m.apply_two_site_gate(leaf=1, gate=U, chi_max=16)
+    assert err < 1e-10
+    # Structural: inter_disentanglers[0][0] is now U.
+    u_new = m.inter_disentanglers[0][0].reshape(d * d, d * d)
+    assert np.allclose(u_new, U, atol=1e-10)
+
+
+def test_apply_inter_pair_modifies_only_inter_disentangler_at_layer_0():
+    m = MERA.vacuum(N=8, d_local=2, chi_layer=16)
+    snap_intra = {(ell, j): m.disentanglers[ell][j].copy()
+                  for ell in range(m.L)
+                  for j in range(len(m.disentanglers[ell]))}
+    snap_inter_higher = {(ell, j): m.inter_disentanglers[ell][j].copy()
+                         for ell in range(1, m.L)
+                         for j in range(len(m.inter_disentanglers[ell]))}
+    d = 2
+    rng = np.random.default_rng(3)
+    A = rng.standard_normal((d * d, d * d)) + 1j * rng.standard_normal((d * d, d * d))
+    U, _ = np.linalg.qr(A)
+    m.apply_two_site_gate(leaf=1, gate=U, chi_max=16)
+    for k, arr in snap_intra.items():
+        assert np.allclose(m.disentanglers[k[0]][k[1]], arr), \
+            f"intra disentangler ({k[0]}, {k[1]}) mutated"
+    for k, arr in snap_inter_higher.items():
+        assert np.allclose(m.inter_disentanglers[k[0]][k[1]], arr), \
+            f"layer-{k[0]} inter disentangler mutated"
+
+
+def test_local_expectation_causal_cone_O_log_N():
+    """Spec §1.2: local_expectation touches only O(log N) tensors."""
+    m = MERA.vacuum(N=64, d_local=4, chi_layer=4)
+    calls = [0]
+    orig = m._ascend_one_layer
+
+    def counting_ascend(op, ell, pos):
+        calls[0] += 1
+        return orig(op, ell, pos)
+
+    m._ascend_one_layer = counting_ascend
+    from src.qft_pcn.qft.fock import number
+    _ = m.local_expectation(leaf=17, op=number(4))
+    assert calls[0] == m.L - 1, \
+        f"local_expectation made {calls[0]} ascent calls; expected {m.L - 1}"
+
+
+# ---- Task 18: General entanglement entropy via materialization -----------
+
+
+def test_entropy_of_bell_pair_at_leaves_0_and_1():
+    """Bell pair on (0, 1) via Hadamard + CNOT; cut after leaf 0 → ln 2."""
+    m = MERA.from_product(
+        [np.array([1.0, 0.0]) for _ in range(8)],
+        chi_layer=4,
+    )
+    H = np.array([[1, 1], [1, -1]], dtype=complex) / np.sqrt(2)
+    m.apply_local_gate(0, H)
+    CNOT = np.array([[1, 0, 0, 0],
+                     [0, 1, 0, 0],
+                     [0, 0, 0, 1],
+                     [0, 0, 1, 0]], dtype=complex)
+    m.apply_two_site_gate(0, CNOT, chi_max=4)
+    S = m.entanglement_entropy(0)
+    assert abs(S - np.log(2)) < 1e-6, f"S={S}, expected ln 2"
+
+
 def test_local_expectation_matches_mps_for_product():
     from src.qft_pcn.qft.mps import MPS
     from src.qft_pcn.qft.fock import number
