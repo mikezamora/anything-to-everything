@@ -115,6 +115,42 @@ def _find_typeholes_with_paths(
     return out
 
 
+def _expand_empty_holevar_candidates(sketch: Node) -> Node:
+    """Walk the AST; replace any HoleVar(candidates=[]) with a HoleVar
+    whose candidates list is every in-scope binder name (spec §5.2:
+    'empty = any in-scope').
+    """
+    def go(node: Node, env: list[str]) -> Node:
+        if isinstance(node, HoleVar):
+            if not node.candidates:
+                # Use all in-scope binders.
+                cands = list(env)
+                if not cands:
+                    # No binders in scope; leave as-is (will error later).
+                    return node
+                return HoleVar(
+                    candidates=cands,
+                    target_type=node.target_type,
+                    name=node.name,
+                )
+            return node
+        if isinstance(node, Lam):
+            return Lam(param=node.param, param_ty=node.param_ty,
+                       body=go(node.body, env + [node.param]))
+        if isinstance(node, App):
+            return App(fn=go(node.fn, env), arg=go(node.arg, env))
+        if isinstance(node, If):
+            return If(cond=go(node.cond, env),
+                      then_b=go(node.then_b, env),
+                      else_b=go(node.else_b, env))
+        if isinstance(node, Bin):
+            return Bin(op=node.op,
+                       lhs=go(node.lhs, env), rhs=go(node.rhs, env))
+        return node
+
+    return go(sketch, [])
+
+
 def _substitute_typeholes_with_first_candidate(sketch: Node) -> Node:
     """Return a copy of sketch with every TypeHole replaced by its first
     candidate. Used to obtain a 'definite' sketch for A's base encoder.
@@ -241,8 +277,9 @@ def encode_synthesis(sketch: Node, N: int = 32, chi_max: int = 32):
     Note: nested TypeHole inside witness ASTs is not supported (witness
     regions are concrete by construction).
     """
-    typeholes = _find_typeholes_with_paths(sketch)
-    definite_sketch = _substitute_typeholes_with_first_candidate(sketch)
+    expanded = _expand_empty_holevar_candidates(sketch)
+    typeholes = _find_typeholes_with_paths(expanded)
+    definite_sketch = _substitute_typeholes_with_first_candidate(expanded)
     state, meta = _base_encode(definite_sketch, N=N, chi_max=chi_max)
 
     for path, th, lam in typeholes:

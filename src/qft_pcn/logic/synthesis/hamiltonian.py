@@ -284,13 +284,13 @@ def build_synthesis_hamiltonians(
     w = problem.weights
     return {
         "examples": ExamplesHamiltonian(
-            N=meta.N, examples=problem.examples, weight=w.w_X,
+            N=meta.N, examples=problem.examples, weight=w.w_examples,
         ),
         "target_type": TargetTypeHamiltonian(
-            N=meta.N, target_type=problem.target_type, weight=w.w_Y,
+            N=meta.N, target_type=problem.target_type, weight=w.w_target_type,
         ),
         "size": SizeHamiltonian(
-            N=meta.N, weight=w.w_S,
+            N=meta.N, weight=w.w_size,
         ),
     }
 
