@@ -81,3 +81,19 @@ def test_encode_pad_sites_have_zero_amplitude_for_non_pad():
     p_local = embed_op(p, 0, (8, 8, 8, 16))
     val = state.local_expectation(3, p_local)
     assert abs(val) < 1e-10
+
+
+def test_encoder_populates_tobl_per_site():
+    """The encoder calls compute_tobl_tags and stores results in
+    EncodingMeta.tobl_per_site."""
+    from src.qft_pcn.logic.encoding import TOBL_NONE, TOBL_INT
+
+    state, meta = encode(parse(r"\x:Int. x"), N=8, chi_max=32)
+    assert len(meta.tobl_per_site) == 8
+    # Site 0 = LAM (root, no obligation).
+    assert meta.tobl_per_site[0] == TOBL_NONE
+    # Site 1 = Var(x), body of Lam — obligation = Int.
+    assert meta.tobl_per_site[1] == TOBL_INT
+    # PAD sites.
+    for k in range(2, 8):
+        assert meta.tobl_per_site[k] == TOBL_NONE

@@ -14,6 +14,7 @@ from ._serialize import serialize_preorder
 from ._types import compute_site_types
 from ._channels import compute_live_binders
 from ._tensors import build_site_tensors
+from ._typing_extension import compute_tobl_tags
 from src.qft_pcn.qft.mps import MPS
 
 
@@ -23,6 +24,7 @@ def encode(ast: Node, N: int = 32, chi_max: int = 16
     sites = serialize_preorder(ast, N=N)
     type_tags = compute_site_types(ast, sites)
     live = compute_live_binders(sites)
+    tobl_tags = compute_tobl_tags(ast, sites)
     tensors = build_site_tensors(sites, type_tags, live)
     state = MPS(tensors=tensors)
     state.normalize()
@@ -31,6 +33,11 @@ def encode(ast: Node, N: int = 32, chi_max: int = 16
     for k, occ in enumerate(sites):
         if type_tags[k] == TYPE_ARR_NESTED and occ.ty is not None:
             nested[k] = occ.ty
+
+    nested_tobl: dict[int, Ty] = {}
+    for k, occ in enumerate(sites):
+        if occ.tobl_tag == TYPE_ARR_NESTED and occ.nested_tobl_ty is not None:
+            nested_tobl[k] = occ.nested_tobl_ty
 
     site_to_path: dict[int, tuple[int, ...]] = {k: occ.ast_path
                                                 for k, occ in enumerate(sites)}
@@ -46,8 +53,8 @@ def encode(ast: Node, N: int = 32, chi_max: int = 16
         nested_type_index=nested,
         site_to_ast_path=site_to_path,
         live_binders_per_bond=live,
-        tobl_per_site=[0] * N,                 # populated in Task 4
-        nested_tobl_index={},                   # populated in Task 4
+        tobl_per_site=tobl_tags,
+        nested_tobl_index=nested_tobl,
         channel_param_ty_per_bond=[],           # populated in Task 6
     )
     return state, meta
