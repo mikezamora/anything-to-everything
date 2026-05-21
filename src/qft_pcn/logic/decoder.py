@@ -16,7 +16,7 @@ from .ast import (
     Ty, TInt, TBool, TArrow,
 )
 from .encoding import (
-    KIND_CUTOFF, TYPE_CUTOFF, BID_CUTOFF, VALUE_CUTOFF, D_LOCAL,
+    KIND_CUTOFF, TYPE_CUTOFF, BID_CUTOFF, VALUE_CUTOFF, TOBL_CUTOFF, D_LOCAL,
     KIND_PAD, KIND_VAR, KIND_LAM, KIND_APP, KIND_INT, KIND_BOOL,
     KIND_IF, KIND_BIN,
     TYPE_INT, TYPE_BOOL, TYPE_ARR_II, TYPE_ARR_IB, TYPE_ARR_BI, TYPE_ARR_BB,
@@ -77,23 +77,28 @@ def _site_marginal(state: MPS, site: int) -> np.ndarray:
     return p
 
 
-def _decompose_basis_index(flat: int) -> tuple[int, int, int, int]:
+def _decompose_basis_index(flat: int) -> tuple[int, int, int, int, int]:
+    """Inverse of (k, t, b, v, o) -> flat index. Leftmost species slowest;
+    tobl is the innermost (fastest) species.
+    """
+    o = flat % TOBL_CUTOFF
+    flat //= TOBL_CUTOFF
     v = flat % VALUE_CUTOFF
     flat //= VALUE_CUTOFF
     b = flat % BID_CUTOFF
     flat //= BID_CUTOFF
     t = flat % TYPE_CUTOFF
     k = flat // TYPE_CUTOFF
-    return (k, t, b, v)
+    return (k, t, b, v, o)
 
 
 def _argmax_site_basis(state: MPS, site: int
-                       ) -> tuple[int, int, int, int, float]:
+                       ) -> tuple[int, int, int, int, int, float]:
     p = _site_marginal(state, site)
     flat = int(np.argmax(p))
     p_max = float(p[flat])
-    k, t, b, v = _decompose_basis_index(flat)
-    return (k, t, b, v, 1.0 - p_max)
+    k, t, b, v, o = _decompose_basis_index(flat)
+    return (k, t, b, v, o, 1.0 - p_max)
 
 
 def _type_from_tag(tag: int, site: int,
@@ -115,11 +120,11 @@ def _type_from_tag(tag: int, site: int,
 
 def decode(state: MPS, meta: EncodingMeta) -> DecodeResult:
     """Deterministic argmax decode."""
-    decoded_sites: list[tuple[int, int, int, int]] = []
+    decoded_sites: list[tuple[int, int, int, int, int]] = []
     residual_acc = 0.0
     for k in range(meta.N):
-        ki, ti, bi, vi, residual = _argmax_site_basis(state, k)
-        decoded_sites.append((ki, ti, bi, vi))
+        ki, ti, bi, vi, oi, residual = _argmax_site_basis(state, k)
+        decoded_sites.append((ki, ti, bi, vi, oi))
         residual_acc = max(residual_acc, residual)
 
     pos = [0]
@@ -135,7 +140,7 @@ def decode(state: MPS, meta: EncodingMeta) -> DecodeResult:
         if pos[0] >= meta.N:
             raise DecodeError("ran out of sites mid-parse")
         site_idx = pos[0]
-        ki, ti, bi, vi = decoded_sites[site_idx]
+        ki, ti, bi, vi, _oi = decoded_sites[site_idx]
         pos[0] += 1
         if ki == KIND_PAD:
             raise DecodeError(f"unexpected PAD at site {site_idx}")
@@ -180,7 +185,7 @@ def decode(state: MPS, meta: EncodingMeta) -> DecodeResult:
     ast = _parse_one()
 
     while pos[0] < meta.N:
-        ki, _, _, _ = decoded_sites[pos[0]]
+        ki, _, _, _, _ = decoded_sites[pos[0]]
         if ki != KIND_PAD:
             raise DecodeError(
                 f"site {pos[0]} not PAD after AST parse (kind={ki})"
@@ -304,7 +309,7 @@ def _decode_from_indices(flat_indices: list[int],
         if pos[0] >= meta.N:
             raise DecodeError("ran out of sites mid-parse (sample)")
         site_idx = pos[0]
-        ki, ti, bi, vi = decoded_sites[site_idx]
+        ki, ti, bi, vi, _oi = decoded_sites[site_idx]
         pos[0] += 1
         if ki == KIND_PAD:
             raise DecodeError(f"unexpected PAD at site {site_idx} (sample)")
@@ -347,7 +352,7 @@ def _decode_from_indices(flat_indices: list[int],
 
     ast = _parse_one()
     while pos[0] < meta.N:
-        ki, _, _, _ = decoded_sites[pos[0]]
+        ki, _, _, _, _ = decoded_sites[pos[0]]
         if ki != KIND_PAD:
             raise DecodeError(
                 f"site {pos[0]} (sample) not PAD after parse, kind={ki}"

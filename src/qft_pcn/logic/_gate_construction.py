@@ -22,32 +22,35 @@ import numpy as np
 from .ast import Node
 from .encoding import (
     SPECIES, EncodingMeta, BinderHandle,
-    KIND_CUTOFF, TYPE_CUTOFF, BID_CUTOFF, VALUE_CUTOFF, D_LOCAL,
+    KIND_CUTOFF, TYPE_CUTOFF, BID_CUTOFF, VALUE_CUTOFF, TOBL_CUTOFF, D_LOCAL,
     KIND_PAD, KIND_VAR, KIND_LAM,
     TYPE_NONE, TYPE_ARR_NESTED,
     BID_NONE, BID_0, VALUE_NONE,
+    TOBL_NONE,
 )
 from ._serialize import serialize_preorder
 from ._types import compute_site_types
-from ._channels import compute_live_binders
+from ._channels import compute_live_binders, compute_channel_param_ty_per_bond
+from ._typing_extension import compute_tobl_tags
 from ._tensors import _basis_index, _local_kind_type_value
 from src.qft_pcn.qft.mps import MPS
 
 
-def _single_site_write_gate(target_kind: int, target_type: int,
-                            target_bid: int, target_value: int
-                            ) -> np.ndarray:
-    """An 8192x8192 gate mapping |PAD,NONE,NONE,NONE> -> |target>.
+def _site_target_index(target_kind: int, target_type: int,
+                       target_bid: int, target_value: int,
+                       target_tobl: int = TOBL_NONE) -> int:
+    """Flat local-basis index of the target site state in 5-species basis.
 
-    Used to write a definite local state on top of the vacuum at one site.
-    Gate G[a, b] = delta_{a, target_idx} * delta_{b, PAD_idx}.
+    Replaces the old _single_site_write_gate which materialized a dense
+    (D_LOCAL, D_LOCAL) = (65536, 65536) ≈ 64 GiB write-gate matrix — far
+    too large at d = 65536. The gate-based path now writes target states
+    by directly overwriting the leaf tensor's one-hot vector. (The
+    underlying physics is identical: starting from |PAD> and applying
+    G[target_idx, PAD_idx] = 1 gives the same final state as setting
+    the leaf vector to e_{target_idx}.)
     """
-    G = np.zeros((D_LOCAL, D_LOCAL), dtype=complex)
-    target_idx = _basis_index(target_kind, target_type, target_bid,
-                              target_value)
-    pad_idx = _basis_index(KIND_PAD, TYPE_NONE, BID_NONE, VALUE_NONE)
-    G[target_idx, pad_idx] = 1.0
-    return G
+    return _basis_index(target_kind, target_type, target_bid,
+                        target_value, target_tobl)
 
 
 def encode_gate(ast: Node, N: int = 32, chi_max: int = 16
@@ -66,9 +69,12 @@ def encode_gate(ast: Node, N: int = 32, chi_max: int = 16
     sites = serialize_preorder(ast, N=N)
     type_tags = compute_site_types(ast, sites)
     live = compute_live_binders(sites)
+    tobl_tags = compute_tobl_tags(ast, sites)
+    channel_pt = compute_channel_param_ty_per_bond(sites, live)
 
     # Start from the all-PAD vacuum MPS.
-    pad_idx = _basis_index(KIND_PAD, TYPE_NONE, BID_NONE, VALUE_NONE)
+    pad_idx = _basis_index(KIND_PAD, TYPE_NONE, BID_NONE, VALUE_NONE,
+                           TOBL_NONE)
     initial_states = []
     for _ in range(N):
         v = np.zeros(D_LOCAL, dtype=complex)
@@ -100,24 +106,41 @@ def encode_gate(ast: Node, N: int = 32, chi_max: int = 16
         else:
             bid_idx = BID_NONE
 
-        G = _single_site_write_gate(kind_idx, type_idx, bid_idx, value_idx)
-        state.apply_local_gate(k, G)
+        tobl_idx = tobl_tags[k]
+        target_idx = _site_target_index(kind_idx, type_idx, bid_idx,
+                                        value_idx, tobl_idx)
+        # Overwrite the leaf vector directly: it goes from one-hot at PAD
+        # to one-hot at target_idx. (Dense (d, d) write-gate would be 64 GiB
+        # at d = 65536; this 1D rewrite is equivalent and trivially small.)
+        v = np.zeros(D_LOCAL, dtype=complex)
+        v[target_idx] = 1.0
+        state.tensors[k] = v.reshape(1, D_LOCAL, 1)
 
     state.normalize()
 
     # Build EncodingMeta mirroring what encode() returns.
-    nested = {}
+    nested: dict[int, object] = {}
     for k, occ in enumerate(sites):
         if type_tags[k] == TYPE_ARR_NESTED and occ.ty is not None:
             nested[k] = occ.ty
+
+    nested_tobl: dict[int, object] = {}
+    for k, occ in enumerate(sites):
+        if tobl_tags[k] == TYPE_ARR_NESTED and occ.nested_tobl_ty is not None:
+            nested_tobl[k] = occ.nested_tobl_ty
+
     site_to_path = {k: occ.ast_path for k, occ in enumerate(sites)}
     meta = EncodingMeta(
         N=N, chi_max=chi_max,
         field_dims={"kind": KIND_CUTOFF, "type": TYPE_CUTOFF,
-                    "bid": BID_CUTOFF, "value": VALUE_CUTOFF},
+                    "bid": BID_CUTOFF, "value": VALUE_CUTOFF,
+                    "tobl": TOBL_CUTOFF},
         species=list(SPECIES),
         nested_type_index=nested,
         site_to_ast_path=site_to_path,
         live_binders_per_bond=live,
+        tobl_per_site=tobl_tags,
+        nested_tobl_index=nested_tobl,
+        channel_param_ty_per_bond=channel_pt,
     )
     return state, meta
