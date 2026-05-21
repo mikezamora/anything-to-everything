@@ -231,3 +231,126 @@ def _alpha_eq(a: Node, b: Node, env_a: dict[str, int],
                 and _alpha_eq(a.lhs, b.lhs, env_a, env_b, counter)
                 and _alpha_eq(a.rhs, b.rhs, env_a, env_b, counter))
     return False
+
+
+# ---- conditional sampling ------------------------------------------------
+
+
+def sample(state: MPS, meta: EncodingMeta,
+           n_samples: int = 1,
+           rng: Optional[np.random.Generator] = None
+           ) -> list[DecodeResult]:
+    """Sample n_samples ASTs from the MPS distribution via left-to-right
+    conditional measurement."""
+    if rng is None:
+        rng = np.random.default_rng()
+    results: list[DecodeResult] = []
+    for _ in range(n_samples):
+        flat_indices = _sample_one_pass(state, meta, rng)
+        results.append(_decode_from_indices(flat_indices, meta))
+    return results
+
+
+def _sample_one_pass(state: MPS, meta: EncodingMeta,
+                     rng: np.random.Generator) -> list[int]:
+    """Standard left-to-right MPS sampling."""
+    N = meta.N
+    ts = [t.copy() for t in state.tensors]
+    sampled: list[int] = []
+    # Right-canonicalize the entire chain so orthogonality center is at site 0.
+    for k in range(N - 1, 0, -1):
+        chi_l, d, chi_r = ts[k].shape
+        mat = ts[k].reshape(chi_l, d * chi_r)
+        Q, R = np.linalg.qr(mat.conj().T)
+        Q = Q.conj().T
+        R = R.conj().T
+        ts[k] = Q.reshape(Q.shape[0], d, chi_r)
+        ts[k - 1] = np.einsum('rds,st->rdt', ts[k - 1], R)
+    for k in range(N):
+        A = ts[k]
+        p = (np.abs(A) ** 2).sum(axis=(0, 2))
+        total = p.sum()
+        if total <= 1e-15:
+            s = 0
+        else:
+            p = p / total
+            s = int(rng.choice(D_LOCAL, p=p))
+        sampled.append(s)
+        proj = A[:, s, :]
+        norm = np.linalg.norm(proj)
+        if norm > 1e-15:
+            proj = proj / norm
+        ts[k] = proj.reshape(A.shape[0], 1, A.shape[2])
+        if k + 1 < N:
+            left_vec = ts[k][:, 0, :]
+            ts[k + 1] = np.einsum('lr,rds->lds', left_vec, ts[k + 1])
+    return sampled
+
+
+def _decode_from_indices(flat_indices: list[int],
+                         meta: EncodingMeta) -> DecodeResult:
+    """Build an AST from a sampled list of local-basis indices."""
+    decoded_sites = [_decompose_basis_index(f) for f in flat_indices]
+
+    pos = [0]
+    binder_stack: list[Lam] = []
+    name_counter = [0]
+
+    def _fresh_name() -> str:
+        n = name_counter[0]; name_counter[0] += 1
+        return f"_v{n}"
+
+    def _parse_one() -> Node:
+        if pos[0] >= meta.N:
+            raise DecodeError("ran out of sites mid-parse (sample)")
+        site_idx = pos[0]
+        ki, ti, bi, vi = decoded_sites[site_idx]
+        pos[0] += 1
+        if ki == KIND_PAD:
+            raise DecodeError(f"unexpected PAD at site {site_idx} (sample)")
+        if ki == KIND_VAR:
+            depth = bi - 1
+            if depth < 0 or depth >= len(binder_stack):
+                raise DecodeError(
+                    f"site {site_idx} (sample): VAR with bid={bi}, "
+                    f"stack size {len(binder_stack)}")
+            target_lam = binder_stack[-1 - depth]
+            return Var(name=target_lam.param)
+        if ki == KIND_LAM:
+            ty = _type_from_tag(ti, site_idx, meta.nested_type_index)
+            param_ty = ty.src if isinstance(ty, TArrow) else TInt()
+            name = _fresh_name()
+            lam = Lam(param=name, param_ty=param_ty, body=Var(name=name))
+            binder_stack.append(lam)
+            body = _parse_one()
+            binder_stack.pop()
+            lam.body = body
+            return lam
+        if ki == KIND_APP:
+            fn = _parse_one(); arg = _parse_one()
+            return App(fn=fn, arg=arg)
+        if ki == KIND_INT:
+            return IntLit(val=vi - INT_LIT_OFFSET)
+        if ki == KIND_BOOL:
+            return BoolLit(val=(vi == 1))
+        if ki == KIND_IF:
+            c = _parse_one(); a = _parse_one(); b = _parse_one()
+            return If(cond=c, then_b=a, else_b=b)
+        if ki == KIND_BIN:
+            op = BIN_OP_FROM_VALUE.get(vi)
+            if op is None:
+                raise DecodeError(
+                    f"site {site_idx} (sample): unknown bin op value {vi}")
+            l = _parse_one(); r = _parse_one()
+            return Bin(op=op, lhs=l, rhs=r)
+        raise DecodeError(f"site {site_idx} (sample): unknown kind {ki}")
+
+    ast = _parse_one()
+    while pos[0] < meta.N:
+        ki, _, _, _ = decoded_sites[pos[0]]
+        if ki != KIND_PAD:
+            raise DecodeError(
+                f"site {pos[0]} (sample) not PAD after parse, kind={ki}"
+            )
+        pos[0] += 1
+    return DecodeResult(ast=ast, residual_norm=0.0)

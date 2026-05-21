@@ -111,3 +111,28 @@ def test_alpha_eq_nested_binders():
     a = parse(r"\x:Int. (\y:Int. x + y)")
     b = parse(r"\u:Int. (\v:Int. u + v)")
     assert ast_alpha_eq(a, b)
+
+
+import numpy as np
+
+from src.qft_pcn.logic.decoder import sample
+
+
+def test_sample_returns_n_results():
+    state, meta = encode(parse(r"\x:Int. x"), N=8)
+    results = sample(state, meta, n_samples=3,
+                     rng=np.random.default_rng(seed=0))
+    assert len(results) == 3
+    for r in results:
+        assert isinstance(r, DecodeResult)
+
+
+def test_sample_product_state_deterministic():
+    """For a product (no superposition) input, every sample equals the
+    argmax decode."""
+    state, meta = encode(parse(r"\x:Int. x + 1"), N=8)
+    det = decode(state, meta)
+    rng = np.random.default_rng(seed=42)
+    for _ in range(5):
+        s = sample(state, meta, n_samples=1, rng=rng)[0]
+        assert ast_alpha_eq(s.ast, det.ast)
