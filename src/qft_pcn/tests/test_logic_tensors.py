@@ -70,6 +70,11 @@ def test_p1_lam_site_nonzero_amplitude_at_correct_basis_state():
     """The LAM site tensor at \\x.x should have amplitude 1 at the basis
     state (KIND_LAM, TYPE_ARR_II, BID_0, VALUE_NONE) on the "no-info-in,
     channel-x-out" bond direction.
+
+    At a LAM site the local bid value is BID_0 (the new binder is innermost
+    from its own perspective), and at that BID slice the no_info channel
+    both passes through (so subsequent nested LAMs can draw from it) AND
+    creates the new binder on its channel.
     """
     ast = parse(r"\x:Int. x")
     sites = serialize_preorder(ast, N=4)
@@ -79,14 +84,16 @@ def test_p1_lam_site_nonzero_amplitude_at_correct_basis_state():
     from src.qft_pcn.logic.encoding import KIND_LAM, TYPE_ARR_II, BID_0, VALUE_NONE
     idx = _basis_index(KIND_LAM, TYPE_ARR_II, BID_0, VALUE_NONE)
     T = tensors[0]  # shape (1, 8192, 2)
-    # The bond goes from "no_info" channel (index 0) in to "Lam_x" channel
-    # (index 1) out.
+    # The bond carries the new Lam_x channel on index 1.
     assert abs(T[0, idx, 1] - 1.0) < 1e-12, (
         "LAM site tensor should activate the Lam_x channel on the right bond"
     )
-    # All other entries at this local basis state should be zero.
-    assert abs(T[0, idx, 0]) < 1e-12  # no-info-out: zero
-    # Other local basis states should be zero too.
+    # The no_info channel passes through (needed for nested binders).
+    assert abs(T[0, idx, 0] - 1.0) < 1e-12, (
+        "LAM site must also pass no_info through under BID_0 so that "
+        "subsequent nested LAMs can draw from no_info"
+    )
+    # Other local basis states should be zero.
     other_idx = _basis_index(0, 0, 0, 0)  # PAD/none/none/none
     assert abs(T[0, other_idx, 0]) < 1e-12
     assert abs(T[0, other_idx, 1]) < 1e-12

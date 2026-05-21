@@ -220,21 +220,27 @@ def _bid_bond_tensor_at_site(
                 f"this is an encoder bug — channels misaligned"
             )
         c_new_out = right_ch[new_binder]
-        # The new binder enters from no_info_in with the LAM's local bid (BID_0).
+        # At a LAM site the local bid value is BID_0 (its own innermost
+        # perspective). All channel mappings happen on that BID slice:
+        #   - no_info_in maps to BOTH no_info_out (passthrough so subsequent
+        #     LAMs can still draw from no_info) and to the new binder's
+        #     channel c_new_out (creating the binder).
+        #   - each pre-existing binder passes through on its own channel.
+        # The default-top no_info-passthrough entry was at BID_NONE; remove
+        # it because at a LAM site the local bid is BID_0 — there is no
+        # BID_NONE component of the site's basis state.
+        T[NO_INFO_IN, BID_NONE, NO_INFO_OUT] = 0.0
+        T[NO_INFO_IN, local_bid_value, NO_INFO_OUT] = 1.0
         T[NO_INFO_IN, local_bid_value, c_new_out] = 1.0
-        # Existing binders pass through under BID_NONE.
+        # Existing binders pass through under BID_0 (the LAM's local bid).
         for bh in left_live:
             c_in = left_ch[bh]
             if bh in right_ch:
                 c_out = right_ch[bh]
-                T[c_in, BID_NONE, c_out] = 1.0
+                T[c_in, local_bid_value, c_out] = 1.0
             else:
                 # Shouldn't happen at a LAM site (LAM doesn't drop binders).
-                T[c_in, BID_NONE, NO_INFO_OUT] = 1.0
-        # Remove the no_info passthrough we added at the top, since at a
-        # LAM site the no_info channel is being consumed by the new binder
-        # creation — it does NOT also passthrough.
-        T[NO_INFO_IN, BID_NONE, NO_INFO_OUT] = 0.0
+                T[c_in, local_bid_value, NO_INFO_OUT] = 1.0
         return T
 
     # PAD / APP / IF / INT / BOOL / BIN: pure passthrough.
