@@ -11,10 +11,11 @@ changes slowest).
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Optional
+import math
+from dataclasses import dataclass
 
 from src.qft_pcn.qft.hamiltonian import FieldSpecies
+from src.qft_pcn.logic.ast import Ty
 
 
 # ---- kind register --------------------------------------------------------
@@ -72,7 +73,10 @@ VALUE_MINUS = 3
 VALUE_TIMES = 4
 VALUE_LT = 5
 VALUE_EQ = 6
-# Indices 7..15 used for int literals via offset.
+# Int literals n ∈ [-7, 8] map to value slot n + INT_LIT_OFFSET ∈ [0, 15].
+# Negative literals (n < 0) overlap the BOOL / BIN value slots 0..6, but
+# this is safe because the `kind` register disambiguates: a slot is only
+# read as an int literal when kind == KIND_INT.
 
 INT_LIT_OFFSET = 7
 INT_LIT_MIN = -7
@@ -95,9 +99,7 @@ BIN_VALUE_FROM_OP = {v: k for k, v in BIN_OP_FROM_VALUE.items()}
 SPECIES_NAMES: tuple[str, ...] = ("kind", "type", "bid", "value")
 SPECIES_DIMS: tuple[int, ...] = (KIND_CUTOFF, TYPE_CUTOFF, BID_CUTOFF,
                                  VALUE_CUTOFF)
-D_LOCAL: int = 1
-for _d in SPECIES_DIMS:
-    D_LOCAL *= _d
+D_LOCAL: int = math.prod(SPECIES_DIMS)
 
 
 # FieldSpecies objects ready to drop into HamiltonianConfig (sub-projects
@@ -137,9 +139,7 @@ class EncodingMeta:
     chi_max: int
     field_dims: dict[str, int]
     species: list[FieldSpecies]
-    nested_type_index: dict[int, "object"]   # site -> Ty (kept as object to
-                                             # avoid circular import; encoder
-                                             # writes proper Ty values)
+    nested_type_index: dict[int, Ty]   # site -> Ty for TYPE_ARR_NESTED
     site_to_ast_path: dict[int, tuple[int, ...]]
     live_binders_per_bond: list[list[BinderHandle]]
 

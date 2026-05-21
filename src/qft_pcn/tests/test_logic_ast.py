@@ -165,6 +165,21 @@ def test_parse_rejects_unknown_op():
         parse("2 ** 3")
 
 
+def test_parse_lt_no_spaces():
+    """Tokenizer must accept `5<2` (no surrounding whitespace)."""
+    expected = Bin(op="<", lhs=IntLit(val=5), rhs=IntLit(val=2))
+    assert parse("5<2") == expected
+
+
+def test_parse_negative_int_literal():
+    assert parse("-3") == IntLit(val=-3)
+    # And inside an expression:
+    assert parse("0 - -1") == Bin(op="-", lhs=IntLit(val=0), rhs=IntLit(val=-1))
+    # Inside a lambda body:
+    expected = Lam(param="x", param_ty=TInt(), body=IntLit(val=-5))
+    assert parse(r"\x:Int. -5") == expected
+
+
 from src.qft_pcn.logic.ast import pretty
 
 

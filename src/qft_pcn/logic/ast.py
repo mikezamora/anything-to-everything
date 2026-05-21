@@ -8,6 +8,7 @@ ast.py too (added in later tasks). Encoder/decoder are separate modules.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 
@@ -96,15 +97,12 @@ class Bin(Node):
 
 # ---- tokenizer + parser ---------------------------------------------------
 
-import re
-from typing import Iterator
-
 
 _TOKEN_RE = re.compile(
     r"\s+"
     r"|(?P<lambda>\\)"
     r"|(?P<arrow>->)"
-    r"|(?P<lt>(?<![\w<>=])<(?![=]))"     # < but not <=
+    r"|(?P<lt><(?!=))"                   # < but not <=
     r"|(?P<eq>==)"
     r"|(?P<colon>:)"
     r"|(?P<dot>\.)"
@@ -255,6 +253,13 @@ class _Parser:
 
     def parse_atom(self) -> Node:
         t = self.peek()
+        # Negative int literal: unary minus applied to a literal int only
+        # (not general unary minus). Recognized only at expression atom
+        # position with the next token being an `int`.
+        if t.kind == "minus" and self.toks[self.i + 1].kind == "int":
+            self.i += 1  # consume '-'
+            int_tok = self.eat("int")
+            return IntLit(val=-int(int_tok.value))
         if t.kind == "ident":
             self.i += 1
             return Var(name=t.value)
