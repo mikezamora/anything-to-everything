@@ -14,6 +14,7 @@ dependencies = [
     "requests>=2.31.0",
     "tqdm>=4.65.0",
     "indextts",
+    "jsonschema>=4.0,<5",
 ]
 
 [project.optional-dependencies]
