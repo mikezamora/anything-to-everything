@@ -29,6 +29,10 @@ except ImportError:
     QuantumConvMap = None
     _HAS_QISKIT = False
 
+# Logic layer (sub-project A — AST <-> MPS encoder).
+from . import logic
+from .logic import encode, decode, sample, parse, pretty
+
 __all__ = [
     "Manifold2D",
     "Field",
@@ -43,4 +47,11 @@ __all__ = [
     "MultiFieldConfig",
     "QuantumGenerativeMap",
     "QuantumConvMap",
+    # Logic layer
+    "logic",
+    "encode",
+    "decode",
+    "sample",
+    "parse",
+    "pretty",
 ]

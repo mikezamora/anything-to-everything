@@ -177,3 +177,11 @@ def test_encode_decode_performance_budget():
         f"30 encode/decode took {elapsed:.2f}s, budget is 30s. "
         f"Something has regressed beyond the known O(N^2) decoder cost."
     )
+
+
+def test_top_level_import_path():
+    """The encoder/decoder are accessible from qft_pcn top-level."""
+    from src.qft_pcn import encode, decode, parse
+    state, meta = encode(parse(r"\x:Int. x"), N=8)
+    res = decode(state, meta)
+    assert res.residual_norm < 1e-10

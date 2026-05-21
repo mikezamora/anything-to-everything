@@ -1,0 +1,68 @@
+"""Logic layer: AST <-> MPS encoder/decoder (sub-project A of §10 roadmap).
+
+Public API:
+
+  Encoding/decoding:
+    encode(ast, N=32, chi_max=16) -> (MPS, EncodingMeta)
+    decode(state, meta) -> DecodeResult
+    sample(state, meta, n_samples=1, rng=None) -> list[DecodeResult]
+    ast_alpha_eq(a, b) -> bool
+
+  AST:
+    Node, Var, Lam, App, IntLit, BoolLit, If, Bin
+    HoleVar, substitute_hole
+    Ty, TInt, TBool, TArrow
+    parse(src) -> Node
+    pretty(node) -> str
+
+  Encoding constants and metadata:
+    SPECIES, EncodingMeta, BinderHandle
+    KIND_*, TYPE_*, BID_*, VALUE_* basis constants
+
+  Errors:
+    EncodingError, EncodingTooLarge, TooManyBinders,
+    IntLiteralOutOfRange, IllScopedVar, UnsupportedNode, DecodeError
+"""
+
+from .ast import (
+    Node, Var, Lam, App, IntLit, BoolLit, If, Bin,
+    HoleVar, substitute_hole,
+    Ty, TInt, TBool, TArrow,
+    parse, pretty,
+)
+from .encoding import (
+    SPECIES, EncodingMeta, BinderHandle,
+    KIND_PAD, KIND_VAR, KIND_LAM, KIND_APP, KIND_INT, KIND_BOOL,
+    KIND_IF, KIND_BIN, KIND_CUTOFF,
+    TYPE_NONE, TYPE_INT, TYPE_BOOL,
+    TYPE_ARR_II, TYPE_ARR_IB, TYPE_ARR_BI, TYPE_ARR_BB, TYPE_ARR_NESTED,
+    TYPE_CUTOFF,
+    BID_NONE, BID_0, BID_1, BID_2, BID_3, BID_4, BID_5, BID_6, BID_CUTOFF,
+    VALUE_NONE, VALUE_FALSE, VALUE_TRUE,
+    VALUE_PLUS, VALUE_MINUS, VALUE_TIMES, VALUE_LT, VALUE_EQ, VALUE_CUTOFF,
+    INT_LIT_OFFSET, INT_LIT_MIN, INT_LIT_MAX,
+    EncodingError, EncodingTooLarge, TooManyBinders,
+    IntLiteralOutOfRange, IllScopedVar, UnsupportedNode, DecodeError,
+)
+from .encoder import encode
+from .decoder import decode, sample, DecodeResult, ast_alpha_eq
+
+__all__ = [
+    "encode", "decode", "sample", "DecodeResult", "ast_alpha_eq",
+    "Node", "Var", "Lam", "App", "IntLit", "BoolLit", "If", "Bin",
+    "HoleVar", "substitute_hole",
+    "Ty", "TInt", "TBool", "TArrow", "parse", "pretty",
+    "SPECIES", "EncodingMeta", "BinderHandle",
+    "KIND_PAD", "KIND_VAR", "KIND_LAM", "KIND_APP", "KIND_INT", "KIND_BOOL",
+    "KIND_IF", "KIND_BIN", "KIND_CUTOFF",
+    "TYPE_NONE", "TYPE_INT", "TYPE_BOOL",
+    "TYPE_ARR_II", "TYPE_ARR_IB", "TYPE_ARR_BI", "TYPE_ARR_BB",
+    "TYPE_ARR_NESTED", "TYPE_CUTOFF",
+    "BID_NONE", "BID_0", "BID_1", "BID_2", "BID_3", "BID_4", "BID_5",
+    "BID_6", "BID_CUTOFF",
+    "VALUE_NONE", "VALUE_FALSE", "VALUE_TRUE", "VALUE_PLUS",
+    "VALUE_MINUS", "VALUE_TIMES", "VALUE_LT", "VALUE_EQ", "VALUE_CUTOFF",
+    "INT_LIT_OFFSET", "INT_LIT_MIN", "INT_LIT_MAX",
+    "EncodingError", "EncodingTooLarge", "TooManyBinders",
+    "IntLiteralOutOfRange", "IllScopedVar", "UnsupportedNode", "DecodeError",
+]
