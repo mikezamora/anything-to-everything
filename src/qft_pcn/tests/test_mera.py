@@ -239,3 +239,32 @@ def test_inner_orthogonal_number_states():
 def test_inner_normalized_self_is_one():
     m = MERA.number_states([2, 1, 0, 1, 0, 0, 0, 0], d=3).normalize()
     assert abs(m.inner(m) - 1.0) < 1e-10
+
+
+# ---- Task 8: apply_local_gate ---------------------------------------------
+
+
+def test_apply_local_gate_modifies_only_target_leaf():
+    m = MERA.vacuum(N=8, d_local=4)
+    snap = [s.copy() for s in m.leaves]
+    gate = np.eye(4, dtype=complex)
+    gate[[0, 1]] = gate[[1, 0]]
+    m.apply_local_gate(3, gate)
+    for k in range(8):
+        if k == 3:
+            continue
+        assert np.allclose(m.leaves[k], snap[k]), f"leaf {k} mutated"
+    assert m.leaves[3][0, 1, 0] == 1.0
+    assert m.leaves[3][0, 0, 0] == 0.0
+
+
+def test_apply_local_gate_invalid_leaf():
+    m = MERA.vacuum(N=8, d_local=4)
+    with pytest.raises(IndexError):
+        m.apply_local_gate(8, np.eye(4))
+
+
+def test_apply_local_gate_invalid_shape():
+    m = MERA.vacuum(N=8, d_local=4)
+    with pytest.raises(ValueError):
+        m.apply_local_gate(0, np.eye(3))

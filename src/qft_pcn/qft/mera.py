@@ -586,3 +586,21 @@ class MERA:
                         T_b, T_k, ML, MR,
                         optimize='greedy')
         return complex(val)
+
+    # ---- local gate application -------------------------------------------
+
+    def apply_local_gate(self, leaf: int, gate: np.ndarray) -> None:
+        """In-place: leaf <- gate @ leaf on the physical index.
+
+        Only the target leaf tensor is modified; per spec §5.6 the rest
+        of the MERA tree is untouched.
+        """
+        if not 0 <= leaf < self.N:
+            raise IndexError(
+                f"leaf {leaf} out of range [0, {self.N})")
+        d = self.d_local
+        if gate.shape != (d, d):
+            raise ValueError(
+                f"gate shape {gate.shape}, expected ({d}, {d})")
+        self.leaves[leaf] = np.einsum(
+            'st,ltr->lsr', gate, self.leaves[leaf], optimize='greedy')
