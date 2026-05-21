@@ -37,16 +37,19 @@ from .encoding import (
     VALUE_NONE, VALUE_FALSE, VALUE_TRUE,
     BIN_VALUE_FROM_OP, INT_LIT_OFFSET, INT_LIT_MIN, INT_LIT_MAX,
     VALUE_CUTOFF, D_LOCAL,
+    TOBL_CUTOFF, TOBL_NONE,
     BinderHandle, IntLiteralOutOfRange,
 )
 from ._serialize import NodeOccupancy
 
 
 def _basis_index(kind_idx: int, type_idx: int, bid_idx: int,
-                 value_idx: int) -> int:
-    """Linear index of (kind, type, bid, value) in the local 8192-dim basis."""
-    return (((kind_idx * TYPE_CUTOFF + type_idx) * BID_CUTOFF + bid_idx)
-            * VALUE_CUTOFF + value_idx)
+                 value_idx: int, tobl_idx: int) -> int:
+    """Linear index of (kind, type, bid, value, tobl) in the local
+    65536-dim basis. Leftmost species changes slowest.
+    """
+    return ((((kind_idx * TYPE_CUTOFF + type_idx) * BID_CUTOFF + bid_idx)
+             * VALUE_CUTOFF + value_idx) * TOBL_CUTOFF + tobl_idx)
 
 
 def _local_kind_type_value(occ: NodeOccupancy, type_tag: int
@@ -266,29 +269,33 @@ def _bid_bond_tensor_at_site(
 
 
 def _combine_factored_site(
-    kind_idx: int, type_idx: int, value_idx: int,
+    kind_idx: int, type_idx: int, value_idx: int, tobl_idx: int,
     bid_tensor: np.ndarray
 ) -> np.ndarray:
-    """Combine the (kind, type, value) deterministic indices and the
+    """Combine the (kind, type, value, tobl) deterministic indices and the
     (chi_l, BID, chi_r) bid sub-tensor into the full
     (chi_l, D_LOCAL, chi_r) site tensor.
 
-    The kind/type/value registers are *product*: one basis index has full
-    amplitude. So the output tensor is nonzero only on the slice
-    flat_basis_index = base + bid_idx * VALUE_CUTOFF for varying bid_idx.
+    The kind/type/value/tobl registers are *product*: one basis index has
+    full amplitude. So the output tensor is nonzero only on the slice
+    flat_basis_index = base + bid_idx * (VALUE_CUTOFF * TOBL_CUTOFF) + ...
+    for varying bid_idx.
 
-    Specifically, T[ch_in, base + b * V, ch_out] = bid_tensor[ch_in, b, ch_out]
-    for each bid index b in [0, BID_CUTOFF).
+    Specifically, for each bid index b in [0, BID_CUTOFF):
+        flat = ((kind_idx * TYPE_CUTOFF + type_idx) * BID_CUTOFF + b)
+                * VALUE_CUTOFF * TOBL_CUTOFF
+              + value_idx * TOBL_CUTOFF
+              + tobl_idx
+        out[:, flat, :] = bid_tensor[:, b, :]
     """
     chi_l, B, chi_r = bid_tensor.shape
     assert B == BID_CUTOFF
     out = np.zeros((chi_l, D_LOCAL, chi_r), dtype=complex)
-    # Compute the flat index for (kind_idx, type_idx, *, value_idx) for each
-    # possible bid index.
-    base_no_bid = kind_idx * (TYPE_CUTOFF * BID_CUTOFF * VALUE_CUTOFF) \
-                  + type_idx * (BID_CUTOFF * VALUE_CUTOFF)
+    inner = value_idx * TOBL_CUTOFF + tobl_idx
+    bid_stride = VALUE_CUTOFF * TOBL_CUTOFF
+    base_no_bid = (kind_idx * TYPE_CUTOFF + type_idx) * BID_CUTOFF * bid_stride
     for b in range(BID_CUTOFF):
-        flat = base_no_bid + b * VALUE_CUTOFF + value_idx
+        flat = base_no_bid + b * bid_stride + inner
         out[:, flat, :] = bid_tensor[:, b, :]
     return out
 
@@ -327,9 +334,10 @@ def build_site_tensors(
             site_idx=k, occ=occ, local_bid_value=local_bid,
             left_live=left_live, right_live=right_live,
         )
+        tobl_idx = occ.tobl_tag       # default 0 = TOBL_NONE
         site_T = _combine_factored_site(
             kind_idx=kind_idx, type_idx=type_idx, value_idx=value_idx,
-            bid_tensor=bid_T,
+            tobl_idx=tobl_idx, bid_tensor=bid_T,
         )
         tensors.append(site_T)
     return tensors

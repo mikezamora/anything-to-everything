@@ -228,3 +228,41 @@ def test_bond_dim_at_least_n_live_plus_one():
             f"bond {i} right-bond dim {tensors[i].shape[2]} < "
             f"|L_i|+1 = {n_live + 1}; spec §1.1 violation"
         )
+
+
+def test_basis_index_5_species():
+    """Per spec §4.4: flat index of (s_kind, s_type, s_bid, s_value, s_tobl)
+    with leftmost slowest, rightmost (tobl) fastest."""
+    from src.qft_pcn.logic._tensors import _basis_index as basis_index_5
+    from src.qft_pcn.logic.encoding import (
+        TYPE_CUTOFF, BID_CUTOFF, VALUE_CUTOFF, TOBL_CUTOFF,
+    )
+    # (0, 0, 0, 0, 0) -> 0
+    assert basis_index_5(0, 0, 0, 0, 0) == 0
+    # (0, 0, 0, 0, 1) -> 1
+    assert basis_index_5(0, 0, 0, 0, 1) == 1
+    # (0, 0, 0, 1, 0) -> TOBL_CUTOFF = 8
+    assert basis_index_5(0, 0, 0, 1, 0) == TOBL_CUTOFF
+    # (0, 0, 1, 0, 0) -> VALUE_CUTOFF * TOBL_CUTOFF = 128
+    assert basis_index_5(0, 0, 1, 0, 0) == VALUE_CUTOFF * TOBL_CUTOFF
+    # (0, 1, 0, 0, 0) -> BID_CUTOFF * VALUE_CUTOFF * TOBL_CUTOFF = 1024
+    assert basis_index_5(0, 1, 0, 0, 0) == (BID_CUTOFF * VALUE_CUTOFF
+                                            * TOBL_CUTOFF)
+    # (1, 0, 0, 0, 0) -> TYPE_CUTOFF * BID_CUTOFF * VALUE_CUTOFF * TOBL_CUTOFF
+    assert basis_index_5(1, 0, 0, 0, 0) == (TYPE_CUTOFF * BID_CUTOFF
+                                             * VALUE_CUTOFF * TOBL_CUTOFF)
+
+
+def test_site_tensor_d_local_is_65536():
+    """After 5-species switch, site tensors have shape (chi_l, 65536, chi_r)."""
+    from src.qft_pcn.logic._typing_extension import compute_tobl_tags
+    from src.qft_pcn.logic.encoding import D_LOCAL as D_LOCAL_5
+
+    ast = parse(r"\x:Int. x")
+    sites = serialize_preorder(ast, N=4)
+    types = compute_site_types(ast, sites)
+    live = compute_live_binders(sites)
+    compute_tobl_tags(ast, sites)
+    tensors = build_site_tensors(sites, types, live)
+    for t in tensors:
+        assert t.shape[1] == D_LOCAL_5 == 65536
