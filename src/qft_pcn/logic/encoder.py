@@ -18,7 +18,7 @@ from ._typing_extension import compute_tobl_tags
 from src.qft_pcn.qft.mps import MPS
 
 
-def encode(ast: Node, N: int = 32, chi_max: int = 16
+def encode(ast: Node, N: int = 32, chi_max: int = 32
            ) -> tuple[MPS, EncodingMeta]:
     """Encode an AST into a unit-norm MPS of length N."""
     sites = serialize_preorder(ast, N=N)
