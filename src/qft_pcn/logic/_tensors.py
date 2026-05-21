@@ -151,7 +151,9 @@ def _bid_bond_tensor_at_site(
     NO_INFO_OUT = 0
 
     # All sites have "no_info passthrough" on the no_info channel by default.
-    if occ.kind != KIND_VAR:
+    # For LAM and VAR sites we override this below — those sites' local bid
+    # is non-NONE, so there is no BID_NONE component of their basis state.
+    if occ.kind != KIND_VAR and occ.kind != KIND_LAM:
         T[NO_INFO_IN, BID_NONE, NO_INFO_OUT] = 1.0
 
     # Common channel passthrough for binders that survive across this bond.
@@ -179,7 +181,10 @@ def _bid_bond_tensor_at_site(
         if ref_handle not in right_ch:
             consumed_binder = ref_handle
         c_in = left_ch[ref_handle]
-        # Read the channel: BID_local is the local bid value at this site.
+        # At a VAR site the local bid value is BID_(depth+1). All channel
+        # entries — the reference path AND the passthroughs of other live
+        # binders — are at that single BID slice so the local-register
+        # marginal is unambiguous when the decoder reads it.
         if consumed_binder is not None:
             # The channel is dropped at this bond — emit to no_info_out.
             T[c_in, local_bid_value, NO_INFO_OUT] = 1.0
@@ -188,8 +193,13 @@ def _bid_bond_tensor_at_site(
             c_out = right_ch[ref_handle]
             T[c_in, local_bid_value, c_out] = 1.0
 
-        # Other channels passthrough as identity under BID_NONE
-        # (these binders are not being used at this site).
+        # The no_info channel also passes through at the local bid (so
+        # subsequent sites still see a no_info input for any nested LAMs).
+        T[NO_INFO_IN, local_bid_value, NO_INFO_OUT] = 1.0
+
+        # Other channels passthrough at the SAME local bid (so the BID
+        # register at this site has a single definite value across all
+        # paths).
         for bh in left_live:
             if bh == ref_handle:
                 continue
@@ -197,13 +207,13 @@ def _bid_bond_tensor_at_site(
             # If still live on right, passthrough.
             if bh in right_ch:
                 c_out_other = right_ch[bh]
-                T[c_in_other, BID_NONE, c_out_other] = 1.0
+                T[c_in_other, local_bid_value, c_out_other] = 1.0
             # Otherwise the binder is being dropped at this bond despite
             # not being referenced here — that shouldn't happen if our
             # liveness analysis is correct (last_use_site logic).
             else:
-                # Defensive: drop to no_info_out under BID_NONE.
-                T[c_in_other, BID_NONE, NO_INFO_OUT] = 1.0
+                # Defensive: drop to no_info_out at local bid.
+                T[c_in_other, local_bid_value, NO_INFO_OUT] = 1.0
         return T
 
     if occ.kind == KIND_LAM:
