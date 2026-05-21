@@ -67,4 +67,10 @@ __all__ = [
     "Problem",
     "MockLLM",
     "BridgeError",
+    # Debugger (sub-project D)
+    "diagnose",
+    "DiagnosticReport",
 ]
+
+# Sub-project D public surface (constraint debugger).
+from .logic.debugger import diagnose, DiagnosticReport  # noqa: E402

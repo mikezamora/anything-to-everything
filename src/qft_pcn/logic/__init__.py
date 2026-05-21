@@ -66,6 +66,20 @@ from .evaluation_hamiltonian import (
 )
 from .compose import compose_hamiltonians, ComposedHamiltonian, IncompatibleHamiltonians
 
+# ---- Sub-project D: constraint debugger ----------------------------------
+from .debugger import (
+    NamedHamiltonianTerm,
+    DiagnosticReport,
+    RuleViolation,
+    TermEvaluationError,
+    diagnose,
+    format_report,
+    register_explanation,
+    get_explanation,
+    clear_explanations,
+    register_stlc_seed_templates,
+)
+
 __all__ = [
     "encode", "decode", "sample", "DecodeResult", "ast_alpha_eq",
     "Node", "Var", "Lam", "App", "IntLit", "BoolLit", "If", "Bin",
@@ -97,4 +111,9 @@ __all__ = [
     "RULE_R_BETA", "RULE_R_ARITH_PRE", "RULE_R_ARITH_POST",
     "RULE_R_CMP_PRE", "RULE_R_IF",
     "compose_hamiltonians", "ComposedHamiltonian", "IncompatibleHamiltonians",
+    # Sub-project D: constraint debugger
+    "NamedHamiltonianTerm", "DiagnosticReport", "RuleViolation",
+    "TermEvaluationError", "diagnose", "format_report",
+    "register_explanation", "get_explanation", "clear_explanations",
+    "register_stlc_seed_templates",
 ]
