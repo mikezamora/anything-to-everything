@@ -52,11 +52,11 @@ def test_superposition_var_produces_entropy():
     """spec §7.4 (second half). A HoleVar over multiple candidates produces
     strictly-positive bid-register entanglement across the use site's left
     bond. The exact value depends on channel-construction details (the
-    current implementation gets ~ln 3 due to a no_info passthrough that
-    contributes a third eigenvalue alongside the two candidate channels);
-    what matters for §1.1 compliance is that S is well above 0 — evidence
-    that the encoder really did entangle the bid register rather than
-    collapse to a classical lookup.
+    current implementation gets a real-valued entropy due to a no_info
+    passthrough plus per-binder param_ty channels alongside the two
+    candidate channels); what matters for §1.1 compliance is that S is
+    well above 0 — evidence that the encoder really did entangle the bid
+    register rather than collapse to a classical lookup.
     """
     h = HoleVar(candidates=["x", "y"])
     ast = Lam(param="x", param_ty=TInt(),
@@ -73,11 +73,18 @@ def test_superposition_var_produces_entropy():
         f"path is not entangling — sub-project E hole completions will "
         f"be broken."
     )
-    # Upper bound: bond dim is 3 (no_info + Lam_x + Lam_y channels), so
-    # entropy is at most ln(3) ≈ 1.0986.
-    assert S <= math.log(3) + 1e-6, (
-        f"hole superposition bond entropy = {S}, exceeds ln(3); "
-        f"something has expanded the bond beyond the expected channel count."
+    # Upper bound: after the param_ty extension (commit 301e9fc) every live
+    # binder contributes one no_info channel plus 8 param_ty slots, so the
+    # bond at site with |L| live binders carries at most 1 + 8*|L| channels.
+    # Here |L| = 2 (both Lam_x and Lam_y live across bond 1), giving a
+    # ceiling of ln(1 + 8*2) = ln(17) ≈ 2.833.
+    n_live = len(meta.live_binders_per_bond[1])
+    ceiling = math.log(1 + 8 * n_live) + 1e-6
+    assert S <= ceiling, (
+        f"hole superposition bond entropy = {S}, exceeds ln(1 + 8*|L|) = "
+        f"ln({1 + 8 * n_live}) ≈ {math.log(1 + 8 * n_live):.4f}; "
+        f"something has expanded the bond beyond the expected "
+        f"(1 no_info + 8 param_ty) channel structure per live binder."
     )
 
 
