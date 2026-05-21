@@ -503,7 +503,7 @@ def test_typing_hamiltonian_is_structural():
     from src.qft_pcn.logic.typing_hamiltonian import TypingHamiltonian
     H = TypingHamiltonian(N=32)
     for src in [r"\x:Int. x", r"(\x:Int. x + 1)(2)",
-                r"if 1 < 2 then 10 else 20"]:
+                r"if 1 < 2 then 7 else 8"]:
         state, _ = encode(parse(src), N=32, chi_max=32)
         assert abs(H.total_energy(state)) < 1e-9, src
 
