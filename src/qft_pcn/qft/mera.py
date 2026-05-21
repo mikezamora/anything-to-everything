@@ -88,6 +88,53 @@ def causal_cone_path(leaf: int, L: int) -> list[tuple[int, int]]:
     return [(ell, leaf >> ell) for ell in range(L)]
 
 
+def _orthonormal_isometry(pair: np.ndarray, d_up: int,
+                          d_in: int) -> np.ndarray:
+    """Build an isometry W of shape (d_up, d_in) such that
+
+        W @ pair = ||pair|| * e_0
+
+    and W @ W^dag = I_{d_up}.
+
+    W's row 0 is `pair.conj() / ||pair||` (so that
+    (W @ pair)[0] = pair.conj()^T @ pair / ||pair|| = ||pair||).
+    Rows 1..d_up-1 are an orthonormal completion built by Gram-Schmidt
+    against the canonical basis e_0, e_1, e_2, ... of the input space.
+
+    If pair is the zero vector, returns the canonical isometry
+        W[k, :] = e_k for k = 0 .. d_up - 1.
+    """
+    pair_norm = float(np.linalg.norm(pair))
+    if pair_norm < 1e-15:
+        # Degenerate case: pair is zero; return canonical isometry.
+        W = np.zeros((d_up, d_in), dtype=complex)
+        for k in range(d_up):
+            W[k, k] = 1.0
+        return W
+    # Row 0: normalized conjugate of the pair (so W @ pair = ||pair|| at slot 0).
+    row0 = pair.conj() / pair_norm
+    rows = [row0]
+    # Gram-Schmidt: extend with canonical basis vectors orthogonalized
+    # against already-collected rows. Skip vectors that have ~zero projection.
+    for basis_idx in range(d_in):
+        if len(rows) >= d_up:
+            break
+        e = np.zeros(d_in, dtype=complex)
+        e[basis_idx] = 1.0
+        # Orthogonalize against all collected rows.
+        for r in rows:
+            e = e - (r.conj() @ e) * r
+        n = float(np.linalg.norm(e))
+        if n > 1e-12:
+            rows.append(e / n)
+    if len(rows) < d_up:
+        # Should not happen if d_up <= d_in.
+        raise ValueError(
+            f"could not build orthonormal isometry: d_up={d_up}, d_in={d_in}")
+    W = np.array(rows, dtype=complex)
+    return W
+
+
 # ---- per-tensor wrapper ---------------------------------------------------
 
 
@@ -236,7 +283,24 @@ class MERA:
     @classmethod
     def from_product(cls, single_site_states: list[np.ndarray],
                      chi_layer: int = 16) -> "MERA":
-        """Build a product MERA from per-leaf state vectors."""
+        """Build a product MERA from per-leaf state vectors.
+
+        Convention: the FULL physical wavefunction encoded by the network
+        equals the product state |v_0> ⊗ |v_1> ⊗ ... ⊗ |v_{N-1}>.
+
+        Construction:
+          - leaves carry per-site state vectors (1, d_local, 1).
+          - all disentanglers (intra and inter) are identity.
+          - isometries are constructed adaptively per-pair so that the
+            *ascended* amplitude at each layer concentrates on slot 0
+            (with magnitude = norm of the pair). The isometry's row 0 is
+            the conjugated pair direction; rows 1..d_up-1 are an orthonormal
+            completion built starting from canonical basis vectors.
+          - the top tensor is the ascended wavefunction on the 2 top sites.
+
+        For the vacuum, the pair direction is e_0 (basis state |0, 0> with
+        flat index 0), so row 0 = e_0 and the isometry is the canonical one.
+        """
         N = len(single_site_states)
         if N <= 0 or (N & (N - 1)) != 0:
             raise InvalidLayerCount(N=N)
@@ -245,6 +309,10 @@ class MERA:
         dims = layer_dims(d_local, L, chi_layer)
         leaves = [s.reshape(1, d_local, 1).astype(complex)
                   for s in single_site_states]
+        # Ascend amplitudes through L-1 layers (the upper structure).
+        # cur_amps[k] is the (complex) amplitude vector at layer ell, site k.
+        cur_amps: list[np.ndarray] = [s.astype(complex)
+                                       for s in single_site_states]
         disentanglers: list[list[np.ndarray]] = []
         inter_disentanglers: list[list[np.ndarray]] = []
         isometries: list[list[np.ndarray]] = []
@@ -252,31 +320,41 @@ class MERA:
             n_l = N // (2 ** ell)
             d_l = dims[ell]
             d_up = dims[ell + 1] if ell + 1 < L else d_l
-            # Intra-pair unitary disentanglers, initialized to identity.
             intra = [
                 np.eye(d_l * d_l, dtype=complex).reshape(d_l, d_l, d_l, d_l)
                 for _ in range(n_l // 2)
             ]
-            # Inter-pair: one fewer than intra (or zero at the top).
             inter = [
                 np.eye(d_l * d_l, dtype=complex).reshape(d_l, d_l, d_l, d_l)
                 for _ in range(max(0, n_l // 2 - 1))
             ]
-            # Canonical isometries: project onto the first d_up basis vectors
-            # of the d_l x d_l space.
-            iso = []
-            for _ in range(n_l // 2):
-                w = np.zeros((d_up, d_l, d_l), dtype=complex)
-                for k in range(d_up):
-                    a, b = divmod(k, d_l)
-                    w[k, a, b] = 1.0
+            iso: list[np.ndarray] = []
+            new_amps: list[np.ndarray] = []
+            for j in range(n_l // 2):
+                v_l = cur_amps[2 * j]
+                v_r = cur_amps[2 * j + 1]
+                pair = np.outer(v_l, v_r).reshape(-1)   # (d_l * d_l,)
+                w_mat = _orthonormal_isometry(pair, d_up, d_l * d_l)
+                w = w_mat.reshape(d_up, d_l, d_l)
                 iso.append(w)
+                # Ascended amplitude: w @ pair concentrates on slot 0.
+                ascended = w_mat @ pair
+                new_amps.append(ascended)
             disentanglers.append(intra)
             inter_disentanglers.append(inter)
             isometries.append(iso)
-        # Top tensor: |0, 0> on the two top sites.
-        top = np.zeros((dims[L - 1], dims[L - 1], 1), dtype=complex)
-        top[0, 0, 0] = 1.0
+            if ell < L - 1:
+                cur_amps = new_amps
+            # On the final layer (ell == L-1) we do NOT consume the isometry
+            # in the top tensor: cur_amps remains the layer-(L-1) amplitudes
+            # (the input to the top tensor). The layer-(L-1) isometry is
+            # stored in the network for structural symmetry but is not
+            # applied in norm_sq / expectation computations.
+        # Top tensor: ascended wavefunction on the 2 top sites at layer L-1.
+        # cur_amps now has 2 entries (the layer-(L-1) site amplitudes).
+        assert len(cur_amps) == 2
+        top = np.outer(cur_amps[0], cur_amps[1]).reshape(
+            dims[L - 1], dims[L - 1], 1).astype(complex)
         return cls(
             leaves=leaves,
             disentanglers=disentanglers,
@@ -295,3 +373,77 @@ class MERA:
             [number_state_vec(d, n) for n in occupations],
             chi_layer=chi_layer,
         )
+
+    # ---- environment contractions -----------------------------------------
+
+    def _layer_density(self, ell: int) -> list[np.ndarray]:
+        """The list of per-site reduced density matrices at layer ell.
+
+        Layer 0: rho_k = leaf_k @ leaf_k^dag per site, shape (d_local, d_local).
+        Layer ell > 0: built by ascending layer-(ell-1) density matrices
+        through the disentangler-isometry pair using the standard ascending
+        superoperator on each pair independently. (For product MERAs the
+        inter-pair disentanglers are identity, so independent-pair ascent
+        is exact. Non-product cases require inter-pair coupling; this is
+        only used for product states or measurement of self-norm-like
+        quantities.)
+
+        Returns a list of n_ell density matrices, each (d_ell, d_ell).
+        """
+        if ell == 0:
+            rhos: list[np.ndarray] = []
+            for s in self.leaves:
+                v = s[0, :, 0]  # leaf state vector (d_local,)
+                rhos.append(np.outer(v, v.conj()))
+            return rhos
+        # Recurse: get layer-(ell-1), then ascend.
+        rho_below = self._layer_density(ell - 1)
+        N = self.N
+        n_l = N // (2 ** ell)
+        d_below = self.layer_dims[ell - 1]
+        u_intra = self.disentanglers[ell - 1]
+        w_list = self.isometries[ell - 1]
+        rhos_new: list[np.ndarray] = []
+        for j in range(n_l):
+            a = 2 * j
+            b = 2 * j + 1
+            # Joint pair density (kron preserves the (a_l, a_r, b_l, b_r) order
+            # when interpreted as matrix kron of two (d, d) matrices).
+            # np.kron(rho_a, rho_b) has shape (d_below*d_below, d_below*d_below).
+            # Reshape to (d_below, d_below, d_below, d_below) with
+            # indices (a_l_block, a_l_inblock=a_r, b_l_block, b_l_inblock=b_r).
+            # That gives indices (a_l, a_r, b_l, b_r) — matches our convention.
+            rho_kron = np.kron(rho_below[a], rho_below[b])
+            rho_pair = rho_kron.reshape(d_below, d_below, d_below, d_below)
+            # Apply intra-pair disentangler: u rho_pair u^dag.
+            u = u_intra[j]
+            tmp = np.einsum('abst,stcd->abcd', u, rho_pair)
+            rho_pair = np.einsum('abcd,pqcd->abpq', tmp, u.conj())
+            # Project with isometry.
+            w = w_list[j]
+            rho_new = np.einsum('Aab,abcd,Bcd->AB', w, rho_pair, w.conj())
+            rhos_new.append(rho_new)
+        return rhos_new
+
+    def norm_sq(self) -> float:
+        """<psi|psi> via layer-by-layer ascending of the density matrices.
+
+        For the top: rho_l, rho_r are layer-(L-1) reduced densities on the
+        two top sites. The top tensor T_top: (d_{L-1}, d_{L-1}, 1) is the
+        wavefunction amplitudes on these two sites.
+        """
+        L = self.L
+        if L == 1:
+            # N = 2: leaves themselves are the top sites.
+            rhos = self._layer_density(0)
+            rho_l, rho_r = rhos[0], rhos[1]
+            T = self.top[..., 0]
+            val = np.einsum('ab,cd,ac,bd->', T, T.conj(), rho_l, rho_r)
+            return float(np.real(val))
+        # General L>=2: ascend to layer L-1 (2 sites), then contract with top.
+        rhos = self._layer_density(L - 1)
+        assert len(rhos) == 2, f"top layer should have 2 sites, got {len(rhos)}"
+        rho_l, rho_r = rhos
+        T = self.top[..., 0]
+        val = np.einsum('ab,cd,ac,bd->', T, T.conj(), rho_l, rho_r)
+        return float(np.real(val))

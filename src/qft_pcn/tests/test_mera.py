@@ -197,3 +197,19 @@ def test_number_states_constructs_correct_leaves():
     assert m.leaves[2][0, 2, 0] == 1.0
     # Others = |0>.
     assert m.leaves[1][0, 0, 0] == 1.0
+
+
+def test_vacuum_norm_sq_is_one():
+    m = MERA.vacuum(N=8, d_local=4)
+    assert abs(m.norm_sq() - 1.0) < 1e-10
+
+
+def test_number_state_norm_sq_is_one():
+    m = MERA.number_states([2, 0, 1, 3, 0, 0, 1, 0], d=4)
+    assert abs(m.norm_sq() - 1.0) < 1e-10
+
+
+def test_norm_sq_for_n_eq_2():
+    # Minimal MERA: N=2, L=1.
+    m = MERA.vacuum(N=2, d_local=4, chi_layer=4)
+    assert abs(m.norm_sq() - 1.0) < 1e-10
