@@ -169,3 +169,26 @@ def test_species_dims_tuple():
     from src.qft_pcn.logic.encoding import SPECIES_DIMS, SPECIES_NAMES
     assert SPECIES_NAMES == ("kind", "type", "bid", "value", "tobl")
     assert SPECIES_DIMS == (8, 8, 8, 16, 8)
+
+
+def test_encoding_meta_has_new_fields():
+    """Spec §5.3: EncodingMeta gains tobl_per_site, nested_tobl_index,
+    channel_param_ty_per_bond."""
+    from src.qft_pcn.logic.encoding import (
+        EncodingMeta, SPECIES, BinderHandle,
+    )
+    meta = EncodingMeta(
+        N=32,
+        chi_max=32,
+        field_dims={"kind": 8, "type": 8, "bid": 8, "value": 16, "tobl": 8},
+        species=list(SPECIES),
+        nested_type_index={},
+        site_to_ast_path={},
+        live_binders_per_bond=[],
+        tobl_per_site=[0] * 32,
+        nested_tobl_index={},
+        channel_param_ty_per_bond=[],
+    )
+    assert meta.tobl_per_site == [0] * 32
+    assert meta.nested_tobl_index == {}
+    assert meta.channel_param_ty_per_bond == []

@@ -8,6 +8,7 @@ from .ast import Node, Ty
 from .encoding import (
     SPECIES, EncodingMeta, KIND_CUTOFF, TYPE_CUTOFF,
     BID_CUTOFF, VALUE_CUTOFF, TYPE_ARR_NESTED,
+    TOBL_CUTOFF,
 )
 from ._serialize import serialize_preorder
 from ._types import compute_site_types
@@ -39,11 +40,14 @@ def encode(ast: Node, N: int = 32, chi_max: int = 16
         chi_max=chi_max,
         field_dims={
             "kind": KIND_CUTOFF, "type": TYPE_CUTOFF,
-            "bid": BID_CUTOFF, "value": VALUE_CUTOFF,
+            "bid": BID_CUTOFF, "value": VALUE_CUTOFF, "tobl": TOBL_CUTOFF,
         },
         species=list(SPECIES),
         nested_type_index=nested,
         site_to_ast_path=site_to_path,
         live_binders_per_bond=live,
+        tobl_per_site=[0] * N,                 # populated in Task 4
+        nested_tobl_index={},                   # populated in Task 4
+        channel_param_ty_per_bond=[],           # populated in Task 6
     )
     return state, meta

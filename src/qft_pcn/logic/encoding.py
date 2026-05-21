@@ -153,6 +153,16 @@ class BinderHandle:
 class EncodingMeta:
     """Side data produced by the encoder, consumed by decoder and downstream
     sub-projects B/C/D/E.
+
+    The fields tobl_per_site, nested_tobl_index, and channel_param_ty_per_bond
+    are populated by the typing-aware encoder extension (sub-project B,
+    spec §5). They mirror their type-register counterparts:
+
+      tobl_per_site[k]:        the flat tobl tag at site k. Default TOBL_NONE.
+      nested_tobl_index[k]:    full Ty for sites where tobl_per_site[k] = TOBL_ARR_NESTED.
+      channel_param_ty_per_bond[b][c]: flat param_ty tag of the binder
+                                       occupying channel c (0-indexed) of bond b.
+                                       Parallel to live_binders_per_bond.
     """
     N: int
     chi_max: int
@@ -161,6 +171,9 @@ class EncodingMeta:
     nested_type_index: dict[int, Ty]   # site -> Ty for TYPE_ARR_NESTED
     site_to_ast_path: dict[int, tuple[int, ...]]
     live_binders_per_bond: list[list[BinderHandle]]
+    tobl_per_site: list[int]
+    nested_tobl_index: dict[int, Ty]
+    channel_param_ty_per_bond: list[list[int]]
 
 
 # ---- exception hierarchy --------------------------------------------------
