@@ -60,3 +60,28 @@ def test_causal_cone_path_at_leaf_0():
 def test_causal_cone_path_at_arbitrary_leaf():
     # leaf=11, L=4 -> 11, 5, 2, 1
     assert causal_cone_path(11, 4) == [(0, 11), (1, 5), (2, 2), (3, 1)]
+
+
+from src.qft_pcn.qft.mera import MERATensor
+
+
+def test_mera_tensor_construction():
+    arr = np.eye(4, dtype=complex).reshape(2, 2, 2, 2)
+    t = MERATensor(kind="disentangler", layer=1, position=3, array=arr)
+    assert t.kind == "disentangler"
+    assert t.layer == 1
+    assert t.position == 3
+    assert t.shape == (2, 2, 2, 2)
+
+
+def test_mera_tensor_isometry_shape():
+    w = np.zeros((4, 2, 2), dtype=complex)
+    w[0, 0, 0] = 1.0
+    t = MERATensor(kind="isometry", layer=2, position=0, array=w)
+    assert t.shape == (4, 2, 2)
+
+
+def test_mera_tensor_invalid_kind():
+    with pytest.raises(ValueError, match="kind"):
+        MERATensor(kind="bogus", layer=0, position=0,
+                   array=np.zeros((1, 4, 1), dtype=complex))

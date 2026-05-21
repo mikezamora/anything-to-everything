@@ -20,6 +20,8 @@ retargeted from MPS to MERA by changing one import.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import numpy as np
 
 
@@ -84,3 +86,38 @@ def causal_cone_path(leaf: int, L: int) -> list[tuple[int, int]]:
     to the top. Length L.
     """
     return [(ell, leaf >> ell) for ell in range(L)]
+
+
+# ---- per-tensor wrapper ---------------------------------------------------
+
+
+_VALID_KINDS = frozenset({"leaf", "disentangler", "inter_disentangler",
+                          "isometry", "top"})
+
+
+@dataclass
+class MERATensor:
+    """One slot in the MERA tree.
+
+    `kind` ∈ {"leaf", "disentangler", "inter_disentangler", "isometry", "top"}.
+    `array` is the actual numpy array; shape depends on kind:
+        leaf:                (1, d_local, 1)
+        disentangler:        (d_ℓ, d_ℓ, d_ℓ, d_ℓ)
+        inter_disentangler:  (d_ℓ, d_ℓ, d_ℓ, d_ℓ)
+        isometry:            (d_{ℓ+1}, d_ℓ, d_ℓ)
+        top:                 (d_{L-1}, d_{L-1}, 1)
+    """
+    kind: str
+    layer: int
+    position: int
+    array: np.ndarray
+
+    def __post_init__(self) -> None:
+        if self.kind not in _VALID_KINDS:
+            raise ValueError(
+                f"MERATensor kind must be one of {sorted(_VALID_KINDS)}, "
+                f"got {self.kind!r}")
+
+    @property
+    def shape(self) -> tuple[int, ...]:
+        return tuple(self.array.shape)
