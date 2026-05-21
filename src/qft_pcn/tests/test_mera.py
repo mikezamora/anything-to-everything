@@ -340,6 +340,27 @@ def test_two_site_expectation_intra_pair_n0_otimes_n1_on_number_state():
     assert abs(e - 2.0 * 3.0) < 1e-10
 
 
+# ---- Task 12: two_site_expectation inter-pair -----------------------------
+
+
+def test_two_site_expectation_inter_pair_identity_is_one():
+    m = MERA.vacuum(N=8, d_local=4)
+    d = 4
+    identity_op = np.eye(d * d, dtype=complex)
+    e = m.two_site_expectation(1, identity_op).real
+    assert abs(e - 1.0) < 1e-10
+
+
+def test_two_site_expectation_inter_pair_number_op():
+    from src.qft_pcn.qft.fock import number
+    d = 4
+    m = MERA.number_states([0, 2, 3, 0, 0, 0, 0, 0], d=d)
+    n = number(d)
+    op = np.kron(n, n)
+    e = m.two_site_expectation(1, op).real
+    assert abs(e - 2.0 * 3.0) < 1e-10
+
+
 def test_local_expectation_matches_mps_for_product():
     from src.qft_pcn.qft.mps import MPS
     from src.qft_pcn.qft.fock import number

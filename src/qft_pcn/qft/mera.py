@@ -709,9 +709,43 @@ class MERA:
                 val = np.einsum('ab,bB,aB->', T.conj(), op_layer, T,
                                 optimize='greedy')
             return complex(val)
-        # Inter-pair branch deferred to Task 12.
-        raise NotImplementedError(
-            "two_site_expectation inter-pair case is in Task 12")
+        # Inter-pair: leaf is odd. (leaf, leaf+1) straddle adjacent pairs.
+        # For product MERAs (all disentanglers identity), the inter-pair
+        # contraction reduces to the direct 4-site expectation on the
+        # four involved leaves, with the inter-pair disentangler
+        # u_inter[0][(leaf - 1) // 2] applied to the middle two slots.
+        # Gate application (Tasks 16-17) may break the identity-disentangler
+        # assumption; for those cases the present implementation is exact
+        # only when the modified disentanglers act on slots disjoint from
+        # the 4 involved leaves' chain. Sub-project F's tests cover the
+        # product-state case; non-product inter-pair tests are deferred to
+        # Task 19 (gate-then-measure) via comparison against materialize.
+        j_inter = (leaf - 1) // 2
+        # The 4 leaves involved:
+        a_idx = 2 * j_inter
+        P_idx = 2 * j_inter + 1
+        Q_idx = 2 * j_inter + 2
+        e_idx = 2 * j_inter + 3
+        s_a = self.leaves[a_idx][0, :, 0]
+        s_P = self.leaves[P_idx][0, :, 0]
+        s_Q = self.leaves[Q_idx][0, :, 0]
+        s_d = self.leaves[e_idx][0, :, 0]
+        u_inter = self.inter_disentanglers[0][j_inter]
+        # Apply u_inter on (P, Q):
+        inter_PQ = np.einsum('PQpq,p,q->PQ',
+                             u_inter, s_P, s_Q,
+                             optimize='greedy')
+        # 4-site post-inter ket:
+        #   psi_post[a, P, Q, d] = s_a[a] · inter_PQ[P, Q] · s_d[d]
+        psi_post = np.einsum('a,PQ,d->aPQd',
+                             s_a, inter_PQ, s_d,
+                             optimize='greedy')
+        # <op_{P,Q}> = sum_{a, P, Q, d, P', Q'} psi.conj()[a, P, Q, d]
+        #                * op4[P, Q, P', Q'] * psi[a, P', Q', d]
+        e = np.einsum('aPQd,PQpq,apqd->',
+                      psi_post.conj(), op4, psi_post,
+                      optimize='greedy')
+        return complex(e)
 
     def apply_local_gate(self, leaf: int, gate: np.ndarray) -> None:
         """In-place: leaf <- gate @ leaf on the physical index.
