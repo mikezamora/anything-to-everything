@@ -630,6 +630,37 @@ class MERA:
                           optimize='greedy')
         return op_up
 
+    def local_expectation(self, leaf: int, op: np.ndarray) -> complex:
+        """<psi | O_leaf | psi> for a single-leaf operator (d, d).
+
+        Ascends `op` through the L-1 causal-cone tensors to the top
+        layer, then contracts with the top tensor. Cost O(d^4 · L).
+        Spec §5.4.
+        """
+        if not 0 <= leaf < self.N:
+            raise IndexError(f"leaf {leaf} out of range [0, {self.N})")
+        d = self.d_local
+        if op.shape != (d, d):
+            raise ValueError(f"op shape {op.shape}, expected ({d}, {d})")
+        op_layer = op
+        pos = leaf
+        for ell in range(self.L - 1):
+            op_layer = self._ascend_one_layer(op_layer, ell, pos)
+            pos //= 2
+        # At layer L-1 with 2 top sites; pos is 0 or 1.
+        T = self.top[..., 0]   # (d_top, d_top)
+        if pos == 0:
+            # op acts on left top site:
+            # <O> = sum_{a, A, b} T.conj()[a, b] · op[a, A] · T[A, b]
+            val = np.einsum('ab,aA,Ab->', T.conj(), op_layer, T,
+                            optimize='greedy')
+        else:
+            # op acts on right top site:
+            # <O> = sum_{a, b, B} T.conj()[a, b] · op[b, B] · T[a, B]
+            val = np.einsum('ab,bB,aB->', T.conj(), op_layer, T,
+                            optimize='greedy')
+        return complex(val)
+
     def apply_local_gate(self, leaf: int, gate: np.ndarray) -> None:
         """In-place: leaf <- gate @ leaf on the physical index.
 

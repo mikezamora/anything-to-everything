@@ -293,3 +293,41 @@ def test_ascend_identity_at_odd_position():
     op_up = m._ascend_one_layer(op, ell=0, pos=1)
     d_up = m.layer_dims[1]
     assert np.allclose(op_up, np.eye(d_up), atol=1e-10)
+
+
+# ---- Task 10: local_expectation -------------------------------------------
+
+
+def test_local_expectation_number_op_on_number_state():
+    from src.qft_pcn.qft.fock import number
+    occ = [2, 0, 1, 3, 0, 0, 1, 0]
+    d = 4
+    m = MERA.number_states(occ, d=d)
+    n_op = number(d)
+    for leaf in range(8):
+        e = m.local_expectation(leaf, n_op).real
+        assert abs(e - occ[leaf]) < 1e-10, \
+            f"leaf {leaf}: {e} vs {occ[leaf]}"
+
+
+def test_local_expectation_identity_is_norm():
+    m = MERA.number_states([1, 2, 0, 3, 0, 0, 1, 0], d=4)
+    I = np.eye(4, dtype=complex)
+    for leaf in range(8):
+        e = m.local_expectation(leaf, I).real
+        assert abs(e - 1.0) < 1e-10
+
+
+def test_local_expectation_matches_mps_for_product():
+    from src.qft_pcn.qft.mps import MPS
+    from src.qft_pcn.qft.fock import number
+    occ = [2, 0, 1, 3, 0, 0, 1, 0]
+    d = 4
+    mera_state = MERA.number_states(occ, d=d)
+    mps_state = MPS.number_states(occ, d=d)
+    n_op = number(d)
+    for leaf in range(8):
+        e_mera = mera_state.local_expectation(leaf, n_op).real
+        e_mps = mps_state.local_expectation(leaf, n_op).real
+        assert abs(e_mera - e_mps) < 1e-10, \
+            f"leaf {leaf}: mera {e_mera} vs mps {e_mps}"
