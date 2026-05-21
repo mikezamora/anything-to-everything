@@ -188,3 +188,46 @@ def decode(state: MPS, meta: EncodingMeta) -> DecodeResult:
         pos[0] += 1
 
     return DecodeResult(ast=ast, residual_norm=residual_acc)
+
+
+# ---- alpha-equivalence helper ---------------------------------------------
+
+
+def ast_alpha_eq(a: Node, b: Node) -> bool:
+    """Structural equality of two ASTs modulo alpha-renaming."""
+    return _alpha_eq(a, b, env_a={}, env_b={}, counter=[0])
+
+
+def _alpha_eq(a: Node, b: Node, env_a: dict[str, int],
+              env_b: dict[str, int], counter: list[int]) -> bool:
+    if type(a) is not type(b):
+        return False
+    if isinstance(a, Var):
+        sa = env_a.get(a.name)
+        sb = env_b.get(b.name)
+        if sa is None and sb is None:
+            return a.name == b.name
+        return sa == sb
+    if isinstance(a, IntLit):
+        return a.val == b.val
+    if isinstance(a, BoolLit):
+        return a.val == b.val
+    if isinstance(a, Lam):
+        if a.param_ty != b.param_ty:
+            return False
+        slot = counter[0]; counter[0] += 1
+        ea = dict(env_a); eb = dict(env_b)
+        ea[a.param] = slot; eb[b.param] = slot
+        return _alpha_eq(a.body, b.body, ea, eb, counter)
+    if isinstance(a, App):
+        return (_alpha_eq(a.fn, b.fn, env_a, env_b, counter)
+                and _alpha_eq(a.arg, b.arg, env_a, env_b, counter))
+    if isinstance(a, If):
+        return (_alpha_eq(a.cond, b.cond, env_a, env_b, counter)
+                and _alpha_eq(a.then_b, b.then_b, env_a, env_b, counter)
+                and _alpha_eq(a.else_b, b.else_b, env_a, env_b, counter))
+    if isinstance(a, Bin):
+        return (a.op == b.op
+                and _alpha_eq(a.lhs, b.lhs, env_a, env_b, counter)
+                and _alpha_eq(a.rhs, b.rhs, env_a, env_b, counter))
+    return False

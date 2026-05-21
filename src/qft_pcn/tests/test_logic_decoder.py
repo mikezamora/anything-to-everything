@@ -66,3 +66,48 @@ def test_decode_bin():
     assert isinstance(b, Bin)
     assert b.op == "+"
     assert b.lhs.val == 1 and b.rhs.val == 2
+
+
+from src.qft_pcn.logic.decoder import ast_alpha_eq
+
+
+def test_alpha_eq_identical():
+    a = parse(r"\x:Int. x")
+    b = parse(r"\x:Int. x")
+    assert ast_alpha_eq(a, b)
+
+
+def test_alpha_eq_renaming():
+    a = parse(r"\x:Int. x")
+    b = parse(r"\y:Int. y")
+    assert ast_alpha_eq(a, b)
+
+
+def test_alpha_eq_different_structure_not_equal():
+    a = parse(r"\x:Int. x")
+    b = parse(r"\x:Int. 0")
+    assert not ast_alpha_eq(a, b)
+
+
+def test_alpha_eq_different_var_not_equal():
+    a = parse(r"\x:Int. \y:Int. x")
+    b = parse(r"\x:Int. \y:Int. y")
+    assert not ast_alpha_eq(a, b)
+
+
+def test_alpha_eq_literal_values_must_match():
+    a = parse(r"\x:Int. 3")
+    b = parse(r"\x:Int. 4")
+    assert not ast_alpha_eq(a, b)
+
+
+def test_alpha_eq_types_must_match():
+    a = parse(r"\x:Int. x")
+    b = parse(r"\x:Bool. x")
+    assert not ast_alpha_eq(a, b)
+
+
+def test_alpha_eq_nested_binders():
+    a = parse(r"\x:Int. (\y:Int. x + y)")
+    b = parse(r"\u:Int. (\v:Int. u + v)")
+    assert ast_alpha_eq(a, b)
