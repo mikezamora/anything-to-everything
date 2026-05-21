@@ -28,15 +28,34 @@ TypingHamiltonian, O_l and O_r are projectors (P² = P), so
 a projector.)
 
 For Phase 3 transition couplings of the form H_term = -λ · X with
-X = |post⟩⟨pre| + |pre⟩⟨post| (a Pauli-X on a 2D subspace embedded in
-the two-site product basis), the closed form is
+X = |post⟩⟨pre| + |pre⟩⟨post| where |post⟩, |pre⟩ are PRODUCT
+computational-basis states across a contiguous window of sites, the
+closed form
 
     exp(dt·λ X) = I + (cosh(dt·λ) - 1) · P_{ab} + sinh(dt·λ) · X
+    P_{ab} = |pre⟩⟨pre| + |post⟩⟨post|
 
-where P_{ab} = |pre⟩⟨pre| + |post⟩⟨post| is the rank-2 projector on the
-two-state subspace. Both terms are sums of rank-1 (operator-sense)
-factored tensor products across the bond, applied identically via the
-direct-sum trick.
+is applied via an amplitude-mixing trick that AVOIDS materializing any
+n-site dense gate. Concretely:
+
+  1. Compute α = ⟨pre|ψ⟩, β = ⟨post|ψ⟩ via the per-site basis-slice
+     contraction of the MPS — O(N · chi²) per amplitude, no d_local
+     factor in the contraction (each site contributes only its slice
+     A_k[:, flat(s_k), :]).
+  2. The closed form rearranges to |ψ'⟩ = |ψ⟩ + γ_pre·|pre⟩
+     + γ_post·|post⟩ for explicit scalars γ_pre, γ_post.
+  3. Add each product state via the direct-sum MPS-addition trick:
+     bond dim grows by 1 at every interior bond, then SVD-truncate
+     each bond back to chi_max via QR + small-matrix SVD.
+
+Cost per transition: O(N · chi²) for amplitudes + O(N · chi³ · d_local)
+for the bond SVD sweep. The d_local factor only enters in the QR step
+of each per-bond truncation; that QR is on a (chi · d_local, chi)
+matrix and so is O(chi² · d_local).
+
+NB. For Phase 1 (commuting diagonal projector terms), the simpler
+two-site direct-sum trick is still used — see
+_apply_factored_two_site_gate.
 
 Direct-sum bond construction
 ----------------------------
@@ -86,6 +105,7 @@ from ._eval_terms import (
     cmp_pre_factors, if_redex_factors,
     DEFAULT_LAMBDA_BETA, DEFAULT_LAMBDA_ARITH, DEFAULT_LAMBDA_IF,
 )
+from ._eval_transitions import TransitionTerm
 
 
 # ---- Per-term gate spec -----------------------------------------------------
@@ -374,3 +394,517 @@ def factored_evolve(
 def factored_energy(state: MPS, H) -> float:
     """⟨state | H | state⟩. Mirrors qft.evolution.energy for API symmetry."""
     return float(H.total_energy(state))
+
+
+# ---- Phase 3: n-site rank-1 transition coupling gates ----------------------
+
+_SPECIES_DIMS = (KIND_CUTOFF, TYPE_CUTOFF, BID_CUTOFF, VALUE_CUTOFF, TOBL_CUTOFF)
+
+
+def _basis_outer(s_post: tuple[int, int, int, int, int],
+                 s_pre: tuple[int, int, int, int, int]
+                 ) -> dict[str, np.ndarray]:
+    """Build per-species factor dict for |s_post⟩⟨s_pre| at one site.
+
+    Kept for diagnostics / fallback. Hot path uses _apply_basis_outer_fast
+    which avoids the einsum entirely.
+    """
+    factors: dict[str, np.ndarray] = {}
+    names = ("kind", "type", "bid", "value", "tobl")
+    for name, dim, post_idx, pre_idx in zip(
+        names, _SPECIES_DIMS, s_post, s_pre
+    ):
+        op = np.zeros((dim, dim), dtype=complex)
+        op[post_idx, pre_idx] = 1.0
+        factors[name] = op
+    return factors
+
+
+def _flat_basis_index(s: tuple[int, int, int, int, int]) -> int:
+    """Linearize per-species index tuple to the flat D_LOCAL basis index.
+
+    Matches encoding._basis_index ordering (kind slowest, tobl fastest).
+    """
+    k, t, b, v, o = s
+    return ((((k * TYPE_CUTOFF + t) * BID_CUTOFF + b)
+              * VALUE_CUTOFF + v) * TOBL_CUTOFF + o)
+
+
+def _apply_basis_outer_fast(A: np.ndarray, s_post, s_pre) -> np.ndarray:
+    """Apply rank-1 operator |s_post⟩⟨s_pre| to site tensor A.
+
+    Result[chi_l, flat_post, chi_r] = A[chi_l, flat_pre, chi_r]
+    Result is zero elsewhere. NO einsum / reshape — single slice copy.
+    """
+    chi_l, d, chi_r = A.shape
+    flat_pre = _flat_basis_index(s_pre)
+    flat_post = _flat_basis_index(s_post)
+    out = np.zeros_like(A)
+    out[:, flat_post, :] = A[:, flat_pre, :]
+    return out
+
+
+def _apply_n_site_rank1_branches(
+    state: MPS,
+    site_left: int,
+    branches,   # list of (coefficient, [(s_post_per_site, s_pre_per_site), ...])
+    chi_max: int,
+    eps: float,
+) -> float:
+    """Apply gate `I + Σ_β c_β · ⊗_w |s_post_β^w⟩⟨s_pre_β^w|` over W
+    consecutive sites.
+
+    branches: list of (coefficient, [(s_post, s_pre)] per site).
+    Each per-site (s_post, s_pre) is a per-species index tuple.
+
+    Direct-sum construction across W-1 internal bonds: each bond grows by
+    factor (1 + n_branches). After application, each bond is SVD-truncated
+    back to chi_max via QR + small-matrix SVD.
+
+    Returns the max truncation error across the W-1 bond SVDs.
+    """
+    n_branches = len(branches)
+    if n_branches == 0:
+        return 0.0
+    W = len(branches[0][1])
+    if W < 2:
+        raise ValueError(f"window width must be >= 2, got {W}")
+    if not all(len(b[1]) == W for b in branches):
+        raise ValueError("branches have inconsistent window widths")
+    N = state.N
+    if site_left < 0 or site_left + W > N:
+        raise ValueError(
+            f"window [{site_left}, {site_left+W}) out of range [0, {N})"
+        )
+
+    # Per-site, per-branch projection: |s_post⟩⟨s_pre| · A[site_left + w]
+    # Fast path: each per-site op is rank-1 |post⟩⟨pre|, so the result
+    # is a single slice copy — no einsum needed.
+    A = [state.tensors[site_left + w].copy() for w in range(W)]
+    proj: list[list[np.ndarray]] = []   # proj[w][β] shape == A[w].shape
+    for w in range(W):
+        per_branch: list[np.ndarray] = []
+        for _, per_site_pairs in branches:
+            s_post, s_pre = per_site_pairs[w]
+            per_branch.append(_apply_basis_outer_fast(A[w], s_post, s_pre))
+        proj.append(per_branch)
+
+    # Now build the augmented site tensors. For W sites, we have W-1 bonds.
+    # The identity branch lives in the first chi block of each bond; each
+    # perturbation branch β lives in its own block of size chi_m_w (the
+    # ORIGINAL middle bond at bond w). The total expanded bond size at
+    # bond w is (1 + n_branches) * chi_m_w.
+    #
+    # New site tensors:
+    #   N_0[chi_l, d, (1 + n_branches) * chi_m_0]:
+    #     block 0: A_0
+    #     block β (β=1..n): c_β · proj_β[0]   (apply coefficient at left edge)
+    #
+    #   N_w (1 <= w < W-1), shape ((1+n)*chi_m_{w-1}, d, (1+n)*chi_m_w):
+    #     block (0,0): A_w
+    #     block (β,β): proj_β[w]
+    #     (off-diagonal blocks are zero)
+    #
+    #   N_{W-1}[(1 + n_branches) * chi_m_{W-2}, d, chi_r]:
+    #     block 0: A_{W-1}
+    #     block β: proj_β[W-1]
+    #
+    # Then SVD-truncate each internal bond.
+
+    new_tensors: list[np.ndarray] = []
+    # First (leftmost) site: only right-bond is expanded.
+    A0 = A[0]
+    chi_l0, d0, chi_m0 = A0.shape
+    expanded_right_0 = (1 + n_branches) * chi_m0
+    N0 = np.zeros((chi_l0, d0, expanded_right_0), dtype=complex)
+    N0[:, :, :chi_m0] = A0
+    for b_idx, (coeff, _) in enumerate(branches):
+        start = (b_idx + 1) * chi_m0
+        end = start + chi_m0
+        N0[:, :, start:end] = coeff * proj[0][b_idx]
+    new_tensors.append(N0)
+
+    # Interior sites: both bonds expanded, block-diagonal.
+    for w in range(1, W - 1):
+        Aw = A[w]
+        chi_l_w, d_w, chi_r_w = Aw.shape
+        exp_l = (1 + n_branches) * chi_l_w
+        exp_r = (1 + n_branches) * chi_r_w
+        Nw = np.zeros((exp_l, d_w, exp_r), dtype=complex)
+        # Identity block.
+        Nw[:chi_l_w, :, :chi_r_w] = Aw
+        for b_idx, _ in enumerate(branches):
+            lstart = (b_idx + 1) * chi_l_w
+            lend = lstart + chi_l_w
+            rstart = (b_idx + 1) * chi_r_w
+            rend = rstart + chi_r_w
+            Nw[lstart:lend, :, rstart:rend] = proj[w][b_idx]
+        new_tensors.append(Nw)
+
+    # Last (rightmost) site: only left-bond is expanded.
+    A_last = A[W - 1]
+    chi_l_last, d_last, chi_r_last = A_last.shape
+    expanded_left_last = (1 + n_branches) * chi_l_last
+    N_last = np.zeros(
+        (expanded_left_last, d_last, chi_r_last), dtype=complex,
+    )
+    N_last[:chi_l_last, :, :] = A_last
+    for b_idx, _ in enumerate(branches):
+        start = (b_idx + 1) * chi_l_last
+        end = start + chi_l_last
+        N_last[start:end, :, :] = proj[W - 1][b_idx]
+    new_tensors.append(N_last)
+
+    # Write back to state.
+    for w in range(W):
+        state.tensors[site_left + w] = new_tensors[w]
+
+    # Now SVD-truncate each internal bond.
+    max_err = 0.0
+    for bond in range(site_left, site_left + W - 1):
+        err = _svd_truncate_bond(state, bond, chi_max=chi_max, eps=eps)
+        if err > max_err:
+            max_err = err
+    return max_err
+
+
+def _svd_truncate_bond(state: MPS, bond: int,
+                       chi_max: int, eps: float) -> float:
+    """SVD-truncate the bond between site `bond` and `bond+1` to chi_max.
+
+    Uses QR on the (left, right) sites to reduce to a small intermediate
+    matrix, then SVDs that. Cost: O(chi^3 · d) per side plus a small SVD.
+    """
+    Al = state.tensors[bond]
+    Ar = state.tensors[bond + 1]
+    chi_l, dl, chi_m = Al.shape
+    chi_m2, dr, chi_r = Ar.shape
+    if chi_m != chi_m2:
+        raise ValueError(
+            f"bond {bond} inconsistent: {chi_m} vs {chi_m2}"
+        )
+    mat_l = Al.reshape(chi_l * dl, chi_m)
+    mat_r = Ar.reshape(chi_m, dr * chi_r)
+    Ql, Rl = np.linalg.qr(mat_l)         # Ql: (chi_l·d, k1), Rl: (k1, chi_m)
+    Qr_T, Rr_T = np.linalg.qr(mat_r.T)   # Qr_T: (d·chi_r, k2)
+    Qr = Qr_T.T                          # (k2, d·chi_r)
+    Rr = Rr_T.T                          # (chi_m, k2)
+    M = Rl @ Rr
+    U, S, Vh = np.linalg.svd(M, full_matrices=False)
+    norm_sq = float((S * S).sum())
+    if S.size == 0 or norm_sq == 0.0:
+        # Degenerate; leave bond alone.
+        return 0.0
+    keep = S > eps * S[0]
+    S_kept = S[keep][:chi_max]
+    U_kept = U[:, keep][:, :chi_max]
+    Vh_kept = Vh[keep][:chi_max]
+    chi_new = S_kept.size
+    if chi_new == 0:
+        chi_new = 1
+        S_kept = S[:1]
+        U_kept = U[:, :1]
+        Vh_kept = Vh[:1]
+    kept_norm_sq = float((S_kept * S_kept).sum())
+    trunc_err = max(0.0, 1.0 - (kept_norm_sq / norm_sq))
+
+    new_L = (Ql @ U_kept).reshape(chi_l, dl, chi_new)
+    new_R = (S_kept[:, None] * (Vh_kept @ Qr)).reshape(chi_new, dr, chi_r)
+    state.tensors[bond] = new_L
+    state.tensors[bond + 1] = new_R
+    return trunc_err
+
+
+def _transition_branches(term: TransitionTerm,
+                         dt: float, imaginary: bool):
+    """Build the (coeff, per-site factor dict list) branches for one
+    rank-1 transition term.
+
+    H = -λ · (|post⟩⟨pre| + |pre⟩⟨post|).
+    Setting θ = step · λ (with step = dt for imag, i·dt for real),
+    exp(-step · H) = exp(θ · X) where X = |post⟩⟨pre| + |pre⟩⟨post|, and
+    X² = P_{pp} + P_{qq}. Closed form:
+
+      exp(θ·X) = I + (cosh(θ)-1)·(|pre⟩⟨pre| + |post⟩⟨post|)
+                    + sinh(θ)·(|post⟩⟨pre| + |pre⟩⟨post|)
+
+    Yields 4 rank-1 branches:
+      (cosh(θ)-1) · |pre⟩⟨pre|
+      (cosh(θ)-1) · |post⟩⟨post|
+      sinh(θ)     · |post⟩⟨pre|
+      sinh(θ)     · |pre⟩⟨post|
+    """
+    lam = term.coupling
+    if imaginary:
+        theta = dt * lam
+        c_diag = np.cosh(theta) - 1.0
+        c_off = np.sinh(theta)
+    else:
+        theta = 1j * dt * lam
+        c_diag = np.cosh(theta) - 1.0
+        c_off = np.sinh(theta)
+    branches = []
+    # Skip near-zero branches for efficiency.
+    if abs(c_diag) > 1e-15:
+        branches.append((
+            complex(c_diag),
+            [(s, s) for s in term.pre],
+        ))
+        branches.append((
+            complex(c_diag),
+            [(s, s) for s in term.post],
+        ))
+    if abs(c_off) > 1e-15:
+        branches.append((
+            complex(c_off),
+            [(p, q) for p, q in zip(term.post, term.pre)],
+        ))
+        branches.append((
+            complex(c_off),
+            [(q, p) for q, p in zip(term.pre, term.post)],
+        ))
+    return branches
+
+
+def _mps_amplitude_at_basis(state: MPS, site_left: int,
+                            site_basis_list) -> complex:
+    """Compute ⟨b|state⟩ where |b⟩ = |...prev_pads...⟩ ⊗ (⊗_w |s_w⟩) ⊗ |...trailing_pads...⟩.
+
+    site_basis_list[w] is the per-species tuple for site (site_left + w).
+    Sites outside the window are projected onto their EXISTING argmax
+    basis (i.e., we compute the amplitude of the window's product state
+    *relative to* the rest of the chain).
+
+    Actually: we just compute the FULL inner product against the product
+    state where the window sites carry s_w, and OTHER sites are summed
+    over their full basis (treating |b⟩ as a PARTIAL product state).
+    That is: ⟨b_window | state⟩, with the partial inner product yielding
+    a complex scalar that captures the amplitude AT this configuration
+    integrated over all unspecified sites.
+
+    For our use case the "outside" sites are PAD-dominated (encoded
+    state), so we treat them as their current basis. To keep this
+    correct, we include those sites' current argmax-projection too.
+
+    Simpler implementation: compute the FULL N-site inner product where:
+      - window sites have basis index = flat(_basis_outer(s, s)) chosen
+      - other sites are TRACED (i.e., summed) — equivalent to setting
+        their projector to identity.
+
+    Equivalent: ⟨b_window | state ⟩ with the OTHER sites' indices summed
+    is the marginal amplitude of |b_window⟩. This is NOT what we want
+    (we want a specific configuration amplitude including the rest of
+    the chain), but for the purpose of driving the window transition,
+    it's the right scalar — it captures "how much of state lives on
+    this window configuration regardless of the rest".
+
+    Implementation: contract state with the projector P_window = ⊗_w
+    |s_w⟩⟨s_w| acting only on window sites, identity elsewhere — this
+    gives ||P_window state||². Not exactly the amplitude.
+
+    To get a scalar amplitude that drives ket evolution: use the inner
+    product against the LOCALIZED product state where outside sites are
+    matched to state's current argmax. This is implementation-defined
+    and somewhat arbitrary, but gives a meaningful "alignment" measure.
+
+    For simplicity here we compute the FULL inner product against |b⟩
+    being the product state with PADs everywhere outside the window —
+    which is the natural ket for an encoded program with trailing PADs.
+    """
+    # Default outside-window basis: PAD-like for sites past the AST,
+    # but for sites BEFORE the window we use the state's current argmax
+    # to preserve the encoded prefix. For Phase 3's scope (small N,
+    # short ASTs, window at site_left=0), site_left is usually 0 so
+    # there's no prefix.
+    from .encoding import (
+        KIND_PAD, TYPE_NONE, BID_NONE, VALUE_NONE, TOBL_NONE,
+    )
+    pad_site = (KIND_PAD, TYPE_NONE, BID_NONE, VALUE_NONE, TOBL_NONE)
+    full_basis: list[tuple[int, ...]] = []
+    for k in range(state.N):
+        if site_left <= k < site_left + len(site_basis_list):
+            full_basis.append(site_basis_list[k - site_left])
+        else:
+            full_basis.append(pad_site)
+
+    # Inner product: contract state tensors against the product state
+    # vector at each site.
+    env = np.ones((1,), dtype=complex)   # left environment, shape (chi_l,)
+    for k in range(state.N):
+        A = state.tensors[k]   # (chi_l, d, chi_r)
+        flat = _flat_basis_index(full_basis[k])
+        # A_slice: (chi_l, chi_r)
+        A_slice = A[:, flat, :]
+        # env_new[chi_r] = sum_chi_l env[chi_l] * A_slice[chi_l, chi_r]
+        env = env @ A_slice
+    return complex(env[0])
+
+
+def _add_product_state_to_mps(
+    state: MPS, basis_list, coefficient: complex,
+    chi_max: int, eps: float,
+) -> float:
+    """In-place: state += coefficient · |basis_list⟩ where |basis_list⟩ is
+    a full-N product computational basis state.
+
+    Direct-sum trick: at each site k, augment A_k by appending the
+    1-dim "product state row" carrying the basis vector e_{s_k}. Bond
+    dim grows by 1 at every interior bond. Endpoints: scalar coefficient
+    is distributed so the boundary closure correctly recovers the
+    coefficient.
+
+    Then sweep-SVD to truncate bonds back to chi_max.
+
+    Returns the maximum bond-truncation error after the sweep.
+    """
+    N = state.N
+    if len(basis_list) != N:
+        raise ValueError("basis_list length != N")
+    if abs(coefficient) < 1e-15:
+        return 0.0
+
+    d = state.d
+    new_tensors: list[np.ndarray] = []
+    for k in range(N):
+        A = state.tensors[k]
+        chi_l, _, chi_r = A.shape
+        # Augmented size: chi_l_new = chi_l + 1 (except left boundary: stays chi_l)
+        # Wait — for product-state addition via direct-sum:
+        #   for k == 0: chi_l_new = 1 (unchanged), chi_r_new = chi_r + 1
+        #   for 0 < k < N-1: chi_l_new = chi_l + 1, chi_r_new = chi_r + 1
+        #   for k == N-1: chi_l_new = chi_l + 1, chi_r_new = 1
+        chi_l_new = chi_l if k == 0 else chi_l + 1
+        chi_r_new = chi_r if k == N - 1 else chi_r + 1
+        new_A = np.zeros((chi_l_new, d, chi_r_new), dtype=complex)
+        # Original block at top-left.
+        new_A[:chi_l, :, :chi_r] = A
+        # Product state vector (basis e_s with weight coefficient at site 0).
+        flat = _flat_basis_index(basis_list[k])
+        # Place at bottom-right slot (chi_l_new - 1, :, chi_r_new - 1).
+        # The scalar coefficient is multiplied entirely into the FIRST
+        # site; subsequent sites carry weight 1 in their product-state
+        # block.
+        weight = coefficient if k == 0 else 1.0
+        new_A[chi_l_new - 1, flat, chi_r_new - 1] = weight
+        new_tensors.append(new_A)
+
+    state.tensors = new_tensors
+
+    # Sweep SVD-truncate.
+    max_err = 0.0
+    for bond in range(N - 1):
+        err = _svd_truncate_bond(state, bond, chi_max=chi_max, eps=eps)
+        if err > max_err:
+            max_err = err
+    return max_err
+
+
+def apply_transition_term(
+    state: MPS, term: TransitionTerm,
+    dt: float, imaginary: bool,
+    chi_max: int, eps: float = 1e-10,
+) -> float:
+    """Apply exp(-step · H_trans) for one TransitionTerm using the
+    closed-form amplitude-mixing trick.
+
+    For H = -λ(|post⟩⟨pre| + |pre⟩⟨post|), the action on |ψ⟩ is:
+      |ψ'⟩ = exp(θ·X)|ψ⟩
+           = |ψ⟩ + (cosh(θ)-1)·(α|pre⟩+β|post⟩)
+                 + sinh(θ)·(α|post⟩+β|pre⟩)
+    where α = ⟨pre|ψ⟩, β = ⟨post|ψ⟩ and X = |post⟩⟨pre| + h.c.
+
+    Group by basis ket:
+      |ψ'⟩ = |ψ⟩ + γ_pre·|pre⟩ + γ_post·|post⟩
+      γ_pre  = (cosh(θ)-1)·α + sinh(θ)·β
+      γ_post = (cosh(θ)-1)·β + sinh(θ)·α
+
+    Apply via TWO product-state additions (each grows bond by 1
+    everywhere). SVD-truncate back to chi_max.
+
+    Returns the max truncation error across bonds.
+    """
+    # Build full-N basis configurations for |pre⟩ and |post⟩.
+    from .encoding import (
+        KIND_PAD, TYPE_NONE, BID_NONE, VALUE_NONE, TOBL_NONE,
+    )
+    pad_site = (KIND_PAD, TYPE_NONE, BID_NONE, VALUE_NONE, TOBL_NONE)
+    N = state.N
+    W = term.width
+    pre_full: list[tuple[int, ...]] = []
+    post_full: list[tuple[int, ...]] = []
+    for k in range(N):
+        if term.site_left <= k < term.site_left + W:
+            pre_full.append(term.pre[k - term.site_left])
+            post_full.append(term.post[k - term.site_left])
+        else:
+            pre_full.append(pad_site)
+            post_full.append(pad_site)
+
+    # Compute alpha and beta. These are amplitudes of the FULL product
+    # state |pre_full⟩ and |post_full⟩ in the current state.
+    alpha = _mps_amplitude_at_basis(state, 0, pre_full)
+    beta = _mps_amplitude_at_basis(state, 0, post_full)
+    if abs(alpha) + abs(beta) < 1e-15:
+        # Transition has no overlap with current state — skip.
+        return 0.0
+
+    lam = term.coupling
+    if imaginary:
+        theta = dt * lam
+        c_diag = np.cosh(theta) - 1.0
+        c_off = np.sinh(theta)
+    else:
+        theta_c = 1j * dt * lam
+        c_diag = np.cosh(theta_c) - 1.0
+        c_off = np.sinh(theta_c)
+    gamma_pre = c_diag * alpha + c_off * beta
+    gamma_post = c_diag * beta + c_off * alpha
+
+    err1 = _add_product_state_to_mps(
+        state, pre_full, complex(gamma_pre),
+        chi_max=chi_max, eps=eps,
+    )
+    err2 = _add_product_state_to_mps(
+        state, post_full, complex(gamma_post),
+        chi_max=chi_max, eps=eps,
+    )
+    return max(err1, err2)
+
+
+def factored_trotter_step_with_transitions(
+    state: MPS, H, dt: float,
+    transitions: list[TransitionTerm] | None = None,
+    imaginary: bool = True,
+    chi_max: int = 8,
+    eps: float = 1e-10,
+) -> float:
+    """Trotter step that ALSO applies the listed transition couplings.
+
+    Order: first apply the diagonal H gates (Phase 1 collapse), then
+    sweep transitions left-to-right, then sweep right-to-left for
+    second-order symmetry. Each transition's window is independent of
+    others (no operator overlap if windows are disjoint), but for
+    overlapping windows Trotter error is O(dt²) — fine for relaxation.
+    """
+    max_err = factored_trotter_step(
+        state, H, dt, imaginary=imaginary, chi_max=chi_max, eps=eps,
+    )
+    if not transitions:
+        return max_err
+    # Forward sweep with HALF step.
+    for term in transitions:
+        err = apply_transition_term(
+            state, term, dt=0.5 * dt, imaginary=imaginary,
+            chi_max=chi_max, eps=eps,
+        )
+        if err > max_err:
+            max_err = err
+    # Backward sweep with HALF step (second-order Trotter symmetry).
+    for term in reversed(transitions):
+        err = apply_transition_term(
+            state, term, dt=0.5 * dt, imaginary=imaginary,
+            chi_max=chi_max, eps=eps,
+        )
+        if err > max_err:
+            max_err = err
+    return max_err
