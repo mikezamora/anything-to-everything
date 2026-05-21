@@ -118,3 +118,59 @@ def test_search_defaults_are_filled_when_omitted():
     assert out["search"]["method"] == "imag_time"
     assert out["search"]["steps"] == 50
     assert out["search"]["chi_max"] == 32
+
+
+from src.qft_pcn.bridge.dsl.cross_validate import cross_validate
+from src.qft_pcn.bridge.errors import BadReferenceError
+
+
+def test_cross_validate_accepts_canonical_dsl():
+    cross_validate(CANONICAL_STLC_DSL)
+
+
+def test_cross_validate_rejects_oob_constraint_site():
+    bad = {**MINIMAL_DSL,
+           "sites": 4,
+           "constraints": [{"kind": "local", "site": 99,
+                            "term": "kind == LAM", "weight": 1.0}]}
+    with pytest.raises(BadReferenceError, match="constraints/0/site"):
+        cross_validate(bad)
+
+
+def test_cross_validate_rejects_oob_two_site():
+    bad = {**MINIMAL_DSL,
+           "sites": 4,
+           "constraints": [{"kind": "two_site", "sites": [0, 99],
+                            "term": "x", "weight": 1.0}]}
+    with pytest.raises(BadReferenceError, match="constraints/0/sites/1"):
+        cross_validate(bad)
+
+
+def test_cross_validate_rejects_unknown_field_in_observable():
+    bad = {**MINIMAL_DSL,
+           "observables": [{"site": 0, "field": "bogus", "op": "n"}]}
+    with pytest.raises(BadReferenceError, match="observables/0/field"):
+        cross_validate(bad)
+
+
+def test_cross_validate_rejects_oob_observable_site():
+    bad = {**MINIMAL_DSL,
+           "sites": 4,
+           "observables": [{"site": 5, "field": "expr", "op": "n"}]}
+    with pytest.raises(BadReferenceError, match="observables/0/site"):
+        cross_validate(bad)
+
+
+def test_cross_validate_rejects_unknown_field_in_boundary():
+    bad = {**MINIMAL_DSL,
+           "boundary": {"0": {"bogus": 1}}}
+    with pytest.raises(BadReferenceError, match="boundary/0/bogus"):
+        cross_validate(bad)
+
+
+def test_cross_validate_rejects_oob_boundary_site():
+    bad = {**MINIMAL_DSL,
+           "sites": 4,
+           "boundary": {"99": {"expr": 1}}}
+    with pytest.raises(BadReferenceError, match="boundary/99"):
+        cross_validate(bad)
