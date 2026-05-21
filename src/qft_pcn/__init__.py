@@ -20,7 +20,14 @@ from .fields import Field, PrecisionField
 from .layer import QFTPCNLayer, LayerConfig, ClassicalConvMap, GenerativeMap
 from .network import QFTPCNNetwork, NetworkConfig
 from .multifield import MultiFieldNetwork, MultiFieldConfig
-from .quantum import QuantumGenerativeMap, QuantumConvMap
+
+try:
+    from .quantum import QuantumGenerativeMap, QuantumConvMap
+    _HAS_QISKIT = True
+except ImportError:
+    QuantumGenerativeMap = None
+    QuantumConvMap = None
+    _HAS_QISKIT = False
 
 __all__ = [
     "Manifold2D",
