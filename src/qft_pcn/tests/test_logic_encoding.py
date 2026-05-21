@@ -135,3 +135,37 @@ def test_int_literal_out_of_range_message():
 def test_ill_scoped_var_message():
     with pytest.raises(IllScopedVar, match="Var\\('x'\\) not in lexical scope"):
         raise IllScopedVar(name="x")
+
+
+def test_tobl_basis_mirrors_type():
+    """Spec §4.2: tobl basis is 1:1 with type basis."""
+    from src.qft_pcn.logic.encoding import (
+        TOBL_NONE, TOBL_INT, TOBL_BOOL,
+        TOBL_ARR_II, TOBL_ARR_IB, TOBL_ARR_BI, TOBL_ARR_BB,
+        TOBL_ARR_NESTED, TOBL_CUTOFF,
+    )
+    assert TOBL_NONE == TYPE_NONE == 0
+    assert TOBL_INT == TYPE_INT == 1
+    assert TOBL_BOOL == TYPE_BOOL == 2
+    assert TOBL_ARR_II == TYPE_ARR_II == 3
+    assert TOBL_ARR_IB == TYPE_ARR_IB == 4
+    assert TOBL_ARR_BI == TYPE_ARR_BI == 5
+    assert TOBL_ARR_BB == TYPE_ARR_BB == 6
+    assert TOBL_ARR_NESTED == TYPE_ARR_NESTED == 7
+    assert TOBL_CUTOFF == TYPE_CUTOFF == 8
+
+
+def test_species_list_has_tobl_as_5th():
+    """Spec §4.1: SPECIES is 5 species, with tobl appended last."""
+    from src.qft_pcn.logic.encoding import SPECIES, D_LOCAL
+    names = [s.name for s in SPECIES]
+    assert names == ["kind", "type", "bid", "value", "tobl"]
+    assert SPECIES[-1].cutoff == 8
+    # d_local = 8 * 8 * 8 * 16 * 8 = 65536.
+    assert D_LOCAL == 65536
+
+
+def test_species_dims_tuple():
+    from src.qft_pcn.logic.encoding import SPECIES_DIMS, SPECIES_NAMES
+    assert SPECIES_NAMES == ("kind", "type", "bid", "value", "tobl")
+    assert SPECIES_DIMS == (8, 8, 8, 16, 8)

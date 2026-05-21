@@ -94,11 +94,29 @@ BIN_OP_FROM_VALUE = {
 BIN_VALUE_FROM_OP = {v: k for k, v in BIN_OP_FROM_VALUE.items()}
 
 
+# ---- type-obligation register --------------------------------------------
+# Mirrors the type register's basis exactly. Cutoff = 8.
+
+TOBL_NONE = 0       # no parent-imposed type expectation
+TOBL_INT = 1
+TOBL_BOOL = 2
+TOBL_ARR_II = 3
+TOBL_ARR_IB = 4
+TOBL_ARR_BI = 5
+TOBL_ARR_BB = 6
+TOBL_ARR_NESTED = 7
+TOBL_CUTOFF = 8
+
+assert TOBL_CUTOFF == TYPE_CUTOFF, (
+    "tobl basis must mirror type basis exactly"
+)
+
+
 # ---- species metadata -----------------------------------------------------
 
-SPECIES_NAMES: tuple[str, ...] = ("kind", "type", "bid", "value")
+SPECIES_NAMES: tuple[str, ...] = ("kind", "type", "bid", "value", "tobl")
 SPECIES_DIMS: tuple[int, ...] = (KIND_CUTOFF, TYPE_CUTOFF, BID_CUTOFF,
-                                 VALUE_CUTOFF)
+                                 VALUE_CUTOFF, TOBL_CUTOFF)
 D_LOCAL: int = math.prod(SPECIES_DIMS)
 
 
@@ -110,6 +128,7 @@ SPECIES: tuple[FieldSpecies, ...] = (
     FieldSpecies(name="type",  cutoff=TYPE_CUTOFF,  bare_mass=0.0, kinetic=0.0),
     FieldSpecies(name="bid",   cutoff=BID_CUTOFF,   bare_mass=0.0, kinetic=0.0),
     FieldSpecies(name="value", cutoff=VALUE_CUTOFF, bare_mass=0.0, kinetic=0.0),
+    FieldSpecies(name="tobl",  cutoff=TOBL_CUTOFF,  bare_mass=0.0, kinetic=0.0),
 )
 
 
