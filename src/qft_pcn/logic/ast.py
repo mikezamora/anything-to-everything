@@ -381,8 +381,48 @@ def pretty(node: Node) -> str:
 
 @dataclass
 class HoleVar(Node):
-    """A variable-position hole with a candidate binder name list."""
+    """A variable-position hole with a candidate binder name list.
+
+    candidates: binder names admissible at this position (empty = any in-scope).
+    target_type: optional expected type for this hole (None = inferred).
+    name: optional diagnostic label.
+
+    Backward-compat: existing code constructs HoleVar(candidates=[...]) with
+    a list of strings. Sub-project E adds the target_type / name fields.
+    """
     candidates: list[str]
+    target_type: "Ty | None" = None
+    name: str = ""
+
+
+@dataclass(frozen=True)
+class TypeHole(Ty):
+    """A type-position hole: this type is unknown but must come from one of
+    the candidates. Encoded by sub-project E's encoder extension as an
+    equal-amplitude superposition over the candidate tags on the `type`
+    register at the hole site.
+
+    Candidates must be flat: TInt, TBool, or single-level TArrow (no nested
+    arrows). The encoder works in the flat-tag basis only.
+    """
+    candidates: tuple
+    name: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.candidates:
+            raise ValueError("TypeHole must have at least one candidate")
+        for c in self.candidates:
+            if isinstance(c, TArrow):
+                if isinstance(c.src, TArrow) or isinstance(c.dst, TArrow):
+                    raise ValueError(
+                        f"TypeHole candidates may not include nested arrow "
+                        f"types: {c!r}"
+                    )
+            elif not isinstance(c, (TInt, TBool)):
+                raise ValueError(
+                    f"TypeHole candidates must be Ty "
+                    f"(TInt/TBool/flat TArrow); got {type(c).__name__}"
+                )
 
 
 def substitute_hole(ast: Node, hole: HoleVar, replacement: Node) -> Node:

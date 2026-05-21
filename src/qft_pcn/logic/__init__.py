@@ -26,7 +26,7 @@ Public API:
 
 from .ast import (
     Node, Var, Lam, App, IntLit, BoolLit, If, Bin,
-    HoleVar, substitute_hole,
+    HoleVar, substitute_hole, TypeHole,
     Ty, TInt, TBool, TArrow,
     parse, pretty,
 )
@@ -83,7 +83,7 @@ from .debugger import (
 __all__ = [
     "encode", "decode", "sample", "DecodeResult", "ast_alpha_eq",
     "Node", "Var", "Lam", "App", "IntLit", "BoolLit", "If", "Bin",
-    "HoleVar", "substitute_hole",
+    "HoleVar", "substitute_hole", "TypeHole",
     "Ty", "TInt", "TBool", "TArrow", "parse", "pretty",
     "SPECIES", "EncodingMeta", "BinderHandle",
     "KIND_PAD", "KIND_VAR", "KIND_LAM", "KIND_APP", "KIND_INT", "KIND_BOOL",

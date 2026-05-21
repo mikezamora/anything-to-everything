@@ -249,3 +249,66 @@ def test_rec_node_construction():
     assert rec.name == "f"
     assert isinstance(rec.name_ty, TArrow)
     assert isinstance(rec.body, Lam)
+
+
+# ---- Sub-project E: TypeHole + HoleVar upgrade --------------------------
+
+
+def test_typehole_construction():
+    from src.qft_pcn.logic.ast import TypeHole
+    th = TypeHole(candidates=(TInt(), TBool()), name="?T")
+    assert th.candidates == (TInt(), TBool())
+    assert th.name == "?T"
+
+
+def test_typehole_default_name():
+    from src.qft_pcn.logic.ast import TypeHole
+    th = TypeHole(candidates=(TInt(),))
+    assert th.name == ""
+
+
+def test_typehole_is_ty():
+    from src.qft_pcn.logic.ast import TypeHole
+    th = TypeHole(candidates=(TInt(),))
+    assert isinstance(th, Ty)
+
+
+def test_typehole_rejects_empty_candidates():
+    from src.qft_pcn.logic.ast import TypeHole
+    with pytest.raises(ValueError, match="at least one"):
+        TypeHole(candidates=())
+
+
+def test_typehole_rejects_nested_arrow():
+    from src.qft_pcn.logic.ast import TypeHole
+    deep = TArrow(src=TArrow(src=TInt(), dst=TInt()), dst=TInt())
+    with pytest.raises(ValueError, match="nested arrow"):
+        TypeHole(candidates=(deep,))
+
+
+def test_typehole_accepts_flat_arrow():
+    from src.qft_pcn.logic.ast import TypeHole
+    th = TypeHole(candidates=(TArrow(src=TInt(), dst=TBool()),))
+    assert len(th.candidates) == 1
+
+
+def test_typehole_in_lam_position():
+    from src.qft_pcn.logic.ast import TypeHole
+    lam = Lam(param="x", param_ty=TypeHole(candidates=(TInt(), TBool())),
+              body=Var(name="x"))
+    assert isinstance(lam.param_ty, TypeHole)
+
+
+def test_holevar_upgraded_fields():
+    from src.qft_pcn.logic.ast import HoleVar
+    h = HoleVar(candidates=["x"], target_type=TInt(), name="?H")
+    assert h.candidates == ["x"]
+    assert h.target_type == TInt()
+    assert h.name == "?H"
+
+
+def test_holevar_target_type_optional():
+    from src.qft_pcn.logic.ast import HoleVar
+    h = HoleVar(candidates=["z"])
+    assert h.target_type is None
+    assert h.name == ""
