@@ -216,3 +216,82 @@ class MERA:
             top=self.top.copy(),
             layer_dims=list(self.layer_dims),
         )
+
+    # ---- construction ------------------------------------------------------
+
+    @classmethod
+    def vacuum(cls, N: int, d_local: int,
+               chi_layer: int = 16) -> "MERA":
+        """Product MERA at the vacuum (|0...0>) with identity disentanglers
+        and canonical embedding isometries.
+        """
+        from .fock import vacuum_vec
+        if N <= 0 or (N & (N - 1)) != 0:
+            raise InvalidLayerCount(N=N)
+        return cls.from_product(
+            [vacuum_vec(d_local) for _ in range(N)],
+            chi_layer=chi_layer,
+        )
+
+    @classmethod
+    def from_product(cls, single_site_states: list[np.ndarray],
+                     chi_layer: int = 16) -> "MERA":
+        """Build a product MERA from per-leaf state vectors."""
+        N = len(single_site_states)
+        if N <= 0 or (N & (N - 1)) != 0:
+            raise InvalidLayerCount(N=N)
+        d_local = single_site_states[0].shape[0]
+        L = int(round(np.log2(N)))
+        dims = layer_dims(d_local, L, chi_layer)
+        leaves = [s.reshape(1, d_local, 1).astype(complex)
+                  for s in single_site_states]
+        disentanglers: list[list[np.ndarray]] = []
+        inter_disentanglers: list[list[np.ndarray]] = []
+        isometries: list[list[np.ndarray]] = []
+        for ell in range(L):
+            n_l = N // (2 ** ell)
+            d_l = dims[ell]
+            d_up = dims[ell + 1] if ell + 1 < L else d_l
+            # Intra-pair unitary disentanglers, initialized to identity.
+            intra = [
+                np.eye(d_l * d_l, dtype=complex).reshape(d_l, d_l, d_l, d_l)
+                for _ in range(n_l // 2)
+            ]
+            # Inter-pair: one fewer than intra (or zero at the top).
+            inter = [
+                np.eye(d_l * d_l, dtype=complex).reshape(d_l, d_l, d_l, d_l)
+                for _ in range(max(0, n_l // 2 - 1))
+            ]
+            # Canonical isometries: project onto the first d_up basis vectors
+            # of the d_l x d_l space.
+            iso = []
+            for _ in range(n_l // 2):
+                w = np.zeros((d_up, d_l, d_l), dtype=complex)
+                for k in range(d_up):
+                    a, b = divmod(k, d_l)
+                    w[k, a, b] = 1.0
+                iso.append(w)
+            disentanglers.append(intra)
+            inter_disentanglers.append(inter)
+            isometries.append(iso)
+        # Top tensor: |0, 0> on the two top sites.
+        top = np.zeros((dims[L - 1], dims[L - 1], 1), dtype=complex)
+        top[0, 0, 0] = 1.0
+        return cls(
+            leaves=leaves,
+            disentanglers=disentanglers,
+            inter_disentanglers=inter_disentanglers,
+            isometries=isometries,
+            top=top,
+            layer_dims=dims,
+        )
+
+    @classmethod
+    def number_states(cls, occupations: list[int], d: int,
+                      chi_layer: int = 16) -> "MERA":
+        """Product MERA in the Fock |n_0, n_1, ..., n_{N-1}> basis."""
+        from .fock import number_state_vec
+        return cls.from_product(
+            [number_state_vec(d, n) for n in occupations],
+            chi_layer=chi_layer,
+        )

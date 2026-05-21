@@ -129,3 +129,71 @@ def test_mera_rejects_non_power_of_2_N():
             disentanglers=[], inter_disentanglers=[], isometries=[],
             top=np.array([[[1.0]]], dtype=complex), layer_dims=[4],
         )
+
+
+def test_vacuum_has_correct_layer_structure():
+    m = MERA.vacuum(N=8, d_local=4, chi_layer=4)
+    assert m.N == 8
+    assert m.L == 3
+    assert m.d_local == 4
+    assert m.layer_dims == [4, 4, 4]
+    assert len(m.disentanglers[0]) == 4
+    assert len(m.isometries[0]) == 4
+    assert len(m.disentanglers[1]) == 2
+    assert len(m.isometries[1]) == 2
+    assert len(m.disentanglers[2]) == 1
+    assert len(m.isometries[2]) == 1
+    # inter-pair counts: 3, 1, 0
+    assert len(m.inter_disentanglers[0]) == 3
+    assert len(m.inter_disentanglers[1]) == 1
+    assert len(m.inter_disentanglers[2]) == 0
+
+
+def test_vacuum_top_tensor_is_unit_norm():
+    m = MERA.vacuum(N=8, d_local=4)
+    assert abs(np.linalg.norm(m.top) - 1.0) < 1e-12
+
+
+def test_vacuum_initial_isometries_are_isometric():
+    m = MERA.vacuum(N=8, d_local=4, chi_layer=4)
+    for ell in range(m.L):
+        for j, w in enumerate(m.isometries[ell]):
+            d_up = w.shape[0]
+            mat = w.reshape(d_up, -1)
+            prod = mat @ mat.conj().T
+            assert np.allclose(prod, np.eye(d_up), atol=1e-10), \
+                f"isometry ({ell}, {j}) not isometric"
+
+
+def test_vacuum_initial_disentanglers_are_unitary():
+    m = MERA.vacuum(N=8, d_local=4, chi_layer=4)
+    for ell in range(m.L):
+        for j, u in enumerate(m.disentanglers[ell]):
+            d = u.shape[0]
+            mat = u.reshape(d * d, d * d)
+            assert np.allclose(mat @ mat.conj().T, np.eye(d * d),
+                               atol=1e-10), f"disentangler ({ell}, {j}) not unitary"
+
+
+def test_vacuum_invalid_N_raises():
+    with pytest.raises(InvalidLayerCount):
+        MERA.vacuum(N=6, d_local=4)
+
+
+def test_from_product_matches_vacuum_when_all_zero():
+    from src.qft_pcn.qft.fock import vacuum_vec
+    states = [vacuum_vec(4) for _ in range(8)]
+    m = MERA.from_product(states, chi_layer=4)
+    v = MERA.vacuum(N=8, d_local=4, chi_layer=4)
+    # Same leaves, identical disentanglers/isometries.
+    for k in range(8):
+        assert np.allclose(m.leaves[k], v.leaves[k])
+
+
+def test_number_states_constructs_correct_leaves():
+    m = MERA.number_states([1, 0, 2, 0, 0, 0, 0, 0], d=4)
+    # leaf 0 = |1>, leaf 2 = |2>.
+    assert m.leaves[0][0, 1, 0] == 1.0
+    assert m.leaves[2][0, 2, 0] == 1.0
+    # Others = |0>.
+    assert m.leaves[1][0, 0, 0] == 1.0
