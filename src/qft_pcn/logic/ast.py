@@ -374,3 +374,47 @@ def _pretty_node(node: Node, ctx_prec: int) -> str:
 def pretty(node: Node) -> str:
     """Render an AST back to surface syntax that re-parses to the same AST."""
     return _pretty_node(node, _PREC_LAM)
+
+
+# ---- holes (for sub-project E) -------------------------------------------
+
+
+@dataclass
+class HoleVar(Node):
+    """A variable-position hole with a candidate binder name list."""
+    candidates: list[str]
+
+
+def substitute_hole(ast: Node, hole: HoleVar, replacement: Node) -> Node:
+    """Return a new AST with the given hole instance replaced.
+
+    Identity-based: replaces only the specific HoleVar object passed in.
+    """
+    if ast is hole:
+        return replacement
+    if isinstance(ast, Var) or isinstance(ast, IntLit) \
+            or isinstance(ast, BoolLit) or isinstance(ast, HoleVar):
+        return ast
+    if isinstance(ast, Lam):
+        return Lam(
+            param=ast.param, param_ty=ast.param_ty,
+            body=substitute_hole(ast.body, hole, replacement),
+        )
+    if isinstance(ast, App):
+        return App(
+            fn=substitute_hole(ast.fn, hole, replacement),
+            arg=substitute_hole(ast.arg, hole, replacement),
+        )
+    if isinstance(ast, If):
+        return If(
+            cond=substitute_hole(ast.cond, hole, replacement),
+            then_b=substitute_hole(ast.then_b, hole, replacement),
+            else_b=substitute_hole(ast.else_b, hole, replacement),
+        )
+    if isinstance(ast, Bin):
+        return Bin(
+            op=ast.op,
+            lhs=substitute_hole(ast.lhs, hole, replacement),
+            rhs=substitute_hole(ast.rhs, hole, replacement),
+        )
+    return ast

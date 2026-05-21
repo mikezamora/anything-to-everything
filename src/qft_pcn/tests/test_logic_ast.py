@@ -206,3 +206,29 @@ def test_pretty_roundtrip_p4():
 def test_pretty_roundtrip_p5():
     src = r"(\x:Int. (\y:Int. x + y)(3))(4)"
     assert parse(pretty(parse(src))) == parse(src)
+
+
+from src.qft_pcn.logic.ast import HoleVar, substitute_hole
+
+
+def test_holevar_construction():
+    h = HoleVar(candidates=["x", "y"])
+    assert h.candidates == ["x", "y"]
+
+
+def test_substitute_hole_finds_and_replaces():
+    h = HoleVar(candidates=["x"])
+    ast = Lam(param="x", param_ty=TInt(),
+              body=Lam(param="y", param_ty=TInt(), body=h))
+    replaced = substitute_hole(ast, h, Var(name="x"))
+    assert isinstance(replaced, Lam)
+    assert isinstance(replaced.body, Lam)
+    assert isinstance(replaced.body.body, Var)
+    assert replaced.body.body.name == "x"
+
+
+def test_substitute_hole_returns_unchanged_if_not_found():
+    h = HoleVar(candidates=["x"])
+    ast = Lam(param="x", param_ty=TInt(), body=Var(name="x"))
+    replaced = substitute_hole(ast, h, Var(name="x"))
+    assert replaced == ast
