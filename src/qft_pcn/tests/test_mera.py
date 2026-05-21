@@ -268,3 +268,28 @@ def test_apply_local_gate_invalid_shape():
     m = MERA.vacuum(N=8, d_local=4)
     with pytest.raises(ValueError):
         m.apply_local_gate(0, np.eye(3))
+
+
+# ---- Task 9: _ascend_one_layer --------------------------------------------
+
+
+def test_ascend_identity_stays_identity():
+    """Identity ascended through any layer is identity at the next."""
+    m = MERA.vacuum(N=8, d_local=4, chi_layer=4)
+    for ell in range(m.L - 1):
+        d_ell = m.layer_dims[ell]
+        op = np.eye(d_ell, dtype=complex)
+        op_up = m._ascend_one_layer(op, ell, pos=0)
+        d_up = m.layer_dims[ell + 1]
+        assert op_up.shape == (d_up, d_up)
+        assert np.allclose(op_up, np.eye(d_up), atol=1e-10), \
+            f"layer {ell}: identity did not ascend to identity"
+
+
+def test_ascend_identity_at_odd_position():
+    m = MERA.vacuum(N=8, d_local=4, chi_layer=4)
+    d0 = m.layer_dims[0]
+    op = np.eye(d0, dtype=complex)
+    op_up = m._ascend_one_layer(op, ell=0, pos=1)
+    d_up = m.layer_dims[1]
+    assert np.allclose(op_up, np.eye(d_up), atol=1e-10)

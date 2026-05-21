@@ -589,6 +589,47 @@ class MERA:
 
     # ---- local gate application -------------------------------------------
 
+    # ---- ascending superoperator ------------------------------------------
+
+    def _ascend_one_layer(self, op: np.ndarray, ell: int,
+                          pos: int) -> np.ndarray:
+        """Lift a single-site operator from (layer ell, position pos) to
+        (layer ell+1, position pos // 2).
+
+        op: (d_ell, d_ell) acting on site `pos` at layer `ell`.
+        Returns: (d_{ell+1}, d_{ell+1}) on the coarse-grained site.
+
+        Algorithm (Vidal 2008 §III.5):
+            j = pos // 2 (pair index)
+            op_pair = op (x) I  if pos even, else I (x) op
+            op_pair_conj = u . op_pair . u^dag   (intra-pair disentangler)
+            op_up = w . op_pair_conj . w^dag      (isometry projection)
+
+        Inter-pair disentanglers are NOT included here; on product /
+        vacuum MERAs they act as identity, so this simplification is
+        exact. Sub-projects E/F's gate-application acceptance test
+        (Task 17) will validate that the simplification is consistent
+        with the actual structure used elsewhere in the substrate.
+        """
+        j = pos // 2
+        d_ell = self.layer_dims[ell]
+        I = np.eye(d_ell, dtype=complex)
+        if pos % 2 == 0:
+            # op acts on left slot of pair j; I on right slot.
+            op_pair = np.einsum('ac,bd->abcd', op, I, optimize='greedy')
+        else:
+            op_pair = np.einsum('ac,bd->abcd', I, op, optimize='greedy')
+        u = self.disentanglers[ell][j]
+        # u . op_pair . u^dag  (acting in pair-Hilbert space)
+        tmp = np.einsum('ABab,abcd->ABcd', u, op_pair, optimize='greedy')
+        op_pair_conj = np.einsum('ABcd,CDcd->ABCD', tmp, u.conj(),
+                                 optimize='greedy')
+        w = self.isometries[ell][j]
+        op_up = np.einsum('Aab,abcd,Bcd->AB',
+                          w, op_pair_conj, w.conj(),
+                          optimize='greedy')
+        return op_up
+
     def apply_local_gate(self, leaf: int, gate: np.ndarray) -> None:
         """In-place: leaf <- gate @ leaf on the physical index.
 
