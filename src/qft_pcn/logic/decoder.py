@@ -59,7 +59,7 @@ def _site_marginal(state: MPS, site: int) -> np.ndarray:
         Q, R = np.linalg.qr(mat)
         ts[k] = Q.reshape(chi_l, d, Q.shape[1])
         if k + 1 < N:
-            ts[k + 1] = np.einsum('rs,sdt->rdt', R, ts[k + 1])
+            ts[k + 1] = np.einsum('rs,sdt->rdt', R, ts[k + 1], optimize='greedy')
     for k in range(N - 1, site, -1):
         chi_l, d, chi_r = ts[k].shape
         mat = ts[k].reshape(chi_l, d * chi_r)
@@ -68,7 +68,7 @@ def _site_marginal(state: MPS, site: int) -> np.ndarray:
         R = R.conj().T
         ts[k] = Q.reshape(Q.shape[0], d, chi_r)
         if k - 1 >= 0:
-            ts[k - 1] = np.einsum('rds,st->rdt', ts[k - 1], R)
+            ts[k - 1] = np.einsum('rds,st->rdt', ts[k - 1], R, optimize='greedy')
     A = ts[site]
     p = (np.abs(A) ** 2).sum(axis=(0, 2))
     total = p.sum()
@@ -119,13 +119,50 @@ def _type_from_tag(tag: int, site: int,
 
 
 def decode(state: MPS, meta: EncodingMeta) -> DecodeResult:
-    """Deterministic argmax decode."""
+    """Deterministic argmax decode.
+
+    Uses a single right-canonicalization sweep followed by a left-to-right
+    walk that projects each site onto its argmax basis state and folds the
+    resulting boundary vector into the next site (the same trick as
+    `_sample_one_pass`). This is O(N * d * chi^2), in contrast to the
+    naive per-site marginal which re-canonicalizes the chain for each
+    site (O(N^2 * d * chi^2)).
+    """
+    N = meta.N
+    ts = [t.copy() for t in state.tensors]
+    # Right-canonicalize the entire chain so orthogonality center is at site 0.
+    for k in range(N - 1, 0, -1):
+        chi_l, d, chi_r = ts[k].shape
+        mat = ts[k].reshape(chi_l, d * chi_r)
+        Q, R = np.linalg.qr(mat.conj().T)
+        Q = Q.conj().T
+        R = R.conj().T
+        ts[k] = Q.reshape(Q.shape[0], d, chi_r)
+        ts[k - 1] = np.einsum('rds,st->rdt', ts[k - 1], R, optimize='greedy')
     decoded_sites: list[tuple[int, int, int, int, int]] = []
     residual_acc = 0.0
-    for k in range(meta.N):
-        ki, ti, bi, vi, oi, residual = _argmax_site_basis(state, k)
+    for k in range(N):
+        A = ts[k]
+        p = (np.abs(A) ** 2).sum(axis=(0, 2))
+        total = p.sum()
+        if total > 1e-15:
+            p = p / total
+        flat = int(np.argmax(p))
+        p_max = float(p[flat])
+        residual_acc = max(residual_acc, 1.0 - p_max)
+        ki, ti, bi, vi, oi = _decompose_basis_index(flat)
         decoded_sites.append((ki, ti, bi, vi, oi))
-        residual_acc = max(residual_acc, residual)
+        # Project onto chosen basis state and normalize, then propagate
+        # the resulting left boundary vector into site k+1.
+        proj = A[:, flat, :]
+        nrm = np.linalg.norm(proj)
+        if nrm > 1e-15:
+            proj = proj / nrm
+        ts[k] = proj.reshape(A.shape[0], 1, A.shape[2])
+        if k + 1 < N:
+            left_vec = ts[k][:, 0, :]
+            ts[k + 1] = np.einsum('lr,rds->lds', left_vec, ts[k + 1],
+                                  optimize='greedy')
 
     pos = [0]
     binder_stack: list[Lam] = []
@@ -270,7 +307,7 @@ def _sample_one_pass(state: MPS, meta: EncodingMeta,
         Q = Q.conj().T
         R = R.conj().T
         ts[k] = Q.reshape(Q.shape[0], d, chi_r)
-        ts[k - 1] = np.einsum('rds,st->rdt', ts[k - 1], R)
+        ts[k - 1] = np.einsum('rds,st->rdt', ts[k - 1], R, optimize='greedy')
     for k in range(N):
         A = ts[k]
         p = (np.abs(A) ** 2).sum(axis=(0, 2))
@@ -288,7 +325,8 @@ def _sample_one_pass(state: MPS, meta: EncodingMeta,
         ts[k] = proj.reshape(A.shape[0], 1, A.shape[2])
         if k + 1 < N:
             left_vec = ts[k][:, 0, :]
-            ts[k + 1] = np.einsum('lr,rds->lds', left_vec, ts[k + 1])
+            ts[k + 1] = np.einsum('lr,rds->lds', left_vec, ts[k + 1],
+                                  optimize='greedy')
     return sampled
 
 
