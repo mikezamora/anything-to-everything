@@ -557,6 +557,59 @@ def test_entropy_of_bell_pair_at_leaves_0_and_1():
     assert abs(S - np.log(2)) < 1e-6, f"S={S}, expected ln 2"
 
 
+# ---- Task 19: mera_evolution TEBD + energy --------------------------------
+
+
+def test_mera_trotter_step_runs_without_error():
+    """Sanity: trotter_step applies its layer-0 gates and reports finite err."""
+    from src.qft_pcn.qft.hamiltonian import (
+        FieldSpecies, HamiltonianConfig, Hamiltonian)
+    from src.qft_pcn.qft.mera_evolution import trotter_step as mera_trotter
+    species = [FieldSpecies(name="a", cutoff=4, bare_mass=1.0, kinetic=0.5)]
+    cfg = HamiltonianConfig(species=species)
+    H = Hamiltonian(cfg, N=8)
+    # Use a chi_layer that makes upper-layer isos non-truncating in the
+    # ascent path (dims = [4, 16, 16] with d=4).
+    m = MERA.vacuum(N=8, d_local=4, chi_layer=16)
+    err = mera_trotter(m, H, dt=0.01, imaginary=False, chi_max=16)
+    # Truncation error is reported as a finite, non-negative float.
+    assert err >= 0.0
+    assert np.isfinite(err)
+
+
+def test_mera_energy_matches_local_plus_bond_sum_for_vacuum():
+    """Sanity: energy of the vacuum equals the sum of <local_op> + <bond_op>."""
+    from src.qft_pcn.qft.hamiltonian import (
+        FieldSpecies, HamiltonianConfig, Hamiltonian)
+    from src.qft_pcn.qft.mera_evolution import energy as mera_energy
+    species = [FieldSpecies(name="a", cutoff=4, bare_mass=1.0, kinetic=0.5)]
+    cfg = HamiltonianConfig(species=species)
+    H = Hamiltonian(cfg, N=8)
+    m = MERA.vacuum(N=8, d_local=4, chi_layer=16)
+    e = mera_energy(m, H)
+    # Manual sum to verify.
+    e_check = 0.0 + 0.0j
+    for k in range(H.N):
+        e_check += m.local_expectation(k, H.local_op(k))
+    for k in range(H.N - 1):
+        e_check += m.two_site_expectation(k, H.bond_op(k))
+    assert abs(e - float(np.real(e_check))) < 1e-10
+
+
+# ---- Task 20: public re-exports ------------------------------------------
+
+
+def test_public_mera_imports():
+    from src.qft_pcn.qft import MERA as MERA_pub, MERATensor as MERATensor_pub
+    from src.qft_pcn.qft import mera_trotter_step, mera_evolve, mera_energy
+    # Smoke: identifiers exist and constructors work.
+    m = MERA_pub.vacuum(N=4, d_local=2, chi_layer=4)
+    assert abs(m.norm_sq() - 1.0) < 1e-10
+    assert callable(mera_trotter_step)
+    assert callable(mera_evolve)
+    assert callable(mera_energy)
+
+
 def test_local_expectation_matches_mps_for_product():
     from src.qft_pcn.qft.mps import MPS
     from src.qft_pcn.qft.fock import number
