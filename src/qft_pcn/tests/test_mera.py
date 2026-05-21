@@ -318,6 +318,28 @@ def test_local_expectation_identity_is_norm():
         assert abs(e - 1.0) < 1e-10
 
 
+# ---- Task 11: two_site_expectation intra-pair -----------------------------
+
+
+def test_two_site_expectation_intra_pair_identity_is_one():
+    m = MERA.vacuum(N=8, d_local=4)
+    d = 4
+    identity_op = np.eye(d * d, dtype=complex)
+    # Leaf 0 is even, so (0, 1) is intra-pair.
+    e = m.two_site_expectation(0, identity_op).real
+    assert abs(e - 1.0) < 1e-10
+
+
+def test_two_site_expectation_intra_pair_n0_otimes_n1_on_number_state():
+    from src.qft_pcn.qft.fock import number
+    d = 4
+    m = MERA.number_states([2, 3, 0, 0, 0, 0, 0, 0], d=d)
+    n = number(d)
+    op = np.kron(n, n)
+    e = m.two_site_expectation(0, op).real
+    assert abs(e - 2.0 * 3.0) < 1e-10
+
+
 def test_local_expectation_matches_mps_for_product():
     from src.qft_pcn.qft.mps import MPS
     from src.qft_pcn.qft.fock import number

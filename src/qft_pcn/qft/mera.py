@@ -661,6 +661,58 @@ class MERA:
                             optimize='greedy')
         return complex(val)
 
+    def two_site_expectation(self, leaf: int, op: np.ndarray) -> complex:
+        """<psi | O_{leaf, leaf+1} | psi> for a two-leaf operator.
+
+        op shape: (d^2, d^2). Convention: op acts on |s_leaf, s_{leaf+1}>
+        with leaf the outer (slow) index, matching np.kron.
+        Spec §5.5.
+        """
+        if not 0 <= leaf < self.N - 1:
+            raise IndexError(
+                f"leaf {leaf} invalid for two-site op (N={self.N})")
+        d = self.d_local
+        if op.shape != (d * d, d * d):
+            raise ValueError(
+                f"op shape {op.shape}, expected ({d * d}, {d * d})")
+        op4 = op.reshape(d, d, d, d)   # (out_l, out_r, in_l, in_r)
+        if leaf % 2 == 0:
+            # Intra-pair: the gate acts on pair j = leaf // 2 of layer 0.
+            j = leaf // 2
+            u = self.disentanglers[0][j]
+            # u . op . u^dag
+            tmp = np.einsum('ABab,abcd->ABcd', u, op4, optimize='greedy')
+            op_pair = np.einsum('ABcd,CDcd->ABCD', tmp, u.conj(),
+                                optimize='greedy')
+            w = self.isometries[0][j]
+            op_layer = np.einsum('Aab,abcd,Bcd->AB',
+                                 w, op_pair, w.conj(),
+                                 optimize='greedy')
+            # Now at layer 1, position j; ascend remaining layers.
+            pos = j
+            for ell in range(1, self.L - 1):
+                op_layer = self._ascend_one_layer(op_layer, ell, pos)
+                pos //= 2
+            T = self.top[..., 0]
+            if self.L == 1:
+                # N=2 case: top is already in the physical basis; op_layer
+                # is the original op (no layer-0 ascent applied actually).
+                # Handle separately:
+                val = np.einsum('ab,abcd,cd->',
+                                T.conj(), op4, T,
+                                optimize='greedy')
+                return complex(val)
+            if pos == 0:
+                val = np.einsum('ab,aA,Ab->', T.conj(), op_layer, T,
+                                optimize='greedy')
+            else:
+                val = np.einsum('ab,bB,aB->', T.conj(), op_layer, T,
+                                optimize='greedy')
+            return complex(val)
+        # Inter-pair branch deferred to Task 12.
+        raise NotImplementedError(
+            "two_site_expectation inter-pair case is in Task 12")
+
     def apply_local_gate(self, leaf: int, gate: np.ndarray) -> None:
         """In-place: leaf <- gate @ leaf on the physical index.
 
