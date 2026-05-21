@@ -136,6 +136,24 @@ def factored_two_site_expectation(
     return float(np.real(env[0, 0]))
 
 
+def build_marginals(state: MPS, lefts: list[np.ndarray],
+                    rights: list[np.ndarray]) -> list[np.ndarray]:
+    """For each site, the (D_LOCAL,) per-basis marginal probability vector.
+
+    Allows ALL diagonal-operator expectations at site k to be computed as
+    `dot(marginals[k], op_diag)` for O(d_local) cost — independent of chi.
+    """
+    out: list[np.ndarray] = []
+    for k in range(state.N):
+        t = state.tensors[k]
+        L = lefts[k]
+        R = rights[k]
+        p = np.einsum('ij,isa,jsb,ab->s',
+                      L, t, t.conj(), R, optimize='greedy')
+        out.append(p.real)
+    return out
+
+
 def build_envs(state: MPS) -> tuple[list[np.ndarray], list[np.ndarray]]:
     """Precompute left and right identity-operator environments at every bond.
 
@@ -167,23 +185,76 @@ def build_envs(state: MPS) -> tuple[list[np.ndarray], list[np.ndarray]]:
     return lefts, rights
 
 
+def _is_diagonal(op: np.ndarray) -> bool:
+    """True iff op is (approximately) diagonal."""
+    if op.shape[0] != op.shape[1]:
+        return False
+    off = op - np.diag(np.diag(op))
+    return np.max(np.abs(off)) < 1e-12
+
+
+def _site_diag_marginal(state: MPS, site: int,
+                       lefts: list[np.ndarray],
+                       rights: list[np.ndarray]) -> np.ndarray:
+    """Per-basis-index marginal probability at `site`.
+
+    Returns a real (D_LOCAL,) vector p[s] = sum_{i,j,a,b} L[i,j] · t[i,s,a] ·
+    t.conj()[j,s,b] · R[a,b]. For a normalized state this is a probability
+    distribution: sum_s p[s] = <psi|psi> = 1.
+
+    For DIAGONAL local operators (all our projectors), <O> = sum_s p[s] · O[s,s].
+    Cost: O(chi² · d_local) — much cheaper than _apply_factors_to_site for
+    operators that are diagonal in the species basis.
+    """
+    t = state.tensors[site]
+    L = lefts[site]
+    R = rights[site]
+    # Contract left env with t and t.conj over physical index s.
+    # p[s] = einsum('ij,is a,jsb,ab', L, t, t.conj(), R) with optimize.
+    p = np.einsum('ij,isa,jsb,ab->s',
+                  L, t, t.conj(), R, optimize='greedy')
+    return p.real
+
+
+def _diag_factored_op(factors: tuple[np.ndarray, ...]) -> np.ndarray:
+    """For a tuple of diagonal per-species operators, build the (D_LOCAL,)
+    diagonal of the Kronecker product. For non-diagonal factors, raise.
+    """
+    diags = []
+    for op in factors:
+        if not _is_diagonal(op):
+            raise ValueError("non-diagonal factor in _diag_factored_op")
+        diags.append(np.diag(op).real)
+    # Kronecker of 1D diags: outer product.
+    out = diags[0]
+    for d in diags[1:]:
+        out = np.multiply.outer(out, d).reshape(-1)
+    return out
+
+
 def factored_local_expectation_cached(state: MPS, site: int,
                                       op_factors: dict[str, np.ndarray],
                                       lefts: list[np.ndarray],
                                       rights: list[np.ndarray]) -> float:
     """factored_local_expectation reusing precomputed environments.
 
-    Use this when evaluating MANY operators at the SAME site (e.g.,
-    T-Obligation's sum over 7 candidate types) — amortizes the
-    environment construction.
+    Fast path for DIAGONAL factors (typing-rule projectors): computes the
+    site's per-basis marginal once and dot-products with the diag-Kron.
+    The diagonal Kronecker has D_LOCAL = 65536 entries but is sparse for
+    typical projectors — the dot product is O(d_local).
+
+    Falls back to the apply-and-contract path for non-diagonal factors.
     """
     factors = _normalize_factors(op_factors)
     if not 0 <= site < state.N:
         raise ValueError(f"site {site} out of range [0, {state.N})")
+    if all(_is_diagonal(op) for op in factors):
+        diag = _diag_factored_op(factors)
+        p = _site_diag_marginal(state, site, lefts, rights)
+        return float(np.dot(p, diag))
+    # Non-diagonal fall back.
     t = state.tensors[site]
     t_op = _apply_factors_to_site(t, factors)
-    # <psi|...|psi> = trace(left_env · contract(t_op vs t.conj()) · right_env).
-    # Build the on-site transfer: M[k, l] = sum_{i, j, s} left[i, j] · t_op[i, s, k] · t.conj()[j, s, l].
     M = np.einsum('ij,isk,jsl->kl',
                   lefts[site], t_op, t.conj(), optimize='greedy')
     val = np.einsum('kl,kl->', M, rights[site], optimize='greedy')

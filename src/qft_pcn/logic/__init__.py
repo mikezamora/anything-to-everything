@@ -46,6 +46,18 @@ from .encoding import (
 )
 from .encoder import encode
 from .decoder import decode, sample, DecodeResult, ast_alpha_eq
+from .encoding import (
+    TOBL_NONE, TOBL_INT, TOBL_BOOL,
+    TOBL_ARR_II, TOBL_ARR_IB, TOBL_ARR_BI, TOBL_ARR_BB,
+    TOBL_ARR_NESTED, TOBL_CUTOFF,
+)
+from .typing_hamiltonian import (
+    TypingHamiltonian, TypingTerm,
+    TypingHamiltonianError, TermNotFound,
+    RULE_T_LIT_INT, RULE_T_LIT_BOOL,
+    RULE_T_BIN_ARITH, RULE_T_BIN_CMP,
+    RULE_T_OBLIGATION, RULE_T_VAR, RULE_T_ABS, RULE_T_APP_ARROW,
+)
 
 __all__ = [
     "encode", "decode", "sample", "DecodeResult", "ast_alpha_eq",
@@ -65,4 +77,12 @@ __all__ = [
     "INT_LIT_OFFSET", "INT_LIT_MIN", "INT_LIT_MAX",
     "EncodingError", "EncodingTooLarge", "TooManyBinders",
     "IntLiteralOutOfRange", "IllScopedVar", "UnsupportedNode", "DecodeError",
+    "TOBL_NONE", "TOBL_INT", "TOBL_BOOL",
+    "TOBL_ARR_II", "TOBL_ARR_IB", "TOBL_ARR_BI", "TOBL_ARR_BB",
+    "TOBL_ARR_NESTED", "TOBL_CUTOFF",
+    "TypingHamiltonian", "TypingTerm",
+    "TypingHamiltonianError", "TermNotFound",
+    "RULE_T_LIT_INT", "RULE_T_LIT_BOOL",
+    "RULE_T_BIN_ARITH", "RULE_T_BIN_CMP",
+    "RULE_T_OBLIGATION", "RULE_T_VAR", "RULE_T_ABS", "RULE_T_APP_ARROW",
 ]
