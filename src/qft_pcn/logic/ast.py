@@ -39,6 +39,28 @@ class TArrow(Ty):
     dst: Ty
 
 
+@dataclass(frozen=True)
+class TNat(Ty):
+    """Peano naturals."""
+
+
+@dataclass(frozen=True)
+class TList(Ty):
+    elem: Ty
+
+
+@dataclass(frozen=True)
+class TEq(Ty):
+    """The type of a propositional-equality proof; lhs_ty is the type of
+    both sides of the equation."""
+    lhs_ty: Ty
+
+
+@dataclass(frozen=True)
+class TProp(Ty):
+    """The sort of propositions (the type of Forall / Eq results)."""
+
+
 # ---- expression nodes -----------------------------------------------------
 
 
@@ -93,6 +115,68 @@ class Bin(Node):
             raise ValueError(
                 f"Bin op must be one of {SUPPORTED_BIN_OPS}, got {self.op!r}"
             )
+
+
+# ---- extended-calculus expression nodes -----------------------------------
+
+
+@dataclass
+class Zero(Node):
+    """The Peano zero."""
+
+
+@dataclass
+class Succ(Node):
+    arg: Node
+
+
+@dataclass
+class NatLit(Node):
+    """A Peano-natural literal; sugar for Succ^val(Zero)."""
+    val: int
+
+    def __post_init__(self) -> None:
+        if self.val < 0:
+            raise ValueError(f"NatLit value must be >= 0, got {self.val}")
+
+
+@dataclass
+class Nil(Node):
+    """The empty list."""
+
+
+@dataclass
+class Cons(Node):
+    head: Node
+    tail: Node
+
+
+@dataclass
+class Eq(Node):
+    """A propositional equality lhs = rhs (a proposition, not a bool)."""
+    lhs: Node
+    rhs: Node
+
+
+@dataclass
+class Forall(Node):
+    """Schematic universal: forall param:param_ty. body. A binder."""
+    param: str
+    param_ty: Ty
+    body: Node
+
+
+@dataclass
+class Fix(Node):
+    """Recursion: fix param:param_ty. body, where body may reference param.
+    A binder. This is the canonical recursion node for the extended
+    calculus; the pre-existing `Rec` node (sub-project F, EXPERIMENTAL_REC
+    flag) is its forerunner. `Rec` is still referenced by mera_compat.py,
+    so both nodes coexist; `Fix` is the extended-calculus binder.
+    """
+    param: str
+    param_ty: Ty
+    body: Node
 
 
 # ---- tokenizer + parser ---------------------------------------------------
