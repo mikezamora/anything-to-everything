@@ -202,8 +202,10 @@ A `RunSpec` dataclass (`layers`, `steps`, `grid`, optional `seed`, params).
 `run_simulation(spec) -> Iterator[Frame]`: a generator that builds the
 requested substrate(s), steps them `spec.steps` times, and `yield`s a `Frame`
 per step via the `Recorder` snapshot functions from Task 1. Branch on which
-layers are requested (`manifold/multifield` → `QFTPCNNetwork`; `mps/qpcn/
-hamiltonian` → `QPCN`; `mera`/`vqc`/`logic` → their constructors). Keep grids
+layers are requested (`manifold` → `QFTPCNNetwork`; `multifield` →
+`MultiFieldNetwork` from `src/qft_pcn/multifield.py`, so `snapshot_multifield`
+reads a real coupled-field substrate; `mps/qpcn/hamiltonian` → `QPCN`;
+`mera`/`vqc`/`logic` → their constructors). Keep grids
 small (≤16) and steps modest by default for responsiveness.
 A `RunRegistry` dict maps `run_id` (uuid4 hex) → `RunSpec`.
 
