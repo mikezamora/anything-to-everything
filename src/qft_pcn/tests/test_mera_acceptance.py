@@ -36,3 +36,30 @@ def test_pad_leaves_are_vacuum():
         if meta.species_of_leaf[leaf] == "PAD":
             val = state.local_expectation(leaf, proj)
             assert abs(val) < 1e-10, f"PAD leaf {leaf} not vacuum: {val}"
+
+
+from src.qft_pcn.logic.ast import Lam, TInt, HoleVar
+
+
+def test_binding_is_entanglement_structural_marker():
+    """spec §9.4 / §5.5. A hole-bearing program has strictly positive
+    tree entanglement entropy across a cut separating the hole's bid leaf
+    from the candidate binders' bid leaves.
+
+    A classical-lookup encoding (definite bid at the hole leaf) gives
+    S = 0 and fails this test with a message naming the violated section.
+    """
+    h = HoleVar(candidates=["x", "y"])
+    ast = Lam(param="x", param_ty=TInt(),
+              body=Lam(param="y", param_ty=TInt(), body=h))
+    state, meta = encode_mera(ast)
+    # Hole is node 2; its bid leaf is 12. Candidate binders are nodes 0,1;
+    # their bid leaves are 2 and 7. A cut at leaf 12 separates the hole's
+    # bid leaf region from the binders' region.
+    max_S = max(state.entanglement_entropy(cut)
+                for cut in range(1, state.N - 1))
+    assert max_S > 0.5, (
+        f"hole-bearing program has max tree entanglement entropy {max_S}; "
+        f"expected > 0.5. A value near 0 means binding was encoded as a "
+        f"classical lookup, not entanglement — spec §5, §1.1 violated."
+    )
