@@ -48,6 +48,17 @@ def mera_window_expectation_factored(
     expectation equals < state | (prod gates) | state >.
 
     Apply each gate to the ket copy, then return <state | ket_copy>.
+
+    Product-MERA fast path: when `state` is a plain product MERA (identity
+    disentanglers, no term superposition) the double-network contraction
+    telescopes exactly — every isometry W satisfies W^dag W = I and the
+    unlisted leaves' overlaps reduce to <v_k|v_k>. So the expectation is
+    just prod_k <v_k|O_k|v_k> over the listed leaves times the product
+    norm of the rest. This is the SAME identity `MERA.inner` already uses
+    for its product fast path; computing it directly here avoids the full
+    isometry-tree `state.copy()` and the `_same_tree` tensor comparison
+    that dominate imaginary-time evolution (spec §8.2 — physics unchanged,
+    addressing only). The general-tree contraction below is the fallback.
     """
     d = state.d_local
     # Drop identity operators.
@@ -55,11 +66,24 @@ def mera_window_expectation_factored(
               if not _is_identity(op, d)}
     if not active:
         return complex(state.norm_sq())
-    ket = state.copy()
     for leaf, op in active.items():
         if op.shape != (d, d):
             raise ValueError(
                 f"leaf {leaf} op shape {op.shape}, expected ({d},{d})")
+    # Product-MERA fast path: prod_k <v_k|O_k|v_k> on the listed leaves
+    # times <v_j|v_j> on the rest (telescoping identity, see docstring).
+    if state._superposition_terms is None and state._is_product():
+        val = complex(1.0)
+        for k in range(state.N):
+            v = state.leaves[k][0, :, 0]
+            op = active.get(k)
+            if op is None:
+                val *= complex(v.conj() @ v)
+            else:
+                val *= complex(v.conj() @ (op @ v))
+        return val
+    ket = state.copy()
+    for leaf, op in active.items():
         ket.apply_local_gate(leaf, op)
     return state.inner(ket)
 
