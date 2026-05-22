@@ -27,18 +27,22 @@ function wsUrl(runId: string): string {
 /** Route one parsed WebSocket message into the store. */
 function handleMessage(raw: string): void {
   const store = useVizStore.getState();
-  const msg = JSON.parse(raw) as
-    | Frame
-    | { done: true }
-    | { error: string };
+  try {
+    const msg = JSON.parse(raw) as
+      | Frame
+      | { done: true }
+      | { error: string };
 
-  if ('error' in msg) {
-    store.setLive(false);
-    store.setError(msg.error);
-  } else if ('done' in msg) {
-    store.setLive(false);
-  } else {
-    store.pushFrame(msg);
+    if ('error' in msg) {
+      store.setLive(false);
+      store.setError(msg.error);
+    } else if ('done' in msg) {
+      store.setLive(false);
+    } else {
+      store.pushFrame(msg);
+    }
+  } catch (err) {
+    store.setError(`Malformed WebSocket message: ${String(err)}`);
   }
 }
 
@@ -66,6 +70,11 @@ export async function connectRun(spec: RunSpec): Promise<RunHandle> {
   socket.onerror = () => {
     useVizStore.getState().setLive(false);
     useVizStore.getState().setError('WebSocket error');
+  };
+  socket.onclose = () => {
+    // If the backend drops the connection without the {done:true}
+    // sentinel, ensure the store does not stay live forever.
+    useVizStore.getState().setLive(false);
   };
 
   return {

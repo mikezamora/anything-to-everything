@@ -15,6 +15,7 @@ export function Timeline() {
     <div className="timeline">
       <input
         type="range"
+        aria-label="timeline scrubber"
         min={0}
         max={max}
         value={cursor}

@@ -4,10 +4,11 @@
  * timeline scrubber.
  */
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { LayerSelector } from './components/LayerSelector';
 import { Timeline } from './components/Timeline';
 import { connectRun } from './lib/ws';
+import type { RunHandle } from './lib/ws';
 import { LAYER_KEYS } from './lib/types';
 import { useVizStore } from './store';
 import './App.css';
@@ -17,6 +18,7 @@ function RunControls() {
   const [steps, setSteps] = useState(20);
   const [grid, setGrid] = useState(12);
   const [busy, setBusy] = useState(false);
+  const handleRef = useRef<RunHandle | null>(null);
 
   const toggleLayer = (layer: string) => {
     setLayers((cur) =>
@@ -24,10 +26,25 @@ function RunControls() {
     );
   };
 
+  // Close any open socket when the controls unmount.
+  useEffect(() => {
+    return () => {
+      handleRef.current?.close();
+      handleRef.current = null;
+    };
+  }, []);
+
   const run = async () => {
     setBusy(true);
+    // Tear down a still-streaming previous run before starting a new one.
+    handleRef.current?.close();
+    handleRef.current = null;
     try {
-      await connectRun({ layers: layers.length ? layers : ['manifold'], steps, grid });
+      handleRef.current = await connectRun({
+        layers: layers.length ? layers : ['manifold'],
+        steps,
+        grid,
+      });
     } catch (err) {
       useVizStore.getState().setError(String(err));
     } finally {
@@ -98,7 +115,11 @@ export default function App() {
   return (
     <div className="app">
       <RunControls />
-      {error && <div className="error-bar">{error}</div>}
+      {error && (
+        <div className="error-bar" role="alert">
+          {error}
+        </div>
+      )}
       <div className="body">
         <LayerSelector />
         <PanelArea />

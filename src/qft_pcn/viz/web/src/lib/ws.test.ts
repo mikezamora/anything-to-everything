@@ -8,6 +8,7 @@ class FakeWebSocket {
   url: string;
   onmessage: ((ev: { data: string }) => void) | null = null;
   onerror: (() => void) | null = null;
+  onclose: (() => void) | null = null;
 
   constructor(url: string) {
     this.url = url;
@@ -37,8 +38,19 @@ describe('connectRun', () => {
   });
 
   it('routes a parsed frame into the store via pushFrame', async () => {
-    const handle = await connectRun({ layers: ['manifold'], steps: 2, grid: 8 });
+    const spec = { layers: ['manifold'], steps: 2, grid: 8 };
+    const handle = await connectRun(spec);
     expect(handle.runId).toBe('run-123');
+
+    // The /run request must be a JSON POST carrying the run spec.
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('/run');
+    expect(init.method).toBe('POST');
+    expect((init.headers as Record<string, string>)['Content-Type']).toBe(
+      'application/json',
+    );
+    expect(JSON.parse(init.body as string)).toEqual(spec);
 
     const socket = FakeWebSocket.last!;
     expect(socket.url).toContain('/ws/run-123');
@@ -61,5 +73,28 @@ describe('connectRun', () => {
     FakeWebSocket.last!.emit(JSON.stringify({ error: 'boom' }));
     expect(useVizStore.getState().live).toBe(false);
     expect(useVizStore.getState().error).toBe('boom');
+  });
+
+  it('clears live when the socket closes without a sentinel', async () => {
+    await connectRun({ layers: ['manifold'], steps: 1, grid: 8 });
+    expect(useVizStore.getState().live).toBe(true);
+    FakeWebSocket.last!.onclose?.();
+    expect(useVizStore.getState().live).toBe(false);
+  });
+
+  it('records an error for a malformed message instead of throwing', async () => {
+    await connectRun({ layers: ['manifold'], steps: 1, grid: 8 });
+    expect(() => FakeWebSocket.last!.emit('not json{')).not.toThrow();
+    expect(useVizStore.getState().error).toMatch(/Malformed WebSocket message/);
+  });
+
+  it('rejects when POST /run responds non-ok', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({ ok: false, status: 500, json: async () => ({}) })),
+    );
+    await expect(
+      connectRun({ layers: ['manifold'], steps: 1, grid: 8 }),
+    ).rejects.toThrow(/POST \/run failed: 500/);
   });
 });
