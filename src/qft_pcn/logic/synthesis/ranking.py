@@ -64,16 +64,24 @@ def rank_completions(
     asts: list[Node],
     N: int,
     chi_max: int,
-    hamiltonian_blocks: dict,    # {block_name: Hamiltonian}
+    hamiltonian_blocks: dict,             # {block_name: Hamiltonian} (non-synthesis)
+    problem=None,                          # SynthesisProblem (for per-completion synth blocks)
 ) -> list[Completion]:
     """Given a list of sampled ASTs, group by alpha-eq, re-encode each
     unique AST, compute composed ⟨H⟩ per block, return sorted ascending
     by total energy.
 
-    hamiltonian_blocks: dict mapping block name ("typing", "eval",
-    "examples", "target_type", "size") to a Hamiltonian object exposing
-    total_energy(state). The composed total energy is the sum.
+    ``hamiltonian_blocks`` provides the non-synthesis blocks (typing,
+    eval) computed on the re-encoded completion state.
+
+    When ``problem`` is provided, the synthesis blocks (examples,
+    target_type, size) are constructed PER COMPLETION in ranking mode —
+    examples and target_type compute energies via the spec §5.5 value-
+    flow evaluator and AST typer respectively (see hamiltonian.py
+    docstrings).
     """
+    from .hamiltonian import build_synthesis_hamiltonians
+
     groups = dedupe_by_alpha_eq(asts)
     completions: list[Completion] = []
     for rep_ast, multiplicity in groups:
@@ -84,10 +92,21 @@ def rank_completions(
             continue
         breakdown: dict[str, float] = {}
         total = 0.0
+        # Non-synthesis blocks (typing, eval): evaluated on the
+        # re-encoded MPS state.
         for name, H in hamiltonian_blocks.items():
             e = float(H.total_energy(state_c))
             breakdown[name] = e
             total += e
+        # Per-completion synthesis blocks (ranking mode).
+        if problem is not None:
+            synth_for_c = build_synthesis_hamiltonians(
+                meta_c, problem, completion_ast=rep_ast,
+            )
+            for name, H in synth_for_c.items():
+                e = float(H.total_energy(state_c))
+                breakdown[name] = e
+                total += e
         completions.append(Completion(
             ast=rep_ast,
             energy=total,

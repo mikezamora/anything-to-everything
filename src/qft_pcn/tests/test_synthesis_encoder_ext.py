@@ -101,3 +101,23 @@ def test_witness_augmented_multiple_examples():
     )
     out, regions = witness_augmented_sketch(sketch, examples)
     assert out is not sketch
+
+
+@pytest.mark.timeout(20)
+def test_witness_augmented_reports_witness_regions():
+    """Spec §5.5: witness_regions identifies each witness's site range.
+
+    For a single-example, single-input witness ``App(sketch_copy, in_0)``,
+    the witness occupies ``size(sketch)+2`` sites (the App parent + the
+    input literal + the copied sketch). The regions list must be non-
+    empty and each region must be a non-trivial site range.
+    """
+    sketch = Lam(param="x", param_ty=TInt(), body=Var(name="x"))
+    examples = (
+        IOExample(inputs=(IntLit(val=2),), output=IntLit(val=2)),
+        IOExample(inputs=(IntLit(val=5),), output=IntLit(val=5)),
+    )
+    out, regions = witness_augmented_sketch(sketch, examples)
+    assert len(regions) == len(examples)
+    for start, end in regions:
+        assert 0 <= start < end

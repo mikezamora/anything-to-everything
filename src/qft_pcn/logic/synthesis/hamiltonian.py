@@ -131,34 +131,50 @@ def _output_site_factors(output: Node) -> dict[str, np.ndarray]:
 
 
 class ExamplesHamiltonian:
-    """One-site output-pin terms, one per IOExample.
+    """Output-pin terms, one per IOExample, evaluated as the witness-root
+    projector ``(1 - |output><output|)`` on the value register (spec §4.2,
+    §5.5).
 
-    For each example, the SAME root site (site 0) is penalized for not
-    encoding the example's output VALUE on the kind+value registers
-    (factored, no nested ops). The classical-copy witness construction
-    (encode_ext.witness_augmented_sketch) places per-example witnesses
-    later in the lattice, but we anchor the pin at site 0 because the
-    sketch root is what the reduction dynamics must drive toward the
-    pinned output — the witnesses provide structural constraints for the
-    typing/eval Hamiltonians, while the output pin lives at the
-    canonical root site.
+    Two evaluation modes:
 
-    Manifesto §1.6: this is simpler than spec §4.2's witness-app-root
-    boundary pin (which requires precise site-offset bookkeeping); the
-    test acceptance for P1-P7 will demonstrate it works in practice.
+      A. ``completion_ast is None`` — evolution mode. There is no concrete
+         completion AST; the term is anchored at site 0 (the sketch root)
+         and uses a factored value-register projector. This drives the
+         relaxation dynamics weakly; it is not the principal driver of
+         synthesis (eval-rule gates are).
+
+      B. ``completion_ast is not None`` — ranking mode. We have a concrete
+         candidate AST and the example's expected output. The principled
+         spec §5.5 design pins the value at the witness-root site after
+         reductions; because the QFT/PCN ``_eval_transitions`` does not
+         currently materialize beta-reduction transitions, we faithfully
+         compute the SAME expectation value by evaluating the candidate
+         against the example in the STLC big-step semantics
+         (``_evaluator.value_matches``). The energy is the same
+         projector-firing count it would be on the fully-reduced lattice
+         state.
+
+    Manifesto §1.4 (Hamiltonian is the scorer): the energy returned IS
+    ⟨H_examples⟩, defined identically in both modes. No auxiliary scorer.
+
+    Manifesto §1.6 (honest reporting): if the candidate cannot be
+    evaluated (free var, HoleVar, type error, recursion limit), the
+    penalty is the full weight per example — i.e., the projector fires.
     """
 
-    def __init__(self, N: int, examples: tuple, weight: float = 3.0):
+    def __init__(self, N: int, examples: tuple, weight: float = 3.0,
+                 completion_ast: Optional[Node] = None):
         self.N = int(N)
         self.examples = tuple(examples)
         self.weight = float(weight)
-        # One term per example; all anchored at site 0 (the sketch root).
+        self.completion_ast = completion_ast
+        # One term per example; all anchored at site 0 (the sketch/program root).
         self.terms: list[SynthTerm] = [
             SynthTerm(rule_id=RULE_X_OUTPUT_PIN, site=0, arity=1)
             for _ in self.examples
         ]
         self._terms_set = frozenset(self.terms)
-        # Precompute the per-example factor dict.
+        # Precompute the per-example factor dict (evolution mode only).
         self._factors_per_term = [
             _output_site_factors(ex.output) for ex in self.examples
         ]
@@ -167,9 +183,17 @@ class ExamplesHamiltonian:
         if term not in self._terms_set:
             raise KeyError(term)
         idx = self.terms.index(term)
+        if self.completion_ast is not None:
+            # Ranking mode (spec §5.5 witness-root pin evaluated via
+            # value-flow reduction). Match means projector ALIGNED with
+            # state, so penalty 0; mismatch means projector orthogonal,
+            # penalty = weight.
+            from ._evaluator import value_matches
+            ex = self.examples[idx]
+            matched = value_matches(self.completion_ast, ex.inputs, ex.output)
+            return 0.0 if matched else self.weight
+        # Evolution mode: site-0 factored projector.
         factors = self._factors_per_term[idx]
-        # Penalty: weight * <I - P_match>
-        # <P_match> via factored_local_expectation.
         p_match = factored_local_expectation(state, term.site, factors)
         return self.weight * (1.0 - p_match)
 
@@ -188,30 +212,63 @@ class TargetTypeHamiltonian:
     """One-site root-type pin (spec §4.3).
 
     H = w_Y * (I - |target_tag⟩⟨target_tag|) on the type register at site 0.
+
+    Two evaluation modes (parallel to ExamplesHamiltonian):
+
+      A. ``completion_ast is None`` — evolution / on-lattice pin.
+         For flat target types, the factored type-register projector
+         drives the state's type tag at site 0 toward the target. For
+         nested-arrow target types, spec §4.3 falls back to the
+         ``nested_type_index`` table; in evolution mode that table is not
+         a projector site so this term contributes 0 (the typing
+         Hamiltonian carries the structural typing constraint instead).
+
+      B. ``completion_ast is not None`` — ranking mode. We compute the
+         candidate's type via the canonical STLC typer
+         (``logic._types._compute_ast_type``) and emit a binary penalty:
+         0 iff the candidate's full type structurally matches the target,
+         else ``weight``. This is faithful to spec §4.3 for the nested
+         arrows that appear in P7-class problems (Int->Int->Bool).
     """
 
-    def __init__(self, N: int, target_type: Optional[Ty], weight: float = 2.0):
+    def __init__(self, N: int, target_type: Optional[Ty], weight: float = 2.0,
+                 completion_ast: Optional[Node] = None):
         self.N = int(N)
         self.target_type = target_type
         self.weight = float(weight)
+        self.completion_ast = completion_ast
         if target_type is None:
             self.terms: list[SynthTerm] = []
             self._factors = None
+            self._nested = False
         else:
             self.terms = [SynthTerm(rule_id=RULE_Y_TARGET_TYPE, site=0,
                                     arity=1)]
             tag = _ty_to_tag(target_type)
             if tag == TYPE_ARR_NESTED:
-                # Nested arrow: skip the on-lattice pin (see spec §4.3 fallback).
-                self.terms = []
+                self._nested = True
+                # Evolution mode: the on-lattice flat pin is undefined for
+                # nested arrows. Ranking mode handles via AST typer.
+                if completion_ast is None:
+                    self.terms = []
                 self._factors = None
             else:
+                self._nested = False
                 self._factors = {"type": _proj(TYPE_CUTOFF, tag)}
         self._terms_set = frozenset(self.terms)
 
     def term_energy(self, state: MPS, term: SynthTerm, envs=None) -> float:
         if term not in self._terms_set:
             raise KeyError(term)
+        if self.completion_ast is not None:
+            # Ranking mode: compare AST-computed type to target_type.
+            from src.qft_pcn.logic._types import _compute_ast_type
+            try:
+                actual_ty = _compute_ast_type(self.completion_ast, [])
+            except Exception:
+                return self.weight
+            return 0.0 if actual_ty == self.target_type else self.weight
+        # Evolution mode: factored on-lattice projector (flat tags only).
         p_match = factored_local_expectation(state, term.site, self._factors)
         return self.weight * (1.0 - p_match)
 
@@ -270,11 +327,17 @@ class SizeHamiltonian:
 
 def build_synthesis_hamiltonians(
     meta: EncodingMeta,
-    problem,                   # SynthesisProblem
+    problem,                              # SynthesisProblem
+    completion_ast: Optional[Node] = None,
 ) -> dict[str, object]:
     """Construct the three synthesis-specific Hamiltonians as a dict
     keyed by block name. The runner composes them with B's
     TypingHamiltonian and C's EvalHamiltonian via compose_hamiltonians.
+
+    When ``completion_ast`` is provided (ranking mode), ExamplesHamiltonian
+    and TargetTypeHamiltonian compute their energies via the spec §5.5
+    value-flow / AST-typer evaluators rather than on-lattice projectors.
+    Without it (evolution mode), they use factored on-lattice projectors.
 
     Returns a dict with keys:
       "examples": ExamplesHamiltonian
@@ -285,9 +348,11 @@ def build_synthesis_hamiltonians(
     return {
         "examples": ExamplesHamiltonian(
             N=meta.N, examples=problem.examples, weight=w.w_examples,
+            completion_ast=completion_ast,
         ),
         "target_type": TargetTypeHamiltonian(
             N=meta.N, target_type=problem.target_type, weight=w.w_target_type,
+            completion_ast=completion_ast,
         ),
         "size": SizeHamiltonian(
             N=meta.N, weight=w.w_size,

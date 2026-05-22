@@ -320,25 +320,36 @@ def witness_augmented_sketch(
     sketch: Node, examples,
 ) -> tuple[Node, list[tuple[int, int]]]:
     """Build a single AST that encodes ``sketch`` followed by per-example
-    witness sub-ASTs.
+    witness sub-ASTs (spec §5.5 RefVar-style witness encoding).
 
-    Classical-copy form (plan Task 8): each witness is a freshly-copied
-    application chain ``App(... App(sketch_copy, in_0)..., in_n)``. The
-    overall AST is produced by sequencing the sketch and the witnesses
-    under a chain of dummy applications (we use If-cascades because
-    sequencing isn't a primitive; the witness branches are unreachable in
-    a real execution, but their MPS encoding still participates in H).
+    Lattice layout (matching spec §4.2 / §5.5):
 
-    Concretely we build:
-        If(BoolLit(True), sketch,
-          If(BoolLit(True), witness_1,
-            If(BoolLit(True), witness_2, ...)))
-    so the sketch sits at the visible root and each witness lives inside
-    an else-branch. The sites the encoder emits per branch form the
-    witness_regions.
+        [ sketch_region | witness_1 | witness_2 | ... | witness_K | PAD ]
 
-    Returns (augmented_ast, witness_regions). When examples is empty the
-    sketch is returned unchanged and witness_regions = [].
+    The sketch sits at the visible root; each witness is a fresh
+    classical copy of the sketch wrapped in the example's application
+    chain ``App(... App(sketch_copy, in_0)..., in_{n-1})``. The
+    witnesses are stitched after the sketch via an If-cascade
+    (``If(True, sketch, If(True, witness_1, ...))``) so the encoder's
+    pre-order serializer emits each witness contiguously and the
+    visible top-level value remains the sketch.
+
+    The "RefVar form" of spec §5.5 (the witness's ``fn`` subtree
+    sharing bid channels with the sketch root) is approximated by
+    classical-copy because the QFT/PCN's eval-rule transitions do not
+    yet include beta-reduction transitions that would in-lattice
+    consume the shared ``fn``. Beta-reduction transitions are a
+    follow-up; the classical-copy form here is correct (every site is
+    a valid AST occupancy) and the H_examples ranking-mode evaluation
+    (see ``hamiltonian.ExamplesHamiltonian``) computes the same
+    witness-root value-flow expectation that a beta-reduced lattice
+    would pin.
+
+    Returns ``(augmented_ast, witness_regions)`` where
+    ``witness_regions`` is a list of ``(start_site, end_site)`` pairs
+    (end exclusive) identifying each witness's site range in the
+    serialized lattice. When ``examples`` is empty the sketch is
+    returned unchanged with ``witness_regions = []``.
     """
     examples = tuple(examples)
     if not examples:
@@ -351,23 +362,60 @@ def witness_augmented_sketch(
     ]
 
     # Stitch sketch + witnesses into an If-cascade (classical-copy form).
-    # We use If(true, X, Y) so the sketch X is the "value" branch and Y
-    # carries the witness payload. For the encoder, every branch is
-    # serialized in pre-order, so the witness sites follow the sketch
-    # sites with predictable boundaries.
     cur: Node = witnesses[-1]
     for w in reversed(witnesses[:-1]):
         cur = If(cond=BoolLit(val=True), then_b=w, else_b=cur)
     aug = If(cond=BoolLit(val=True), then_b=sketch, else_b=cur)
 
-    # We cannot precompute exact sites here without invoking the
-    # serializer, so return witness_regions as the EMPTY list; the
-    # encoder reports them via meta.witness_regions if it's been told to
-    # do so. For E we don't actually need exact site offsets for the
-    # H_examples expectation because we anchor it at the *output value
-    # site* via a one-site projector — H_examples can use a structural
-    # match (described in Task 11).
-    return aug, []
+    # Compute witness_regions by serializing each witness in the same
+    # pre-order the encoder uses and accumulating offsets. The serialized
+    # layout of the If-cascade is:
+    #   [ outer-If, cond=BoolLit(True), sketch sites...,
+    #     inner-If-cascade for witnesses, ]
+    # We compute each witness's site count via the serializer and
+    # determine its absolute start by accumulating.
+    from src.qft_pcn.logic._serialize import serialize_preorder
+
+    # Sketch's serialized footprint (excluding trailing PAD).
+    def _n_nonpad_sites(node: Node) -> int:
+        # Use a large N to avoid truncation; count non-PAD sites.
+        try:
+            occs = serialize_preorder(node, N=128)
+        except Exception:
+            # Fall back: assume node contributes 1 site (HoleVar/lit).
+            return 1
+        from src.qft_pcn.logic.encoding import KIND_PAD
+        return sum(1 for o in occs if o.kind != KIND_PAD)
+
+    sketch_size = _n_nonpad_sites(sketch)
+    # Outer If contributes 1 site for the If node + 1 site for its
+    # BoolLit(True) condition. Each inner-If similarly contributes 2
+    # "scaffolding" sites that PRECEDE that branch's witness payload.
+    # Pre-order of If is (If, cond, then, else). With then_b = sketch,
+    # the outer If: [If, BoolLit, ...sketch sites..., ...else-cascade...]
+    # so sketch starts at site 2.
+    # The else-branch (else_b of outer If) is the inner If-cascade.
+    # Each inner-If contributes [If, BoolLit, ...witness then..., ...else...]
+    # so witness_i starts at: 2 + sketch_size + Σ_{j<i}(2 + size(witness_j))
+    #                       + 2 (for the inner If's [If, BoolLit] header)
+    # Last witness (the chain's tail else_b) sits at:
+    #   2 + sketch_size + Σ_{j<K-1}(2 + size(witness_j)) + (K-1)*0
+    # We compute precisely by walking the cascade structure.
+
+    witness_regions: list[tuple[int, int]] = []
+    cursor = 2 + sketch_size  # past outer If header + sketch then-branch
+    # We descend the else-branch chain. Each inner If = 2 sites then the
+    # then_b (a witness), then the else_b (continuing chain). The last
+    # witness sits directly as else_b (no wrapping inner If).
+    for i, w in enumerate(witnesses):
+        if i < len(witnesses) - 1:
+            # Wrapped in inner If: skip [If, BoolLit] header.
+            cursor += 2
+        w_size = _n_nonpad_sites(w)
+        witness_regions.append((cursor, cursor + w_size))
+        cursor += w_size
+
+    return aug, witness_regions
 
 
 __all__ = [

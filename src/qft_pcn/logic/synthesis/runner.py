@@ -222,13 +222,18 @@ def synthesize(
     blocks_for_ranking = {
         "typing": _Weighted(H_typing, w.w_typing),
         "eval": _Weighted(H_eval, w.w_eval),
-        "examples": synth_blocks["examples"],
-        "target_type": synth_blocks["target_type"],
-        "size": synth_blocks["size"],
     }
+    # Synthesis blocks (examples, target_type, size) are constructed
+    # per-completion at ranking time in ranking mode (spec §5.5 value-
+    # flow / AST-typer). For the "final_state_energy" we still report
+    # the evolution-mode blocks computed on the relaxed state.
+    blocks_for_final_state = dict(blocks_for_ranking)
+    blocks_for_final_state["examples"] = synth_blocks["examples"]
+    blocks_for_final_state["target_type"] = synth_blocks["target_type"]
+    blocks_for_final_state["size"] = synth_blocks["size"]
 
     initial_energy = float(
-        sum(H.total_energy(state) for H in blocks_for_ranking.values())
+        sum(H.total_energy(state) for H in blocks_for_final_state.values())
     )
 
     # ---- Three-phase anneal (spec §6.5) ----------------------------------
@@ -257,7 +262,7 @@ def synthesize(
     )
 
     final_state_energy = float(
-        sum(H.total_energy(state) for H in blocks_for_ranking.values())
+        sum(H.total_energy(state) for H in blocks_for_final_state.values())
     )
 
     # ---- Sample ---------------------------------------------------------
@@ -282,6 +287,7 @@ def synthesize(
     # ---- Rank ----------------------------------------------------------
     completions = rank_completions(
         asts, N=N, chi_max=chi_max, hamiltonian_blocks=blocks_for_ranking,
+        problem=problem,
     )
 
     # ---- Classify -----------------------------------------------------
