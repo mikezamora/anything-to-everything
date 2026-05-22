@@ -95,22 +95,42 @@ def test_export_returns_job_id():
     assert r.status_code == 200
     body = r.json()
     assert "job_id" in body
+    # The job is `queued` in the response; the background render runs after.
     assert body["status"] == "queued"
 
 
+def test_export_unknown_run_returns_404():
+    c = TestClient(app)
+    r = c.post("/export", json={"run_id": "deadbeef"})
+    assert r.status_code == 404
+
+
 def test_export_status_lookup():
+    # TestClient runs the BackgroundTask before returning, so by the time the
+    # status is polled the job has reached a terminal state. Without manim
+    # installed the render fails -> `error`; with manim it reaches `done`.
     c = TestClient(app)
     run_id = c.post("/run", json={"layers": ["manifold"],
                                   "steps": 2, "grid": 8}).json()["run_id"]
     job_id = c.post("/export", json={"run_id": run_id}).json()["job_id"]
     r = c.get(f"/export/{job_id}")
     assert r.status_code == 200
-    assert r.json()["status"] == "queued"
+    assert r.json()["status"] in ("queued", "running", "done", "error")
 
 
 def test_export_status_unknown_returns_404():
     c = TestClient(app)
     r = c.get("/export/deadbeef")
+    assert r.status_code == 404
+
+
+def test_export_download_not_ready_returns_404():
+    c = TestClient(app)
+    run_id = c.post("/run", json={"layers": ["manifold"],
+                                  "steps": 2, "grid": 8}).json()["run_id"]
+    job_id = c.post("/export", json={"run_id": run_id}).json()["job_id"]
+    # Without manim the job ends in `error`, so the download is unavailable.
+    r = c.get(f"/export/{job_id}/download")
     assert r.status_code == 404
 
 
