@@ -18,7 +18,7 @@ from typing import Optional
 
 from .ast import (
     Node, Var, Lam, App, IntLit, BoolLit, If, Bin, Ty, HoleVar,
-    Zero, Succ, NatLit, Nil, Cons, Eq,
+    Zero, Succ, NatLit, Nil, Cons, Eq, Forall, Fix,
 )
 from .encoding import (
     KIND_PAD, KIND_VAR, KIND_LAM, KIND_APP, KIND_INT, KIND_BOOL,
@@ -27,6 +27,7 @@ from .encoding import (
 )
 from .mera_encoding import (
     KIND_ZERO, KIND_SUCC, KIND_NATLIT, KIND_NIL, KIND_CONS, KIND_EQ,
+    KIND_FORALL, KIND_FIX,
 )
 from ._resolve import resolve_binders
 
@@ -100,6 +101,8 @@ def count_nodes(root: Node) -> int:
         return 1 + count_nodes(root.head) + count_nodes(root.tail)
     if isinstance(root, Eq):
         return 1 + count_nodes(root.lhs) + count_nodes(root.rhs)
+    if isinstance(root, (Forall, Fix)):
+        return 1 + count_nodes(root.body)
     raise UnsupportedNode(node_type=type(root).__name__)
 
 
@@ -222,6 +225,22 @@ def serialize_preorder(root: Node, N: int) -> list[NodeOccupancy]:
             sites.append(NodeOccupancy(kind=KIND_EQ, ast_path=ast_path))
             _emit(node.lhs, ast_path + (0,))
             _emit(node.rhs, ast_path + (1,))
+            return
+        if isinstance(node, (Forall, Fix)):
+            # Forall / Fix are binders: same machinery as Lam — push the
+            # binder, descend into the body, pop. The binder kind
+            # disambiguates Forall (KIND_FORALL) vs Fix (KIND_FIX).
+            depth = len(binder_depth_stack)
+            lam_to_site[id(node)] = idx
+            kind = KIND_FORALL if isinstance(node, Forall) else KIND_FIX
+            sites.append(NodeOccupancy(
+                kind=kind,
+                binder_ref=BinderRef(lam_node=node, lexical_depth=depth),
+                ast_path=ast_path,
+            ))
+            binder_depth_stack.append(depth)
+            _emit(node.body, ast_path + (0,))
+            binder_depth_stack.pop()
             return
         raise UnsupportedNode(node_type=type(node).__name__)
 

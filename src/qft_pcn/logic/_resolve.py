@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 from .ast import (Node, Var, Lam, App, IntLit, BoolLit, If, Bin, HoleVar,
-                  Zero, Succ, NatLit, Nil, Cons, Eq)
+                  Zero, Succ, NatLit, Nil, Cons, Eq, Forall, Fix)
 from .encoding import (IllScopedVar, TooManyBinders, UnsupportedNode,
                        MAX_BINDER_DEPTH)
 
@@ -65,7 +65,7 @@ def resolve_binders(
                     raise IllScopedVar(name=cand)
             on_var(node, refs)
             return
-        if isinstance(node, Lam):
+        if isinstance(node, (Lam, Forall, Fix)):
             if len(stack) >= MAX_BINDER_DEPTH:
                 raise TooManyBinders(depth=len(stack) + 1,
                                      cutoff=MAX_BINDER_DEPTH)

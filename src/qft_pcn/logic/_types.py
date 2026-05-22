@@ -14,7 +14,8 @@ from typing import Optional
 
 from .ast import (Node, Var, Lam, App, IntLit, BoolLit, If, Bin, HoleVar,
                   Ty, TInt, TBool, TArrow,
-                  Zero, Succ, NatLit, Nil, Cons, Eq, TNat, TList, TProp)
+                  Zero, Succ, NatLit, Nil, Cons, Eq, TNat, TList, TProp,
+                  Forall, Fix)
 from ._serialize import NodeOccupancy
 from .encoding import (
     KIND_VAR, KIND_LAM, KIND_APP, KIND_INT, KIND_BOOL, KIND_IF, KIND_BIN,
@@ -110,6 +111,11 @@ def _compute_ast_type(node: Node, env: list[tuple[str, Ty]]) -> Ty:
         return TList(elem=_compute_ast_type(node.head, env))
     if isinstance(node, Eq):
         return TProp()
+    if isinstance(node, Forall):
+        return TProp()
+    if isinstance(node, Fix):
+        # The fixed point has the same type as the recursion variable.
+        return node.param_ty
     raise TypeError(f"unknown Node: {type(node).__name__}")
 
 
@@ -141,6 +147,17 @@ def compute_site_types(root: Node,
         elif isinstance(node, Bin):
             _walk(node.lhs, env, path + (0,))
             _walk(node.rhs, env, path + (1,))
+        elif isinstance(node, Succ):
+            _walk(node.arg, env, path + (0,))
+        elif isinstance(node, Cons):
+            _walk(node.head, env, path + (0,))
+            _walk(node.tail, env, path + (1,))
+        elif isinstance(node, Eq):
+            _walk(node.lhs, env, path + (0,))
+            _walk(node.rhs, env, path + (1,))
+        elif isinstance(node, (Forall, Fix)):
+            _walk(node.body, env + [(node.param, node.param_ty)],
+                  path + (0,))
 
     _walk(root, [], ())
 

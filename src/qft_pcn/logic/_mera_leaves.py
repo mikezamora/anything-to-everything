@@ -10,7 +10,10 @@ import numpy as np
 
 from ._serialize import NodeOccupancy
 from ._tensors import _local_kind_type_value, _local_bid_for_kind
-from .mera_encoding import MERA_LEAF_DIM
+from .mera_encoding import (
+    MERA_LEAF_DIM, KIND_NIL, KIND_CONS, KIND_FORALL, KIND_FIX,
+)
+from ._types import ty_to_tag
 
 
 def _one_hot(index: int) -> np.ndarray:
@@ -34,6 +37,20 @@ def node_leaf_vectors(occ: NodeOccupancy, type_tag: int) -> list[np.ndarray]:
     kind_idx, type_idx, value_idx = _local_kind_type_value(occ, type_tag)
     bid_idx = _local_bid_for_kind(occ.kind, occ)
     tobl_idx = occ.tobl_tag
+
+    # Extended-calculus value-leaf contract (spec §6.4-§6.8):
+    #   Nil / Cons : the `value` leaf carries the list element-type tag.
+    #   Forall / Fix : the `value` leaf carries the binder parameter-type tag.
+    # M2's typing rules (T-Cons, T-Fix, T-Var-against-Forall) read these.
+    if occ.kind in (KIND_NIL, KIND_CONS):
+        # occ.ty is a TList; its `elem` field is the element type.
+        elem_ty = getattr(occ.ty, "elem", None)
+        if elem_ty is not None:
+            value_idx, _ = ty_to_tag(elem_ty)
+    elif occ.kind in (KIND_FORALL, KIND_FIX):
+        if occ.binder_ref is not None:
+            param_ty = occ.binder_ref.lam_node.param_ty
+            value_idx, _ = ty_to_tag(param_ty)
     for name, idx in (("kind", kind_idx), ("type", type_idx),
                       ("bid", bid_idx), ("value", value_idx),
                       ("tobl", tobl_idx)):

@@ -94,7 +94,8 @@ def _local_bid_for_kind(kind: int, occ: NodeOccupancy) -> int:
     VAR: BID_k where k = depth_from_innermost at the use site.
     Everything else: BID_NONE.
     """
-    if kind == KIND_LAM:
+    from .mera_encoding import KIND_FORALL, KIND_FIX
+    if kind in (KIND_LAM, KIND_FORALL, KIND_FIX):
         return BID_0   # "I am introducing a new binder; it is my innermost"
     if kind == KIND_VAR:
         from .encoding import TooManyBinders, MAX_BINDER_DEPTH

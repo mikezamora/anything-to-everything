@@ -27,7 +27,7 @@ from typing import Optional
 
 from .ast import (
     Node, Var, Lam, App, IntLit, BoolLit, If, Bin, HoleVar, Ty, TArrow,
-    Zero, Succ, NatLit, Nil, Cons, Eq,
+    Zero, Succ, NatLit, Nil, Cons, Eq, Forall, Fix,
 )
 from ._serialize import NodeOccupancy
 from ._types import ty_to_tag, _compute_ast_type
@@ -125,6 +125,13 @@ def compute_tobl_tags(root: Node,
             # Both operands: TOBL_INT (true for both arith and cmp ops).
             _emit(node.lhs, TOBL_INT, None, env)
             _emit(node.rhs, TOBL_INT, None, env)
+            return
+
+        if isinstance(node, (Forall, Fix)):
+            # Forall / Fix are binders; their bodies' typing is handled by
+            # the M2 T-Forall / T-Fix rules, so no tobl obligation here.
+            _emit(node.body, TOBL_NONE, None,
+                  env + [(node.param, node.param_ty)])
             return
 
         raise TypeError(f"unsupported AST node in tobl walk: "
