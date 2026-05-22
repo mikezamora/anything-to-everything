@@ -98,9 +98,10 @@ def snapshot_qpcn(q: Any) -> dict:
     if bond_dims is not None:
         n_cuts = _safe(lambda: state.N)
         if n_cuts:
+            # entanglement_entropy uses 0-indexed bonds: valid 0..N-2.
             entropies = [
                 _safe(lambda c=c: float(state.entanglement_entropy(c)))
-                for c in range(1, n_cuts)
+                for c in range(n_cuts - 1)
             ]
 
     occupations = None
@@ -109,10 +110,21 @@ def snapshot_qpcn(q: Any) -> dict:
             lambda: [float(np.real(np.linalg.norm(t))) for t in state.tensors]
         )
 
+    # learnable_params is a list[str] of parameter names; map each to its
+    # current value on the Hamiltonian. A missing param yields None rather
+    # than aborting the whole dict.
+    params = None
+    names = _safe(lambda: list(q.cfg.learnable_params))
+    if names is not None:
+        params = {
+            name: _safe(lambda n=name: float(q.H.get_param(n)))
+            for name in names
+        }
+
     return {
         "energy": _safe(lambda: float(np.real(q._last_energy))),
         "pred_errors": _safe(lambda: dict(q._last_errors)),
-        "params": _safe(lambda: dict(q.cfg.learnable_params)),
+        "params": params,
         "bond_dims": bond_dims,
         "entropies": entropies,
         "occupations": occupations,
@@ -129,9 +141,10 @@ def snapshot_mps(mps: Any) -> dict:
     entropies = None
     n = _safe(lambda: int(mps.N))
     if n:
+        # entanglement_entropy uses 0-indexed bonds: valid 0..N-2.
         entropies = [
             _safe(lambda c=c: float(mps.entanglement_entropy(c)))
-            for c in range(1, n)
+            for c in range(n - 1)
         ]
 
     return {

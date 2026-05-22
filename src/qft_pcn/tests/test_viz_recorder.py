@@ -6,9 +6,12 @@ import numpy as np
 
 from src.qft_pcn.viz.schema import Frame
 from src.qft_pcn.viz.recorder import Recorder
-from src.qft_pcn.viz.snapshots import snapshot_network
+from src.qft_pcn.viz.snapshots import snapshot_network, snapshot_qpcn, snapshot_mps
 from src.qft_pcn.network import QFTPCNNetwork, NetworkConfig
 from src.qft_pcn.layer import LayerConfig
+from src.qft_pcn.qft.mps import MPS
+from src.qft_pcn.qft.qpcn import QPCN, QPCNConfig
+from src.qft_pcn.qft.hamiltonian import FieldSpecies
 
 
 # ---- 1.1 Frame schema --------------------------------------------------------
@@ -73,6 +76,54 @@ def test_snapshot_network_downsamples_large_grid():
     snap = snapshot_network(net)
     h = np.asarray(snap["metric_h"]["h_xx"])
     assert max(h.shape) <= 32
+
+
+def test_snapshot_mps_contents_and_readonly():
+    mps = MPS.vacuum(4, 2)
+    before = [t.copy() for t in mps.tensors]
+    snap = snapshot_mps(mps)
+    assert "bond_dims" in snap and "entropies" in snap
+    assert snap["n_sites"] == 4
+    assert snap["d_local"] == 2
+    # 4 sites -> 5 bonds (incl. boundary) and 3 internal cut entropies.
+    assert isinstance(snap["bond_dims"], list) and len(snap["bond_dims"]) >= 1
+    assert isinstance(snap["entropies"], list) and len(snap["entropies"]) == 3
+    # Vacuum is a product state: zero entanglement at every cut.
+    for s in snap["entropies"]:
+        assert s is not None and abs(s) < 1e-9
+    # MPS unchanged.
+    assert mps.N == 4
+    for t, b in zip(mps.tensors, before):
+        np.testing.assert_array_equal(t, b)
+
+
+def test_snapshot_qpcn_contents():
+    species = [FieldSpecies(name="phi", cutoff=2)]
+    cfg = QPCNConfig(species=species, N_sites=3, chi_max=4,
+                     learnable_params=["phi.mass"])
+    q = QPCN(cfg)
+    snap = snapshot_qpcn(q)
+    for key in ("bond_dims", "entropies", "occupations",
+                "energy", "pred_errors", "params"):
+        assert key in snap
+    # params must map the learnable param name to its real Hamiltonian value.
+    assert snap["params"] == {"phi.mass": q.H.get_param("phi.mass")}
+    assert isinstance(snap["params"]["phi.mass"], float)
+    assert isinstance(snap["bond_dims"], list)
+    assert isinstance(snap["entropies"], list) and len(snap["entropies"]) == 2
+    assert isinstance(snap["occupations"], list) and len(snap["occupations"]) == 3
+
+
+def test_snapshot_qpcn_after_observe():
+    species = [FieldSpecies(name="phi", cutoff=2)]
+    cfg = QPCNConfig(species=species, N_sites=3, chi_max=4,
+                     learnable_params=["phi.mass"],
+                     observable_map=[(0, "phi", "n")])
+    q = QPCN(cfg)
+    q.observe({(0, "phi", "n"): 0.5})
+    snap = snapshot_qpcn(q)
+    assert snap["step"] == 1
+    assert snap["params"]["phi.mass"] is not None
 
 
 # ---- 1.8 recorder ------------------------------------------------------------
