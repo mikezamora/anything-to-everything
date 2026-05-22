@@ -38,6 +38,7 @@ class MeraEncodingMeta:
     nested_type_index: dict[int, "object"] = field(default_factory=dict)
     layout: MeraLayout = field(repr=False, default=None)
     children_of_node: dict[int, list[int]] = field(default_factory=dict)
+    n_nodes_max: int = 0      # encoder node budget (R-Fix unfold guard)
 
 
 def _binder_kinds() -> set[int]:
@@ -185,5 +186,6 @@ def encode_mera(ast: Node, n_nodes_max: int = 32,
         nested_type_index=nested_type_index,
         layout=layout,
         children_of_node=children_of_node,
+        n_nodes_max=n_nodes_max,
     )
     return state, meta

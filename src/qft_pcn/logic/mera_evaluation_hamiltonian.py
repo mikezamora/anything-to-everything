@@ -32,7 +32,7 @@ from ._mera_window import mera_window_expectation_factored
 from ._mera_eval_terms import (
     beta_penalty_ops, arith_penalty_ops, cmp_penalty_ops,
     if_penalty_ops, succ_penalty_ops, fix_penalty_ops,
-    single_leaf_transition_gate,
+    single_leaf_transition_gate, fix_transition_gate,
     arith_result_value_idx, cmp_result_value_idx,
     DEFAULT_LAMBDA_BETA, DEFAULT_LAMBDA_ARITH, DEFAULT_LAMBDA_IF,
     DEFAULT_LAMBDA_FIX,
@@ -267,13 +267,15 @@ class MeraEvalHamiltonian:
         elif term.rule_id == RULE_R_BETA:
             moves = self._beta_moves(state, node, kids)
         elif term.rule_id == RULE_R_FIX:
-            moves = self._fix_moves(state, node)
+            moves, fix_pair_gates = self._fix_moves(state, node, dt, lam)
         gates = []
         for leaf, u, r in moves:
             if u == r:
                 continue
             g = single_leaf_transition_gate(u, r, dt, lam)
             gates.append(((leaf,), g))
+        if term.rule_id == RULE_R_FIX:
+            gates.extend(fix_pair_gates)
         return gates
 
     def _if_branch_moves(self, state, node, kids):
@@ -357,27 +359,105 @@ class MeraEvalHamiltonian:
                 moves.append((leaf, cur, tgt))
         return moves
 
-    def _fix_moves(self, state, node):
+    def _fix_moves(self, state, node, dt, lam):
         """Fix f. body -> body[f := Fix f. body], one tree layer at a time
-        (spec §7.2). For the M2 recursive demo the body's normal form is a
-        NatLit; the unfold contracts each recursion-use Var toward the
-        body's head structure.
+        (spec §7.2).
+
+        Two coupled effects, both genuine transitions (no classical
+        rewrite, spec §1.6):
+
+        1. One-layer unfold: the FIX node's leaves are promoted toward the
+           body head — the FIX node becomes the body's head node (for the
+           recursive demo, a LAM) so the enclosing APP can then beta-reduce.
+        2. Recursion-use coupling: every recursion-use Var node bound to
+           this FIX (found by use_to_binder addressing, spec §1.2) receives
+           the SAME body head — `f` inside the body is replaced by a fresh
+           copy of `Fix f. body`. This is what makes the unfold recursive:
+           after the substitution the inner `f` use can unfold again.
+
+        The FIX `kind` leaf and each recursion-use `kind` leaf are coupled
+        by a single 256x256 two-leaf `fix_transition_gate` (the §1.1
+        binding-as-entanglement anchor); the remaining body-head leaves
+        (type/bid/value/tobl) are propagated by factored single-leaf gates,
+        exactly mirroring `_beta_moves`' head-promotion pattern.
+
+        Returns (single_leaf_moves, two_leaf_gates). Raises
+        MeraEvalBudgetExceeded if an unfold would need to replicate body
+        structure into a use site that the encoder reserved no node budget
+        for (over-budget unfold — spec §7.2, §8.2: raise, do not truncate).
         """
         meta = self.meta
         kids = meta.children_of_node.get(node, [])
         if not kids:
-            return []
+            return [], []
         body = kids[0]
-        moves = []
-        # One-layer unfold: promote body's leaves into the FIX node.
-        for sp in ("kind", "type", "bid", "value", "tobl"):
+        body_kind = _leaf_argmax(state, _kind_leaf(meta, body))
+        fix_kind = _leaf_argmax(state, _kind_leaf(meta, node))
+        uses = self._fix_recursion_uses(node)
+
+        # ---- budget guard (spec §7.2 / §8.2) ----------------------------
+        # A one-layer unfold propagates the body HEAD (one node's 5 leaves)
+        # into the FIX node and into each recursion-use Var node — that is
+        # always representable (a use node owns its own 5 leaves). The
+        # over-budget case is structural: the encoder packed the program
+        # into `n_nodes` of a fixed `n_nodes_max` budget, and a recursive
+        # unfold conceptually appends a body copy. M2 propagates head
+        # layers in place rather than growing the tree, but if the program
+        # already fills the entire encoder node budget AND the body head
+        # is a compound node (so further unfolds would need fresh nodes to
+        # represent the replicated subtree beneath a use site), the next
+        # unfold has nowhere to materialize — an over-budget configuration.
+        # Raise rather than silently truncating structure (spec §8.2).
+        body_children = meta.children_of_node.get(body, [])
+        n_nodes_max = getattr(meta, "n_nodes_max", None)
+        if (uses and body_children and n_nodes_max is not None
+                and meta.n_nodes >= n_nodes_max):
+            raise MeraEvalBudgetExceeded(
+                f"R-Fix unfold at node {node}: program fills the encoder "
+                f"node budget ({meta.n_nodes}/{n_nodes_max}) and the body "
+                f"head is compound — a further unfold has no node budget "
+                f"to materialize the replicated subtree (over-budget "
+                f"unfold; spec §7.2, §8.2)")
+
+        moves: list[tuple[int, int, int]] = []
+        pair_gates = []
+
+        # (1) Promote body head into the FIX node. The `kind` leaf is
+        #     handled jointly with the use coupling below; the rest are
+        #     factored single-leaf moves.
+        for sp in ("type", "bid", "value", "tobl"):
             fix_leaf = meta.layout.leaf_of(node, sp)
             body_leaf = meta.layout.leaf_of(body, sp)
             moves.append((fix_leaf, _leaf_argmax(state, fix_leaf),
                           _leaf_argmax(state, body_leaf)))
+        # Collapse the (now-promoted) body node's leaves to PAD.
         for sp in ("kind", "type", "bid", "value", "tobl"):
             leaf = meta.layout.leaf_of(body, sp)
             cur = _leaf_argmax(state, leaf)
             tgt = KIND_PAD if sp == "kind" else 0
             moves.append((leaf, cur, tgt))
-        return moves
+
+        # (2) Recursion-use coupling. Each recursion-use Var receives the
+        #     body head. The kind leaves of the FIX node and the use node
+        #     co-rotate through a single 256x256 two-leaf gate.
+        if not uses:
+            # No recursion use: the FIX `kind` still unfolds toward the
+            # body head on its own (single-leaf), mirroring effect (1).
+            fk = _kind_leaf(meta, node)
+            moves.append((fk, fix_kind, body_kind))
+        for use in uses:
+            use_kind_leaf = _kind_leaf(meta, use)
+            use_kind = _leaf_argmax(state, use_kind_leaf)
+            fk = _kind_leaf(meta, node)
+            # Joint FIX-kind <-> use-kind unfold: both swing toward the
+            # body head together. 256x256 two-leaf gate (spec §7.4).
+            g = fix_transition_gate(fix_kind, body_kind,
+                                    use_kind, body_kind, dt, lam)
+            pair_gates.append(((fk, use_kind_leaf), g))
+            # Remaining body-head leaves into the use node (factored).
+            for sp in ("type", "bid", "value", "tobl"):
+                use_leaf = meta.layout.leaf_of(use, sp)
+                body_leaf = meta.layout.leaf_of(body, sp)
+                moves.append((use_leaf, _leaf_argmax(state, use_leaf),
+                              _leaf_argmax(state, body_leaf)))
+        return moves, pair_gates

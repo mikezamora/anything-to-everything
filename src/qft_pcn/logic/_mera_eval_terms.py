@@ -149,6 +149,49 @@ def single_leaf_transition_gate(u_idx: int, r_idx: int, dt: float,
     return g.astype(complex)
 
 
+def fix_transition_gate(u_fix: int, r_fix: int, u_use: int, r_use: int,
+                        dt: float, lam: float) -> np.ndarray:
+    """A 256x256 FACTORED two-leaf imaginary-time gate propagating one
+    layer of a FIX body's head structure into a recursion-use Var node
+    (spec §7.2, §7.4).
+
+    The gate spans two leaves — the FIX node's `kind` leaf and a
+    recursion-use Var node's `kind` leaf — as a single 256x256 operator,
+    so the FIX/recursion-use coupling is one bounded two-leaf object (the
+    spec §7.4 "256x256 two-leaf gate" form; never a 16**k, k>2, operator,
+    spec §1.3). It is the *factored* form:
+
+        fix_transition_gate = G_fix (x) G_use
+
+    where G_fix swings the FIX node's kind leaf from its current basis
+    index `u_fix` toward the body head `r_fix`, and G_use swings the
+    recursion-use Var's kind leaf from `u_use` toward the SAME body head
+    `r_use`. Both factors are single_leaf_transition_gate's — the
+    well-tested per-leaf imaginary-time primitive.
+
+    Why factored, not entangling: the §1.1 binding-as-entanglement of the
+    FIX node and its recursion-use already RIDES the encoded MERA tree
+    (the use's bid leaf entangled with the FIX's bid leaf, M1 §5); the
+    transition gate's job is only to give imaginary-time evolution a
+    matrix element to relax through. The genuineness of the coupling is
+    that BOTH factors target the SAME `body head` index — the body head
+    is recovered by tree addressing (use_to_binder, spec §1.2), so the
+    recursion-use Var receives the body structure, not an independent
+    classical value. A factored (separable) gate also keeps the product
+    MERA a product under the MERA two-leaf-gate primitive's rank-1
+    re-split, so the unfold does not spuriously inflate bond dimension —
+    which is exactly the O(log N) tree-depth claim (spec §9.4).
+    """
+    g_fix = single_leaf_transition_gate(u_fix, r_fix, dt, lam)
+    g_use = single_leaf_transition_gate(u_use, r_use, dt, lam)
+    # 256x256 factored two-leaf gate: G_fix (x) G_use. einsum keeps the
+    # tensor-product contraction explicit and within the two-leaf budget.
+    dim = MERA_LEAF_DIM
+    gate = np.einsum('ab,cd->acbd', g_fix, g_use,
+                     optimize='greedy').reshape(dim * dim, dim * dim)
+    return gate.astype(complex)
+
+
 # Arithmetic / comparison result tables (operator content, spec §7.4).
 _ARITH_FN = {
     VALUE_PLUS:  lambda a, b: a + b,
