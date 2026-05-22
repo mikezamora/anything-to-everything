@@ -1,11 +1,14 @@
 /**
  * Logic panel — a D3 schematic of the logic encoder: the `n_sites` MPS site
- * chain along the bottom, a balanced AST drawn above it (one node per rule
- * term, `term_count` leaves), and binder-entanglement arcs joining sites whose
- * opacity tracks the encoder's lambda weights (beta / arith / if).
+ * chain along the bottom, the AST/rule terms drawn above it, and
+ * binder-entanglement arcs joining sites whose opacity tracks the encoder's
+ * lambda weights (beta / arith / if).
  *
- * The `snapshot_logic` extractor only exposes scalar metadata, so the tree is
- * schematic: it shows structure and weighting, not a concrete parsed AST.
+ * When `snapshot_logic` supplies a real `terms` list (one `{rule_id, site,
+ * arity}` per `EvalTerm`), each term is drawn as a node anchored at its
+ * `site` along the chain, labelled by `rule_id`, with an arity-wide arc.
+ * When `terms` is empty/absent the panel falls back to a schematic balanced
+ * binary tree built from `term_count`.
  *
  * Reads `frame.layer_states.logic` (shape: `snapshot_logic`).
  */
@@ -16,12 +19,29 @@ import type { Frame } from '../lib/types';
 import { PanelShell } from './PanelShell';
 import { useSize } from './common';
 
+interface LogicTerm {
+  rule_id: string;
+  site: number;
+  arity: number;
+}
+
 interface LogicState {
   n_sites?: number | null;
   term_count?: number | null;
+  terms?: LogicTerm[] | null;
   lambda_beta?: number | null;
   lambda_arith?: number | null;
   lambda_if?: number | null;
+}
+
+// Stable colour per rule family, so the same rule reads the same everywhere.
+function ruleColor(ruleId: string): string {
+  const r = ruleId.toLowerCase();
+  if (r.includes('beta')) return '#5fd0c8';
+  if (r.includes('arith')) return '#d0a05f';
+  if (r.includes('cmp')) return '#d05f8f';
+  if (r.includes('if')) return '#a05fd0';
+  return '#5f8fd0';
 }
 
 function LogicDiagram({ st }: { st: LogicState }) {
@@ -67,35 +87,94 @@ function LogicDiagram({ st }: { st: LogicState }) {
       }
     });
 
-    // --- AST tree (balanced binary) above the arcs -----------------------
-    const leaves = Math.max(1, termCount);
-    const depth = Math.ceil(Math.log2(leaves + 1));
+    const terms = (st.terms ?? []).filter(
+      (t) => t && Number.isFinite(t.site) && t.site >= 0 && t.site < nSites,
+    );
     const topY = 24;
     const astBottom = siteY - 90;
-    for (let d = 0; d <= depth; d++) {
-      const count = Math.min(leaves, 2 ** d);
-      const y = topY + (d / depth) * (astBottom - topY);
-      for (let i = 0; i < count; i++) {
-        const x = mx + ((i + 0.5) / count) * (width - 2 * mx);
+
+    if (terms.length > 0) {
+      // --- real AST/rule terms: one node per term, anchored at its site --
+      // Stack terms that share a site so labels do not collide.
+      const perSite = new Map<number, number>();
+      terms.forEach((t) => {
+        const slot = perSite.get(t.site) ?? 0;
+        perSite.set(t.site, slot + 1);
+        const x = xOf(t.site);
+        const y = astBottom - slot * 30;
+        const color = ruleColor(t.rule_id);
+
+        // arity arc: spans `site .. site + arity - 1` along the chain.
+        const reach = Math.min(nSites - 1, t.site + Math.max(1, t.arity) - 1);
+        const xr = xOf(reach);
+        svg
+          .append('path')
+          .attr(
+            'd',
+            `M${x},${y} Q${(x + xr) / 2},${y - 24} ${xr},${siteY}`,
+          )
+          .attr('fill', 'none')
+          .attr('stroke', color)
+          .attr('stroke-width', 1.5)
+          .attr('opacity', 0.5);
+        // connector down to the term's anchor site.
+        svg
+          .append('line')
+          .attr('x1', x)
+          .attr('y1', y)
+          .attr('x2', x)
+          .attr('y2', siteY)
+          .attr('stroke', color)
+          .attr('stroke-width', 1)
+          .attr('opacity', 0.35);
+
         svg
           .append('circle')
           .attr('cx', x)
           .attr('cy', y)
-          .attr('r', d === depth ? 4 : 6)
-          .attr('fill', d === depth ? '#d0a05f' : '#5f8fd0')
-          .attr('stroke', '#0b0e14');
-        if (d > 0) {
-          const pCount = Math.min(leaves, 2 ** (d - 1));
-          const pi = Math.floor(i / 2);
-          const px = mx + ((pi + 0.5) / pCount) * (width - 2 * mx);
-          const py = topY + ((d - 1) / depth) * (astBottom - topY);
+          .attr('r', 7)
+          .attr('fill', color)
+          .attr('stroke', '#0b0e14')
+          .append('title')
+          .text(`${t.rule_id} @ site ${t.site} (arity ${t.arity})`);
+        svg
+          .append('text')
+          .attr('x', x + 11)
+          .attr('y', y + 3)
+          .attr('fill', '#9aa6c8')
+          .attr('font-size', 9)
+          .attr('text-anchor', 'start')
+          .text(t.rule_id);
+      });
+    } else {
+      // --- schematic fallback: balanced binary tree from term_count ------
+      const leaves = Math.max(1, termCount);
+      const depth = Math.ceil(Math.log2(leaves + 1));
+      for (let d = 0; d <= depth; d++) {
+        const count = Math.min(leaves, 2 ** d);
+        const y = topY + (d / depth) * (astBottom - topY);
+        for (let i = 0; i < count; i++) {
+          const x = mx + ((i + 0.5) / count) * (width - 2 * mx);
           svg
-            .append('line')
-            .attr('x1', px)
-            .attr('y1', py)
-            .attr('x2', x)
-            .attr('y2', y)
-            .attr('stroke', '#2f3a55');
+            .append('circle')
+            .attr('cx', x)
+            .attr('cy', y)
+            .attr('r', d === depth ? 4 : 6)
+            .attr('fill', d === depth ? '#d0a05f' : '#5f8fd0')
+            .attr('stroke', '#0b0e14');
+          if (d > 0) {
+            const pCount = Math.min(leaves, 2 ** (d - 1));
+            const pi = Math.floor(i / 2);
+            const px = mx + ((pi + 0.5) / pCount) * (width - 2 * mx);
+            const py = topY + ((d - 1) / depth) * (astBottom - topY);
+            svg
+              .append('line')
+              .attr('x1', px)
+              .attr('y1', py)
+              .attr('x2', x)
+              .attr('y2', y)
+              .attr('stroke', '#2f3a55');
+          }
         }
       }
     }
@@ -150,6 +229,7 @@ function LogicDiagram({ st }: { st: LogicState }) {
 export function LogicPanel({ frame }: { frame: Frame }) {
   const st = (frame.layer_states.logic ?? {}) as LogicState;
   const hasData = (st.n_sites ?? 0) > 0;
+  const nTerms = st.terms?.length ?? 0;
 
   return (
     <PanelShell
@@ -157,7 +237,9 @@ export function LogicPanel({ frame }: { frame: Frame }) {
       step={frame.step}
       meta={
         hasData
-          ? `${st.n_sites} sites · ${st.term_count ?? 0} terms`
+          ? `${st.n_sites} sites · ${
+              nTerms > 0 ? nTerms : st.term_count ?? 0
+            } terms`
           : undefined
       }
       hasData={hasData}

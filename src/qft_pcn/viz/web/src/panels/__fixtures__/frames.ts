@@ -93,8 +93,8 @@ export const hamiltonianFrame: Frame = {
     hamiltonian: {
       n_sites: 4,
       d_local: 2,
-      species_dims: [2, 2, 2, 2],
-      species: ['scalar', 'scalar', 'gauge', 'scalar'],
+      species_dims: [2, 2],
+      species: ['scalar', 'gauge'],
       curvature: [
         [0.0, 0.2, -0.1, 0.05],
         [0.2, 0.0, 0.3, -0.2],
@@ -166,6 +166,14 @@ export const logicFrame: Frame = {
     logic: {
       n_sites: 7,
       term_count: 12,
+      terms: [
+        { rule_id: 'R-Beta', site: 0, arity: 2 },
+        { rule_id: 'R-Beta', site: 3, arity: 2 },
+        { rule_id: 'R-Arith-Pre', site: 1, arity: 2 },
+        { rule_id: 'R-Arith-Post', site: 2, arity: 2 },
+        { rule_id: 'R-Cmp-Pre', site: 4, arity: 2 },
+        { rule_id: 'R-If', site: 5, arity: 2 },
+      ],
       lambda_beta: 1.0,
       lambda_arith: 0.5,
       lambda_if: 0.75,

@@ -1,7 +1,9 @@
 /**
  * Hamiltonian panel — a D3 term-coupling heatmap. The `curvature` matrix is a
  * site-by-site coupling map; each cell is coloured by its (curvature-weighted)
- * per-term energy contribution, with site species labels along the axes.
+ * per-term energy contribution. Axes are labelled by site index. `species` is
+ * the Hamiltonian's *field-species* list (one entry per species, NOT per
+ * site), shown as a separate legend.
  *
  * Reads `frame.layer_states.hamiltonian` (shape: `snapshot_hamiltonian`).
  */
@@ -79,9 +81,8 @@ function Heatmap({
       }
     }
 
-    // axis labels — site index + species name.
+    // axis labels — site index only (rows + columns are sites).
     for (let i = 0; i < n; i++) {
-      const label = species[i] ? `${i}·${species[i].slice(0, 3)}` : `${i}`;
       g.append('text')
         .attr('x', -6)
         .attr('y', i * cell + cell / 2)
@@ -89,7 +90,7 @@ function Heatmap({
         .attr('font-size', 9)
         .attr('text-anchor', 'end')
         .attr('dy', 3)
-        .text(label);
+        .text(i);
       g.append('text')
         .attr('x', i * cell + cell / 2)
         .attr('y', -8)
@@ -97,6 +98,18 @@ function Heatmap({
         .attr('font-size', 9)
         .attr('text-anchor', 'middle')
         .text(i);
+    }
+
+    // species legend — the field-species list (one entry per species).
+    if (species.length > 0) {
+      svg
+        .append('text')
+        .attr('x', width - 8)
+        .attr('y', 14)
+        .attr('fill', '#7f8bb0')
+        .attr('font-size', 9)
+        .attr('text-anchor', 'end')
+        .text(`species: ${species.join(', ')}`);
     }
   }, [matrix, species, size]);
 
