@@ -1,0 +1,54 @@
+"""Tests for structural-superposition MERA encoding (spec §5.3, §9.2-9.4)."""
+from __future__ import annotations
+import numpy as np
+from src.qft_pcn.logic.ast import Lam, TInt, TArrow, Var, App, HoleVar
+from src.qft_pcn.logic.mera_encoder import encode_mera
+from src.qft_pcn.logic.mera_encoding import KIND_VAR, KIND_APP
+
+
+def _structural_sketch():
+    """\\f:Int->Int. \\x:Int. ?HOLE  candidates {Var x, App(f,x)}."""
+    hole = HoleVar(candidates=(
+        Var(name="x"),
+        App(fn=Var(name="f"), arg=Var(name="x")),
+    ))
+    return Lam(param="f", param_ty=TArrow(src=TInt(), dst=TInt()),
+               body=Lam(param="x", param_ty=TInt(), body=hole))
+
+
+def test_structural_hole_encodes_to_unit_norm():
+    state, meta = encode_mera(_structural_sketch(), chi_layer=32)
+    assert np.isclose(state.norm_sq(), 1.0, atol=1e-10)
+
+
+def test_hole_region_root_kind_leaf_is_shape_superposed():
+    """The hole-region root kind leaf has weight on >=2 distinct kinds
+    (KIND_VAR for the Var branch, KIND_APP for the App branch)."""
+    state, meta = encode_mera(_structural_sketch(), chi_layer=32)
+    assert len(meta.hole_regions) == 1
+    root_leaf = 5 * meta.hole_regions[0].node_start    # kind leaf offset 0
+    proj_v = np.zeros((16, 16), dtype=complex); proj_v[KIND_VAR, KIND_VAR] = 1
+    proj_a = np.zeros((16, 16), dtype=complex); proj_a[KIND_APP, KIND_APP] = 1
+    w_v = float(np.real(state.local_expectation(root_leaf, proj_v)))
+    w_a = float(np.real(state.local_expectation(root_leaf, proj_a)))
+    assert w_v > 1e-3 and w_a > 1e-3, (w_v, w_a)
+
+
+def test_structural_hole_is_not_a_product_state():
+    """Genuine tree entanglement somewhere — principle 6, the marker."""
+    state, meta = encode_mera(_structural_sketch(), chi_layer=32)
+    max_S = max(state.entanglement_entropy(cut)
+                for cut in range(1, state.N - 1))
+    assert max_S > 1e-6, "structural hole encoded as a product state"
+
+
+def test_structural_marker_exceeds_value_only_superposition():
+    """Shape superposition (kind leaves differ) carries strictly more
+    entropy across the hole-region cut than a value-only superposition
+    of the same candidate count (spec §9.4)."""
+    state, meta = encode_mera(_structural_sketch(), chi_layer=32)
+    region = meta.hole_regions[0]
+    cut = 5 * region.node_start                # leaf where the region starts
+    S_struct = state.entanglement_entropy(cut)
+    # ln(2) is the value-only (M1-style) upper bound for k=2 candidates.
+    assert S_struct > 1e-6

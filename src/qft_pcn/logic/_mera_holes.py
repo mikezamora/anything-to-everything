@@ -42,7 +42,8 @@ from __future__ import annotations
 
 import numpy as np
 
-from .mera_encoding import MERA_LEAF_DIM, SPECIES_LEAF_OFFSET
+from .mera_encoding import MERA_LEAF_DIM, SPECIES_LEAF_OFFSET, LEAVES_PER_NODE
+from .encoding import KIND_PAD as _ENC_KIND_PAD, BID_0
 from src.qft_pcn.qft.mera import MERA
 
 
@@ -152,3 +153,151 @@ def encode_hole_state(
     terms = build_hole_terms(base_leaf_vectors, holes)
     state = MERA.from_term_superposition(terms, chi_layer=chi_layer)
     return state
+
+
+# ---- structural-hole superposition (spec §5.3, the M3 rank-k state) ------
+
+
+def _pad_leaf_vec() -> np.ndarray:
+    """Shape-pad leaf vector: kind = KIND_PAD, others zero-padded.
+
+    Used to fill the trailing slots of a hole region for branches whose
+    candidate sub-tree has fewer than n_max nodes. This is what makes
+    branches differ on the `kind` leaves — KIND_PAD vs a real kind —
+    so the superposition is genuinely shape-varying (spec §5.3).
+    """
+    v = np.zeros(MERA_LEAF_DIM, dtype=complex)
+    v[_ENC_KIND_PAD] = 1.0
+    return v
+
+
+def structural_hole_branches(region, sketch_scope, layout):
+    """Build the k per-branch leaf-vector lists for one structural hole.
+
+    Each branch j is the concrete leaf assignment of the hole region
+    committed to candidate j (spec §5.3):
+
+      1. Candidate j is serialized pre-order to n_j nodes; node m writes
+         its five 16-dim one-hot leaf vectors into region node slot m
+         (reuses ``node_leaf_vectors``).
+      2. Region node slots ``[n_j, n_max)`` are filled with PAD-leaf
+         vectors so branches differ on the ``kind`` leaves: ``KIND_PAD``
+         vs a real kind. This shape-pad mechanism is what makes branches
+         structurally distinct.
+      3. Each ``Var`` inside candidate j has its ``bid`` leaf set to the
+         depth-relative bid index of the binder it references in
+         ``sketch_scope`` (the lexical binders in scope at the hole
+         position).
+      4. Branch j writes a distinct witness index on the region root
+         node's ``value`` leaf so the k branch directions are mutually
+         orthogonal — the analytic analog of M1's CNOT-like witness
+         mark. Without this, branches with shape-pad-only differences
+         could collapse to a product state.
+
+    Parameters
+    ----------
+    region : HoleRegion
+        ``node_start`` is the expanded-layout pre-order index of the
+        region's root; ``n_max`` is the max candidate node count;
+        ``candidate_branches`` is the list of candidate sub-tree ASTs.
+    sketch_scope : list
+        The list of in-scope binders at the hole position, innermost
+        last. Used to resolve each candidate ``Var`` name to its
+        depth-relative bid index.
+    layout : MeraLayout
+        The expanded layout (already sized for the region's n_max slots).
+
+    Returns
+    -------
+    list[dict[int, np.ndarray]]
+        One dict per branch ``j``; each maps absolute leaf index ->
+        leaf-vector overrides for the 5*n_max region leaves. The caller
+        merges these with the concrete-node leaf vectors to form the
+        per-branch full leaf list passed to ``MERA.from_term_superposition``.
+    """
+    # Import inside the function to avoid a circular import with
+    # _mera_leaves (which itself imports from this module's neighbors).
+    from ._mera_leaves import node_leaf_vectors
+    from ._serialize import serialize_preorder
+    from ._types import compute_site_types
+    from ._typing_extension import compute_tobl_tags
+    from .ast import Lam
+
+    k = len(region.candidate_branches)
+    if k == 0:
+        raise ValueError("structural hole has no candidates")
+    if k > MERA_LEAF_DIM - 1:
+        raise ValueError(
+            f"too many structural candidates ({k}); witness slots "
+            f"available: {MERA_LEAF_DIM - 1}")
+
+    branch_overrides: list[dict[int, np.ndarray]] = []
+    pad_vec = _pad_leaf_vec()
+
+    for j, candidate in enumerate(region.candidate_branches):
+        # Wrap the candidate in the sketch's binder stack so the M1
+        # front-half (resolve_binders + serialize_preorder +
+        # compute_site_types) resolves each Var to the correct binder
+        # WITHOUT us re-deriving bid index math. We then slice off the
+        # wrapper-binder sites to get exactly the candidate's per-node
+        # leaf vectors.
+        wrapped = candidate
+        # sketch_scope is innermost-last; wrap from innermost outward.
+        for binder in reversed(sketch_scope):
+            if not isinstance(binder, Lam):
+                raise ValueError(
+                    f"sketch_scope must contain Lam binders only; "
+                    f"got {type(binder).__name__}")
+            wrapped = Lam(param=binder.param,
+                          param_ty=binder.param_ty,
+                          body=wrapped)
+        # Serialize the closed sub-program.
+        n_scope = len(sketch_scope)
+        n_cand_nodes = 0
+        # Count just the candidate nodes (wrapped has n_scope extra Lams).
+        from ._serialize import count_nodes as _count_nodes
+        n_cand_nodes = _count_nodes(wrapped) - n_scope
+        if n_cand_nodes > region.n_max:
+            raise ValueError(
+                f"candidate {j} has {n_cand_nodes} nodes, exceeds "
+                f"n_max={region.n_max}")
+        sites = serialize_preorder(wrapped, N=n_scope + region.n_max)
+        type_tags = compute_site_types(wrapped, sites)
+        compute_tobl_tags(wrapped, sites)
+        # The candidate's sites begin at index n_scope (the wrappers are
+        # the first n_scope pre-order sites). The next n_cand_nodes sites
+        # are the candidate's nodes; the remainder are PAD (from
+        # serialize_preorder's tail-padding) which we override with
+        # shape-pad vectors below.
+        overrides: dict[int, np.ndarray] = {}
+        for m in range(region.n_max):
+            cand_site_idx = n_scope + m
+            region_node_idx = region.node_start + m
+            base_leaf = LEAVES_PER_NODE * region_node_idx
+            if m < n_cand_nodes:
+                five = node_leaf_vectors(sites[cand_site_idx],
+                                         type_tags[cand_site_idx])
+                for s_off in range(LEAVES_PER_NODE):
+                    overrides[base_leaf + s_off] = five[s_off]
+            else:
+                # Shape-pad: branches differ on the kind leaf here.
+                for s_off in range(LEAVES_PER_NODE):
+                    overrides[base_leaf + s_off] = pad_vec.copy()
+        # Witness mark on the region root node's `value` leaf. Use a
+        # distinct high basis index per branch j so branches with only
+        # shape-pad differences are still mutually orthogonal.
+        value_off = SPECIES_LEAF_OFFSET["value"]
+        root_value_leaf = LEAVES_PER_NODE * region.node_start + value_off
+        witness_vec = np.zeros(MERA_LEAF_DIM, dtype=complex)
+        # j+1 keeps index 0 unused (concrete branches' default "no value"
+        # state) and stays clear of any kind/type/bid/tobl tag because
+        # this is the `value` species and the region root in any branch
+        # has no semantically-meaningful value tag of its own.
+        witness_idx = witness_index(j)
+        if witness_idx >= MERA_LEAF_DIM:
+            raise ValueError(
+                f"witness index {witness_idx} out of leaf range")
+        witness_vec[witness_idx] = 1.0
+        overrides[root_value_leaf] = witness_vec
+        branch_overrides.append(overrides)
+    return branch_overrides
