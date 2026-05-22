@@ -12,6 +12,15 @@ recorded run to an MP4.
 - `runs.py` — `RunSpec` / `RunRegistry` / `run_simulation` (builds tiny
   substrates and yields one `Frame` per step).
 - `server.py` — FastAPI app: `/run`, `/ws/{run_id}`, `/export`.
+
+### Live vs. fixture-only layers
+
+`run_simulation` streams **live** data for 6 layers: `manifold`, `multifield`,
+`mps`, `hamiltonian`, `qpcn`, and `mera`. The `vqc` and `logic` panels are
+currently **fixture/demo-only** — their substrates are not yet wired into
+`run_simulation`, so those panels only render against test fixtures, never
+live simulation data. Wiring them up is future work (the plan deliberately
+scoped them as minimal/optional).
 - `manim/` — `render_layer` + per-layer `Scene` subclasses (optional).
 - `web/` — React + Vite frontend.
 
@@ -44,6 +53,9 @@ Rendering a recorded run to an MP4 needs Manim:
 ```bash
 pip install -e .[viz-manim]
 ```
+
+`/export` is an API-only endpoint (there is no UI button) — trigger it with a
+`POST /export` request.
 
 With Manim installed, `POST /export {"run_id": ..., "layer": "qpcn"}` schedules
 a background render job:

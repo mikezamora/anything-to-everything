@@ -1,6 +1,9 @@
 /**
- * Hand-written sample `Frame`s, one per layer, matching the dict shapes that
- * the `snapshot_*` functions in `src/qft_pcn/viz/snapshots.py` produce.
+ * Hand-written sample `Frame`s, one per layer, representative of the dict
+ * shapes that the `snapshot_*` functions in `src/qft_pcn/viz/snapshots.py`
+ * produce. The overall structure is accurate, but some param/species key
+ * names are illustrative rather than exact (e.g. `qpcnFrame.params` uses
+ * `mass/coupling/hopping` whereas live keys look like `A.mass`).
  * Used by panel smoke tests and as a manual reference for panel authors.
  */
 
@@ -68,6 +71,7 @@ export const multifieldFrame: Frame = {
         'beta|gamma': -0.3,
         'alpha|gamma': 0.15,
       },
+      mean_abs_coupling: 0.35,
       step: 3,
     },
   },

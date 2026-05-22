@@ -124,20 +124,20 @@ def build_scene_classes() -> dict:
         value_label = "energy"
 
     class ManifoldScene(LayerScene):
-        """Animate the recorded manifold free-energy curve."""
+        """Animate the recorded manifold mean-absolute-curvature curve."""
 
         layer = "manifold"
-        value_key = "free_energy"
-        title = "Manifold — free energy"
-        value_label = "F"
+        value_key = "mean_abs_ricci"
+        title = "Manifold — mean |Ricci|"
+        value_label = "mean |R|"
 
     class MultifieldScene(LayerScene):
-        """Animate the recorded multifield total free-energy curve."""
+        """Animate the recorded multifield mean-absolute-coupling curve."""
 
         layer = "multifield"
-        value_key = "free_energy"
-        title = "Multifield — free energy"
-        value_label = "F"
+        value_key = "mean_abs_coupling"
+        title = "Multifield — mean |coupling|"
+        value_label = "mean |g|"
 
     class GenericScene(LayerScene):
         """Fallback scene for layers without a dedicated visualization."""

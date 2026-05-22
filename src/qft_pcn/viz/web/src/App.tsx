@@ -1,7 +1,7 @@
 /**
  * App shell: a run-control bar, a left layer selector, a central panel area
- * (placeholder until Task 4 wires real per-layer panels), and a bottom
- * timeline scrubber.
+ * that renders the per-layer panel (`panelFor`) for the selected layer
+ * against the current streamed frame, and a bottom timeline scrubber.
  */
 
 import { useEffect, useRef, useState } from 'react';

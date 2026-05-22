@@ -178,9 +178,19 @@ def snapshot_multifield(mf: Any) -> dict:
         lambda: {f"{a}|{b}": float(v) for (a, b), v in mf.couplings.items()}
     )
 
+    # Cheap scalar series for line-plot consumers (e.g. the Manim scene):
+    # the mean absolute coupling strength. 0.0 when there are no couplings.
+    if couplings:
+        mean_abs_coupling = float(
+            np.mean([abs(v) for v in couplings.values()])
+        )
+    else:
+        mean_abs_coupling = 0.0
+
     return {
         "fields": fields,
         "couplings": couplings,
+        "mean_abs_coupling": mean_abs_coupling,
         "step": _safe(lambda: int(mf._step)),
     }
 

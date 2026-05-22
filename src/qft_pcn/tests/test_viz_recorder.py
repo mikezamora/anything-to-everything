@@ -202,6 +202,10 @@ def test_snapshot_multifield_contents():
         assert f["Pi"] is not None
     assert snap["couplings"] is not None
     assert snap["couplings"]["a|b"] == 0.1
+    # mean_abs_coupling is the cheap scalar series consumed by the Manim scene.
+    assert "mean_abs_coupling" in snap
+    assert isinstance(snap["mean_abs_coupling"], float)
+    assert snap["mean_abs_coupling"] == pytest.approx(0.1)
     assert snap["step"] == 0
 
 
