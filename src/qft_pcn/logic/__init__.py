@@ -66,6 +66,14 @@ from .evaluation_hamiltonian import (
 )
 from .compose import compose_hamiltonians, ComposedHamiltonian, IncompatibleHamiltonians
 
+# ---- Sub-project E: STLC synthesis (sub-project E) -----------------------
+from .synthesis import (
+    SynthesisProblem, IOExample, Completion, SynthesisResult,
+    HamiltonianWeights,
+    SynthesisError, SynthesisProblemError, SynthesisRuntimeError,
+    synthesize,
+)
+
 # ---- Sub-project D: constraint debugger ----------------------------------
 from .debugger import (
     NamedHamiltonianTerm,
@@ -116,4 +124,9 @@ __all__ = [
     "TermEvaluationError", "diagnose", "format_report",
     "register_explanation", "get_explanation", "clear_explanations",
     "register_stlc_seed_templates",
+    # Sub-project E: synthesis
+    "SynthesisProblem", "IOExample", "Completion", "SynthesisResult",
+    "HamiltonianWeights",
+    "SynthesisError", "SynthesisProblemError", "SynthesisRuntimeError",
+    "synthesize",
 ]

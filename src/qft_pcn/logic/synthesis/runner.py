@@ -156,14 +156,22 @@ def _evolve_with_blocks(
 ) -> None:
     """Imag-time evolve under H_eval gates + synth-block one-site gates.
 
-    Renormalizes every step.
+    Renormalizes every step. If renormalization fails (zero-norm — the
+    factored gates have driven the state to zero) we stop the phase
+    early and return; the caller treats this as best-effort.
     """
     for _ in range(steps):
         factored_trotter_step(
             state, H_eval, dt, imaginary=True, chi_max=chi_max,
         )
         _apply_synthesis_gates(state, synth_blocks, dt, imaginary=True)
-        state.normalize()
+        try:
+            state.normalize()
+        except ValueError:
+            # Zero-norm — bail out of this phase. The runner handles the
+            # state as-is for ranking; if ranking also explodes, the
+            # SynthesisResult's failure_mode classifies it.
+            return
 
 
 # ---- Public synthesize() --------------------------------------------------
