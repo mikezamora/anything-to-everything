@@ -168,6 +168,19 @@ class MeraEvalHamiltonian:
         # it live is unsafe once the body node's own collapse-to-PAD drain
         # begins (the target would flip toward PAD). See _beta_moves.
         self._beta_body_targets: dict[int, dict[str, int]] = {}
+        # Set of nodes that were genuinely BIN (arith/cmp) redexes at some
+        # point in this evolution -- recorded the first time the node's
+        # kind leaf shows appreciable KIND_BIN weight. `_arith_bin_unfinished`
+        # may NOT keep R-Arith / R-Cmp live on a node that was never BIN:
+        # nested beta promotes a body's IntLit result into the enclosing
+        # APP node, transiently giving that APP node a partial KIND_INT
+        # weight; without this guard the partial INT weight matches the
+        # arith "result in progress" condition and the rule fires SPURIOUSLY
+        # on the APP node, polluting its value leaf with a bogus arith
+        # result computed from its (non-operand) children. The set is
+        # populated by `_arith_bin_unfinished` itself on the way past
+        # (addressing-only read of the kind leaf, spec §1.2).
+        self._arith_node_was_bin: set[int] = set()
 
     def _enumerate_terms(self):
         terms = []
@@ -356,10 +369,78 @@ class MeraEvalHamiltonian:
         target = self._beta_body_targets.get(term.node)
         if target is None:
             return False
+        # Nested beta whose APP node is being collapsed by an outer beta:
+        # stand down, the outer reduction is consuming this node.
+        if self._node_under_collapse_by_outer_beta(term.node):
+            return False
         meta = self.meta
         for sp in ("kind", "type", "bid", "value", "tobl"):
             leaf = meta.layout.leaf_of(term.node, sp)
             if _leaf_weights(state, leaf)[target[sp]] < 0.999999:
+                return True
+        return False
+
+    def _node_under_collapse_by_outer_beta(self, node: int) -> bool:
+        """True if `node` lies inside some OTHER beta term's spent subtree
+        AND that outer beta has reached Stage C (the collapse drain is
+        underway: `_beta_body_targets[outer]` is set).
+        A nested inner beta whose own APP node is being collapsed by an
+        outer beta MUST stand down: the inner beta would otherwise keep
+        promoting its own APP node away from PAD while the outer collapse
+        drives it TOWARD PAD, and the two drives fight to a stalemate
+        (root cause of the E4 nested-beta orphan: site 2 not PAD). The
+        outer reduction is the parent; its collapse wins (spec §7.2 R-Beta:
+        the spent body subtree must reach PAD).
+        """
+        for outer_node in self._beta_body_targets.keys():
+            if outer_node == node:
+                continue
+            if node in self._beta_spent_subtree(outer_node):
+                return True
+        return False
+
+    def _beta_spent_subtree(self, node: int) -> list[int]:
+        """The nodes a beta redex at `node` collapses to PAD: the LAM
+        (`fn`), the argument, and the ENTIRE body subtree (recursively, via
+        children_of_node). Mirrors the collapse set built in `_beta_moves`
+        so the cleanup-liveness guard covers exactly what is collapsed."""
+        meta = self.meta
+        kids = meta.children_of_node.get(node, [])
+        if len(kids) < 2:
+            return []
+        fn, arg = kids[0], kids[1]
+        fn_kids = meta.children_of_node.get(fn, [])
+        if not fn_kids:
+            return []
+        body = fn_kids[0]
+        return [fn, arg] + self._subtree_nodes(body)
+
+    def _beta_cleanup_unfinished(self, state: MERA, term: MeraEvalTerm) -> bool:
+        """True if `term` is an R-Beta redex that has reached Stage C (the
+        body head has been snapshotted, so the collapse drain is underway)
+        but its spent subtree is NOT yet fully PAD.
+
+        The R-Beta penalty product P[APP].P[LAM] reads 0 the instant the
+        LAM collapses, and `_beta_app_unfinished` only keeps the redex live
+        until the APP node finishes receiving the body head. But the spent
+        body subtree collapse can outlast the APP-node promotion — crucially
+        when the body is itself a NESTED beta redex (E4): the inner beta
+        promotes its result INTO the body APP node, so that node only
+        starts collapsing to PAD AFTER the inner reduction finishes, well
+        after the outer APP node is promoted. Without this guard the outer
+        R-Beta gate stops the moment the APP node is done, stranding the
+        nested inner APP node non-PAD — the decoder then rejects it as an
+        orphan site. Mirrors `_if_cleanup_unfinished`: R-Beta stays live
+        until EVERY node in its (recursively enumerated) spent subtree has
+        fully reached KIND_PAD (spec §7.4: drive to FULL reduction)."""
+        if term.rule_id != RULE_R_BETA:
+            return False
+        if term.node not in self._beta_body_targets:
+            return False  # Stage C not reached — collapse not yet underway.
+        meta = self.meta
+        for cnode in self._beta_spent_subtree(term.node):
+            w = _leaf_weights(state, meta.layout.leaf_of(cnode, "kind"))
+            if w[KIND_PAD] < 0.999999:
                 return True
         return False
 
@@ -391,6 +472,18 @@ class MeraEvalHamiltonian:
         # node has appreciable PAD weight, this rule stands down.
         w_pad = float(w_kind[KIND_PAD]) if KIND_PAD < w_kind.shape[0] else 0.0
         if w_pad > 1e-6:
+            return False
+        # Record a node the first time it is observed with appreciable BIN
+        # weight. Only nodes in this set are genuine arith/cmp redexes; for
+        # any other node the "result in progress" pattern is a transient of
+        # an UNRELATED reduction (e.g. nested beta promoting an IntLit into
+        # an enclosing APP node) and must NOT keep R-Arith / R-Cmp live --
+        # otherwise the rule spuriously fires on that node and pollutes its
+        # value leaf with a bogus arith result (root cause of the E4 value
+        # corruption; see __init__ note).
+        if w_bin > 1e-3:
+            self._arith_node_was_bin.add(node)
+        if node not in self._arith_node_was_bin:
             return False
         # Reduction in progress: some BIN weight has already moved toward
         # the result kind, but the result is not yet fully resolved.
@@ -427,7 +520,8 @@ class MeraEvalHamiltonian:
         if self.term_energy(state, term) < 1e-9:
             if (not self._arith_bin_unfinished(state, term)
                     and not self._if_cleanup_unfinished(state, term)
-                    and not self._beta_app_unfinished(state, term)):
+                    and not self._beta_app_unfinished(state, term)
+                    and not self._beta_cleanup_unfinished(state, term)):
                 return []
         meta = self.meta
         node = term.node
@@ -701,6 +795,12 @@ class MeraEvalHamiltonian:
         """
         meta = self.meta
         if len(kids) < 2:
+            return []
+        # Nested beta whose APP node is being collapsed by an outer beta:
+        # stand down so the parent reduction's collapse drives this node
+        # cleanly to PAD (spec §7.2 R-Beta; root cause of the E4 nested-
+        # beta orphan if not enforced).
+        if self._node_under_collapse_by_outer_beta(node):
             return []
         fn, arg = kids[0], kids[1]
         fn_kids = meta.children_of_node.get(fn, [])
