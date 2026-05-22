@@ -113,8 +113,22 @@
 
 .panel-area {
   flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+}
+
+.panel-area > * {
+  flex: 1;
+  min-width: 0;
+}
+
+.panel-area > .empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   padding: 1rem;
-  overflow: auto;
 }
 
 .panel-area h2 {

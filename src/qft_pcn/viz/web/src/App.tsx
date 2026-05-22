@@ -10,6 +10,7 @@ import { Timeline } from './components/Timeline';
 import { connectRun } from './lib/ws';
 import type { RunHandle } from './lib/ws';
 import { LAYER_KEYS } from './lib/types';
+import { panelFor } from './panels';
 import { useVizStore } from './store';
 import './App.css';
 
@@ -95,15 +96,18 @@ function RunControls() {
 function PanelArea() {
   const selectedLayer = useVizStore((s) => s.selectedLayer);
   const frame = useVizStore((s) => s.currentFrame());
-  const layerState = frame?.layer_states[selectedLayer];
+  const Panel = panelFor(selectedLayer);
 
   return (
     <main className="panel-area">
-      <h2>{selectedLayer}</h2>
-      {layerState ? (
-        <pre>{JSON.stringify(layerState, null, 2)}</pre>
+      {!frame ? (
+        <p className="empty">
+          No frames yet — start a run to stream simulation data.
+        </p>
+      ) : !Panel ? (
+        <p className="empty">No panel registered for “{selectedLayer}”.</p>
       ) : (
-        <p className="empty">No data for this layer at the current step.</p>
+        <Panel frame={frame} />
       )}
     </main>
   );
