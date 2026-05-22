@@ -21,6 +21,8 @@ dependencies = [
 deepspeed = [
     "indextts[deepspeed]",
 ]
+viz = ["fastapi>=0.110", "uvicorn[standard]>=0.29", "websockets>=12"]
+viz-manim = ["manim>=0.18"]
 
 [tool.uv.workspace]
 members = [
