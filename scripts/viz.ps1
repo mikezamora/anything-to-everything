@@ -8,7 +8,7 @@
 #   - the React + Vite dev server via `pnpm dev` on http://localhost:5173
 #
 # Both run as background jobs; press Ctrl+C (or close the window) to stop.
-# Requires:  pip install -e .[viz]   and   pnpm install  (in viz/web).
+# Requires:  uv sync --extra viz   and   pnpm install  (in viz/web).
 
 $ErrorActionPreference = "Stop"
 
@@ -20,10 +20,10 @@ Write-Host "Starting QFT-PCN visualizer..." -ForegroundColor Cyan
 Write-Host "  backend : http://localhost:8000" -ForegroundColor DarkGray
 Write-Host "  frontend: http://localhost:5173" -ForegroundColor DarkGray
 
-# Backend: uvicorn FastAPI app.
+# Backend: uvicorn FastAPI app, launched in the uv-managed environment.
 $backend = Start-Process -PassThru -NoNewWindow -WorkingDirectory $repoRoot `
-    -FilePath "uvicorn" `
-    -ArgumentList "src.qft_pcn.viz.server:app", "--reload", "--port", "8000"
+    -FilePath "uv" `
+    -ArgumentList "run", "uvicorn", "src.qft_pcn.viz.server:app", "--reload", "--port", "8000"
 
 # Frontend: pnpm dev server.
 $frontend = Start-Process -PassThru -NoNewWindow -WorkingDirectory $webDir `

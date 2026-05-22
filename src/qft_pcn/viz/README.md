@@ -29,8 +29,8 @@ scoped them as minimal/optional).
 Install the FastAPI dependencies and run the server:
 
 ```bash
-pip install -e .[viz]
-uvicorn src.qft_pcn.viz.server:app --reload
+uv sync --extra viz
+uv run uvicorn src.qft_pcn.viz.server:app --reload
 ```
 
 The backend listens on http://localhost:8000 (`/health` is a liveness probe).
@@ -51,7 +51,7 @@ WebSocket.
 Rendering a recorded run to an MP4 needs Manim:
 
 ```bash
-pip install -e .[viz-manim]
+uv sync --extra viz-manim
 ```
 
 `/export` is an API-only endpoint (there is no UI button) — trigger it with a
@@ -81,8 +81,8 @@ The repo `conftest.py` imports the Unix-only `resource` module, so run the viz
 tests with `--noconftest`:
 
 ```bash
-python -m pytest src/qft_pcn/tests/test_viz_server.py -v --noconftest
-python -m pytest src/qft_pcn/tests/test_viz_manim.py -v --noconftest
+uv run pytest src/qft_pcn/tests/test_viz_server.py -v --noconftest
+uv run pytest src/qft_pcn/tests/test_viz_manim.py -v --noconftest
 ```
 
 The Manim render tests skip automatically when Manim is not installed.
