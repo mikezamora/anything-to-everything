@@ -8,8 +8,9 @@ evolution under H_typing + H_eval drives the MERA toward the normal form.
 The transition gates that GIVE evolution a matrix element to relax
 through are supplied by term_gates (spec §7.4).
 
-NO classical interpreter: this module never substitutes, never
-beta-reduces, never imports the AST module for walking.
+NO classical interpreter: this module never performs symbolic
+replacement, never rewrites redexes, never imports the AST module
+for walking.
 """
 from __future__ import annotations
 

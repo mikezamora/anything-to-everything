@@ -96,6 +96,12 @@ from .ast import (
     TNat, TList, TEq, TProp,
 )
 
+# ---- Sub-project M2: MERA-native Hamiltonians ----------------------------
+from .mera_typing_hamiltonian import MeraTypingHamiltonian, MeraTypingTerm
+from .mera_evaluation_hamiltonian import MeraEvalHamiltonian, MeraEvalTerm
+from .mera_compose import compose_mera_hamiltonians
+from .mera_evolution_logic import mera_trotter_step, mera_imaginary_evolve
+
 __all__ = [
     "encode", "decode", "sample", "DecodeResult", "ast_alpha_eq",
     "encode_mera", "decode_mera", "sample_mera", "MeraEncodingMeta",
@@ -140,4 +146,9 @@ __all__ = [
     "HamiltonianWeights",
     "SynthesisError", "SynthesisProblemError", "SynthesisRuntimeError",
     "synthesize",
+    # Sub-project M2: MERA Hamiltonians
+    "MeraTypingHamiltonian", "MeraTypingTerm",
+    "MeraEvalHamiltonian", "MeraEvalTerm",
+    "compose_mera_hamiltonians",
+    "mera_trotter_step", "mera_imaginary_evolve",
 ]
