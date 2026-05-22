@@ -75,6 +75,18 @@ def test_ws_streams_mera_layer():
         assert "mera" in first["layer_states"]
 
 
+def test_ws_streams_multifield_layer():
+    c = TestClient(app)
+    run_id = c.post("/run", json={"layers": ["multifield"],
+                                  "steps": 3, "grid": 8}).json()["run_id"]
+    with c.websocket_connect(f"/ws/{run_id}") as ws:
+        first = ws.receive_json()
+        mf = first["layer_states"]["multifield"]
+        assert "fields" in mf
+        assert "couplings" in mf
+        assert mf["couplings"]  # two field names -> non-empty coupling table
+
+
 def test_export_returns_job_id():
     c = TestClient(app)
     run_id = c.post("/run", json={"layers": ["manifold"],

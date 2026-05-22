@@ -17,6 +17,7 @@ from typing import Iterator
 import numpy as np
 
 from ..layer import LayerConfig
+from ..multifield import MultiFieldConfig, MultiFieldNetwork
 from ..network import NetworkConfig, QFTPCNNetwork
 from ..qft.hamiltonian import FieldSpecies
 from ..qft.mera import MERA
@@ -110,31 +111,54 @@ def _build_mera() -> MERA:
     return MERA.vacuum(_MERA_LEAVES, d_local=2, chi_layer=4)
 
 
+def _build_multifield(spec: RunSpec) -> MultiFieldNetwork:
+    """Build a small two-field `MultiFieldNetwork` on a shared manifold.
+
+    Two field names ("a", "b") so the coupling table is non-empty; the grid
+    is clamped small so a full run stays cheap.
+    """
+    n = min(spec.grid, _MAX_GRID)
+    rng = np.random.default_rng(0 if spec.seed is None else spec.seed)
+    cfg = MultiFieldConfig(
+        field_names=["a", "b"],
+        layer_configs={
+            "a": LayerConfig(channels=1),
+            "b": LayerConfig(channels=1),
+        },
+        coupling={("a", "b"): 0.0},
+        learn_coupling=True,
+    )
+    return MultiFieldNetwork(n, n, cfg, rng=rng)
+
+
 # ---- simulation driver -------------------------------------------------------
 
 def run_simulation(spec: RunSpec) -> Iterator[Frame]:
     """Run the requested substrate(s) and yield one `Frame` per step.
 
-    Layers are grouped by substrate: `manifold`/`multifield` share a
-    `QFTPCNNetwork`; `mps`/`qpcn`/`hamiltonian` share a `QPCN`; `mera` runs
-    standalone. Every active substrate contributes its snapshot to a single
-    Frame per step via the generic `Recorder.capture`, so one stream can carry
-    several layers at once. `vqc`/`logic` are accepted but not simulated here.
+    Layers are grouped by substrate: `manifold` runs on a `QFTPCNNetwork`;
+    `multifield` runs on its own real `MultiFieldNetwork`; `mps`/`qpcn`/
+    `hamiltonian` share a `QPCN`; `mera` runs standalone. Every active
+    substrate contributes its snapshot to a single Frame per step via the
+    generic `Recorder.capture`, so one stream can carry several layers at
+    once. `vqc`/`logic` are accepted but not simulated here.
     """
     requested = set(spec.layers)
     recorder = Recorder()
 
-    want_network = bool(requested & {"manifold", "multifield"})
+    want_network = "manifold" in requested
+    want_multifield = "multifield" in requested
     want_qpcn = bool(requested & {"mps", "qpcn", "hamiltonian"})
     want_mera = "mera" in requested
 
     # Fall back to the manifold substrate if nothing recognised was asked for,
     # so a stream always yields content rather than silently producing zero
     # frames.
-    if not (want_network or want_qpcn or want_mera):
+    if not (want_network or want_multifield or want_qpcn or want_mera):
         want_network = True
 
     net = _build_network(spec) if want_network else None
+    multifield = _build_multifield(spec) if want_multifield else None
     qpcn = _build_qpcn(spec) if want_qpcn else None
     mera = _build_mera() if want_mera else None
 
@@ -142,6 +166,17 @@ def run_simulation(spec: RunSpec) -> Iterator[Frame]:
     if net is not None:
         c = net.layers[0].phi.channels
         observation = np.zeros((c, net.manifold.nx, net.manifold.ny))
+
+    mf_observations = None
+    if multifield is not None:
+        # Each field's bottom layer sees a (C, Nx, Ny) observation; a shared
+        # zero field is sufficient to drive the coupled dynamics for viz.
+        mf_observations = {
+            name: np.zeros(
+                (layer.phi.channels,
+                 multifield.manifold.nx, multifield.manifold.ny))
+            for name, layer in multifield.fields.items()
+        }
 
     qpcn_targets = {(0, "A", "n"): 0.25} if qpcn is not None else {}
 
@@ -152,14 +187,11 @@ def run_simulation(spec: RunSpec) -> Iterator[Frame]:
 
         if net is not None:
             net.step(observation, learn=True)
-            net_snap = snapshots.snapshot_network(net)
-            if "manifold" in requested:
-                snaps["manifold"] = net_snap
-            if "multifield" in requested:
-                # No MultiFieldNetwork here; expose the multi-layer field
-                # data from the same network snapshot under the multifield
-                # key so the layer still receives content.
-                snaps["multifield"] = net_snap
+            snaps["manifold"] = snapshots.snapshot_network(net)
+
+        if multifield is not None:
+            multifield.step(mf_observations, learn=True)
+            snaps["multifield"] = snapshots.snapshot_multifield(multifield)
 
         if qpcn is not None:
             qpcn.observe(qpcn_targets, learn=True)
