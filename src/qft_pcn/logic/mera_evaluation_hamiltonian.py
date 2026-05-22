@@ -282,10 +282,29 @@ class MeraEvalHamiltonian:
         transients SUM and break strict monotonicity. The drain serves no
         decode or energy purpose, so it is removed: collapse drives only
         the kind leaf to PAD. The collapse is then exactly energy-monotone
-        (spec §7.4 / §13.1)."""
+        (spec §7.4 / §13.1).
+
+        The kind leaf can carry MORE THAN ONE non-PAD component during a
+        staged reduction — e.g. a BIN node that arith reduced to INT but
+        left a sliver of the original BIN weight when a parent collapse
+        made the arith rule stand down. A single (argmax -> PAD) move only
+        ever drains the dominant component, so a sub-dominant residue
+        (BIN here) would freeze. So one collapse move is emitted PER
+        populated non-PAD basis index: every component is driven to PAD,
+        and the leaf fully reaches KIND_PAD within the step budget. Each
+        move is its own |idx><idx| -> |PAD> drain, so the collapse stays
+        energy-monotone regardless of how many components it clears."""
         meta = self.meta
         kind_leaf = meta.layout.leaf_of(node, "kind")
-        return [(kind_leaf, _leaf_argmax(state, kind_leaf), KIND_PAD)]
+        w = _leaf_weights(state, kind_leaf)
+        moves = []
+        for idx in range(w.shape[0]):
+            if idx != KIND_PAD and w[idx] > 1e-9:
+                moves.append((kind_leaf, idx, KIND_PAD))
+        if not moves:
+            moves.append((kind_leaf, _leaf_argmax(state, kind_leaf),
+                          KIND_PAD))
+        return moves
 
     def _if_cleanup_unfinished(self, state: MERA, term: MeraEvalTerm) -> bool:
         """True if `term` is an R-If redex that has FIRED (the IF node is
@@ -317,6 +336,30 @@ class MeraEvalHamiltonian:
         for cnode in spent:
             w = _leaf_weights(state, meta.layout.leaf_of(cnode, "kind"))
             if w[KIND_PAD] < 0.999999:
+                return True
+        return False
+
+    def _beta_app_unfinished(self, state: MERA, term: MeraEvalTerm) -> bool:
+        """True if `term` is a beta redex that has reached Stage C (the
+        body-head promotion target has been snapshotted) but the APP node
+        has not yet fully received that body head.
+
+        Like _arith_bin_unfinished, this keeps the redex "live" past the
+        point where the factored R-Beta penalty product P[APP].P[LAM]
+        reads 0 because the spent LAM node has already begun collapsing to
+        PAD. Without it the APP-node promotion would freeze half-done once
+        the LAM factor vanished — so the LAM/arg collapse cannot be safely
+        overlapped with the promotion (spec §7.4: drive to FULL
+        reduction)."""
+        if term.rule_id != RULE_R_BETA:
+            return False
+        target = self._beta_body_targets.get(term.node)
+        if target is None:
+            return False
+        meta = self.meta
+        for sp in ("kind", "type", "bid", "value", "tobl"):
+            leaf = meta.layout.leaf_of(term.node, sp)
+            if _leaf_weights(state, leaf)[target[sp]] < 0.999999:
                 return True
         return False
 
@@ -383,7 +426,8 @@ class MeraEvalHamiltonian:
         # drive must run until the leaf is FULLY reduced).
         if self.term_energy(state, term) < 1e-9:
             if (not self._arith_bin_unfinished(state, term)
-                    and not self._if_cleanup_unfinished(state, term)):
+                    and not self._if_cleanup_unfinished(state, term)
+                    and not self._beta_app_unfinished(state, term)):
                 return []
         meta = self.meta
         node = term.node
@@ -479,12 +523,21 @@ class MeraEvalHamiltonian:
             # NOTE: the `u` carried in the move is argmax-derived and is
             # unreliable once the leaf has rotated past the 50% mark
             # (argmax flips to `r`, making the move look like a no-op).
-            # Only `r` is trusted; `u_eff` is recomputed from the leaf's
-            # actual weights as the dominant NON-r index.
+            # So if the carried `u` no longer has appreciable weight it is
+            # stale and `u_eff` is recomputed as the dominant NON-r index.
+            # But if the carried `u` IS still a populated non-r component
+            # it is trusted verbatim: a collapse move that explicitly
+            # enumerates EVERY populated component (see _collapse_moves)
+            # must drain exactly the component it names, not just whatever
+            # currently dominates -- otherwise a sub-dominant residue
+            # (e.g. a BIN sliver under an INT result) would never clear.
             w = _leaf_weights(state, leaf)
-            w_masked = w.copy()
-            w_masked[r] = -1.0
-            u_eff = int(np.argmax(w_masked))
+            if u != r and w[u] > 1e-9:
+                u_eff = u
+            else:
+                w_masked = w.copy()
+                w_masked[r] = -1.0
+                u_eff = int(np.argmax(w_masked))
             if u_eff == r or w[u_eff] <= 1e-9:
                 continue
             g = single_leaf_transition_gate(u_eff, r, dt, lam)
@@ -690,12 +743,19 @@ class MeraEvalHamiltonian:
                 routing_done = False
 
         # ---- Stage (C): promote the body head into the APP node ---------
-        # SEQUENCED: only once (A) is complete AND the body subtree holds
-        # no active eval redex (the staged inner redex has relaxed to its
-        # normal form). Promoting earlier would chase the inner redex's
-        # transient leaves and inject energy into the APP node.
+        # SEQUENCED: only once (A) is complete AND the body subtree's
+        # staged inner redex has essentially relaxed to its normal form
+        # (inner penalty < 1e-3 — the inner reduction rotation is >99.9%
+        # complete, so the body head argmax is stable and the snapshot
+        # below is accurate). Promoting while the inner redex was still
+        # mid-rotation would chase its transient argmax-flipping leaves.
+        # The 1e-3 threshold (rather than ~0) keeps the staged pipeline
+        # within the evolution's step budget without sacrificing the
+        # snapshot's correctness — promotion acts on the APP node, whose
+        # leaves are disjoint from the inner redex, so the small overlap
+        # with the inner reduction's tail is energy-neutral and monotone.
         inner_energy = self._subtree_eval_energy(state, body)
-        if not (routing_done and inner_energy < 1e-6):
+        if not (routing_done and inner_energy < 1e-3):
             return moves
 
         # Snapshot the body head the FIRST time it is in normal form.
@@ -710,22 +770,36 @@ class MeraEvalHamiltonian:
             }
         target = self._beta_body_targets[node]
 
-        # Promote the body head into the APP node toward the snapshot.
-        app_resolved = True
+        # Promote the body head into the APP node toward the SNAPSHOT.
+        # Because the target is the snapshot (not a live read of the body
+        # node), the promotion is fully decoupled from the body node's
+        # own state — the body node may collapse to PAD concurrently
+        # without disturbing the APP node's target.
         for sp in ("kind", "type", "bid", "value", "tobl"):
             app_leaf = meta.layout.leaf_of(node, sp)
-            r = target[sp]
-            moves.append((app_leaf, _leaf_argmax(state, app_leaf), r))
-            if _leaf_weights(state, app_leaf)[r] < 0.999:
-                app_resolved = False
+            moves.append((app_leaf, _leaf_argmax(state, app_leaf),
+                          target[sp]))
 
-        # Collapse the spent LAM, arg and old body nodes to PAD — only
-        # once the APP node has fully received the body head. Collapsing
-        # the body node earlier would corrupt the very leaves the APP
-        # node is still copying from. kind-first (see _collapse_moves).
-        if app_resolved:
-            for collapse in (fn, arg, body):
-                moves.extend(self._collapse_moves(state, collapse))
+        # Collapse the spent nodes to PAD, kind-first (see _collapse_moves),
+        # OVERLAPPED with the APP-node promotion: nothing reads their live
+        # leaves any more (the body head was snapshotted above), so
+        # collapsing concurrently keeps the staged pipeline within the
+        # evolution's step budget. Collapsing the LAM zeroes the P[LAM]
+        # factor of the R-Beta penalty product; the _beta_app_unfinished
+        # liveness guard keeps the R-Beta gate alive so the APP-node
+        # promotion still completes (spec §7.4: drive to FULL reduction).
+        #
+        # The collapse covers the WHOLE body subtree, not just the body
+        # head. The staged inner redex (e.g. arith on `2+1`) reduces the
+        # body head but leaves its spent operand nodes as orphaned
+        # literals; once R-Beta begins PADding the body head the inner
+        # rule stands down (a parent is collapsing it), so it can no
+        # longer finish collapsing its own operands. R-Beta, the parent
+        # reduction, therefore collapses every node strictly below the
+        # body head as well — the body subtree is fully cleared to PAD.
+        collapse_nodes = [fn, arg] + self._subtree_nodes(body)
+        for collapse in collapse_nodes:
+            moves.extend(self._collapse_moves(state, collapse))
         return moves
 
     def _fix_moves(self, state, node, dt, lam):
