@@ -16,7 +16,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable
 
-from .ast import Node, Var, Lam, App, IntLit, BoolLit, If, Bin, HoleVar
+from .ast import (Node, Var, Lam, App, IntLit, BoolLit, If, Bin, HoleVar,
+                  Zero, Succ, NatLit, Nil, Cons, Eq)
 from .encoding import (IllScopedVar, TooManyBinders, UnsupportedNode,
                        MAX_BINDER_DEPTH)
 
@@ -85,9 +86,21 @@ def resolve_binders(
             _walk(node.lhs)
             _walk(node.rhs)
             return
-        if isinstance(node, (IntLit, BoolLit)):
+        if isinstance(node, (IntLit, BoolLit, Zero, NatLit, Nil)):
             return
-        # Defensive: parser only emits the 7 node types handled above.
+        # --- extended-calculus structural nodes ---
+        if isinstance(node, Succ):
+            _walk(node.arg)
+            return
+        if isinstance(node, Cons):
+            _walk(node.head)
+            _walk(node.tail)
+            return
+        if isinstance(node, Eq):
+            _walk(node.lhs)
+            _walk(node.rhs)
+            return
+        # Defensive: only the supported node types reach here.
         raise UnsupportedNode(node_type=type(node).__name__)
 
     _walk(root)

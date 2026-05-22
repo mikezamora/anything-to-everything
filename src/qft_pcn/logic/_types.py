@@ -13,7 +13,8 @@ from __future__ import annotations
 from typing import Optional
 
 from .ast import (Node, Var, Lam, App, IntLit, BoolLit, If, Bin, HoleVar,
-                  Ty, TInt, TBool, TArrow)
+                  Ty, TInt, TBool, TArrow,
+                  Zero, Succ, NatLit, Nil, Cons, Eq, TNat, TList, TProp)
 from ._serialize import NodeOccupancy
 from .encoding import (
     KIND_VAR, KIND_LAM, KIND_APP, KIND_INT, KIND_BOOL, KIND_IF, KIND_BIN,
@@ -48,6 +49,16 @@ def ty_to_tag(ty: Ty) -> tuple[int, Optional[Ty]]:
         if src_tag in (TYPE_INT, TYPE_BOOL) and dst_tag in (TYPE_INT, TYPE_BOOL):
             return (_FLAT_ARROW_TAGS[(src_tag, dst_tag)], None)
         return (TYPE_ARR_NESTED, ty)
+    # Extended-calculus types (Nat / List / Prop) use the 16-slot type
+    # register of the MERA leaf (indices 8-11); no nested side table.
+    from .mera_encoding import TYPE_NAT, TYPE_LIST, TYPE_PROP
+    from .ast import TNat as _TNat, TList as _TList, TProp as _TProp
+    if isinstance(ty, _TNat):
+        return (TYPE_NAT, None)
+    if isinstance(ty, _TList):
+        return (TYPE_LIST, None)
+    if isinstance(ty, _TProp):
+        return (TYPE_PROP, None)
     raise TypeError(f"unknown Ty: {ty!r}")
 
 
@@ -90,6 +101,15 @@ def _compute_ast_type(node: Node, env: list[tuple[str, Ty]]) -> Ty:
         if node.op in ("<", "=="):
             return TBool()
         raise ValueError(f"unknown op {node.op}")
+    # --- extended-calculus nodes ---
+    if isinstance(node, (Zero, Succ, NatLit)):
+        return TNat()
+    if isinstance(node, Nil):
+        return TList(elem=TNat())
+    if isinstance(node, Cons):
+        return TList(elem=_compute_ast_type(node.head, env))
+    if isinstance(node, Eq):
+        return TProp()
     raise TypeError(f"unknown Node: {type(node).__name__}")
 
 

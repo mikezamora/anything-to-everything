@@ -25,7 +25,10 @@ from __future__ import annotations
 
 from typing import Optional
 
-from .ast import Node, Var, Lam, App, IntLit, BoolLit, If, Bin, HoleVar, Ty, TArrow
+from .ast import (
+    Node, Var, Lam, App, IntLit, BoolLit, If, Bin, HoleVar, Ty, TArrow,
+    Zero, Succ, NatLit, Nil, Cons, Eq,
+)
 from ._serialize import NodeOccupancy
 from ._types import ty_to_tag, _compute_ast_type
 from .encoding import (
@@ -63,7 +66,19 @@ def compute_tobl_tags(root: Node,
             sites[idx].nested_tobl_ty = obligation_ty
         site_iter[0] += 1
 
-        if isinstance(node, (Var, IntLit, BoolLit, HoleVar)):
+        if isinstance(node, (Var, IntLit, BoolLit, HoleVar, Zero, NatLit, Nil)):
+            return
+
+        # Extended-calculus structural nodes impose no parent type
+        # obligation on their children (M2 supplies the inductive rules).
+        if isinstance(node, Succ):
+            _emit(node.arg, TOBL_NONE, None, env)
+            return
+        if isinstance(node, (Cons, Eq)):
+            children = ((node.head, node.tail) if isinstance(node, Cons)
+                        else (node.lhs, node.rhs))
+            for child in children:
+                _emit(child, TOBL_NONE, None, env)
             return
 
         if isinstance(node, Lam):

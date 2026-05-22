@@ -16,11 +16,17 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Optional
 
-from .ast import Node, Var, Lam, App, IntLit, BoolLit, If, Bin, Ty, HoleVar
+from .ast import (
+    Node, Var, Lam, App, IntLit, BoolLit, If, Bin, Ty, HoleVar,
+    Zero, Succ, NatLit, Nil, Cons, Eq,
+)
 from .encoding import (
     KIND_PAD, KIND_VAR, KIND_LAM, KIND_APP, KIND_INT, KIND_BOOL,
     KIND_IF, KIND_BIN, BID_NONE,
     EncodingTooLarge, UnsupportedNode,
+)
+from .mera_encoding import (
+    KIND_ZERO, KIND_SUCC, KIND_NATLIT, KIND_NIL, KIND_CONS, KIND_EQ,
 )
 from ._resolve import resolve_binders
 
@@ -85,6 +91,14 @@ def count_nodes(root: Node) -> int:
         return (1 + count_nodes(root.cond) + count_nodes(root.then_b)
                 + count_nodes(root.else_b))
     if isinstance(root, Bin):
+        return 1 + count_nodes(root.lhs) + count_nodes(root.rhs)
+    if isinstance(root, (Zero, NatLit, Nil)):
+        return 1
+    if isinstance(root, Succ):
+        return 1 + count_nodes(root.arg)
+    if isinstance(root, Cons):
+        return 1 + count_nodes(root.head) + count_nodes(root.tail)
+    if isinstance(root, Eq):
         return 1 + count_nodes(root.lhs) + count_nodes(root.rhs)
     raise UnsupportedNode(node_type=type(root).__name__)
 
@@ -183,6 +197,31 @@ def serialize_preorder(root: Node, N: int) -> list[NodeOccupancy]:
         if isinstance(node, BoolLit):
             sites.append(NodeOccupancy(kind=KIND_BOOL, bool_val=node.val,
                                        ast_path=ast_path))
+            return
+        # --- extended-calculus nodes (Nat / List / Eq) ---
+        if isinstance(node, Zero):
+            sites.append(NodeOccupancy(kind=KIND_ZERO, ast_path=ast_path))
+            return
+        if isinstance(node, NatLit):
+            sites.append(NodeOccupancy(kind=KIND_NATLIT, int_val=node.val,
+                                       ast_path=ast_path))
+            return
+        if isinstance(node, Nil):
+            sites.append(NodeOccupancy(kind=KIND_NIL, ast_path=ast_path))
+            return
+        if isinstance(node, Succ):
+            sites.append(NodeOccupancy(kind=KIND_SUCC, ast_path=ast_path))
+            _emit(node.arg, ast_path + (0,))
+            return
+        if isinstance(node, Cons):
+            sites.append(NodeOccupancy(kind=KIND_CONS, ast_path=ast_path))
+            _emit(node.head, ast_path + (0,))
+            _emit(node.tail, ast_path + (1,))
+            return
+        if isinstance(node, Eq):
+            sites.append(NodeOccupancy(kind=KIND_EQ, ast_path=ast_path))
+            _emit(node.lhs, ast_path + (0,))
+            _emit(node.rhs, ast_path + (1,))
             return
         raise UnsupportedNode(node_type=type(node).__name__)
 

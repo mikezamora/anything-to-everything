@@ -327,6 +327,20 @@ def _alpha_eq(a: Node, b: Node, env_a: dict[str, int],
         return (a.op == b.op
                 and _alpha_eq(a.lhs, b.lhs, env_a, env_b, counter)
                 and _alpha_eq(a.rhs, b.rhs, env_a, env_b, counter))
+    # --- extended-calculus nodes ---
+    from .ast import Zero, Succ, NatLit, Nil, Cons, Eq
+    if isinstance(a, (Zero, Nil)):
+        return True   # type(a) is type(b) already checked; nullary nodes
+    if isinstance(a, NatLit):
+        return a.val == b.val
+    if isinstance(a, Succ):
+        return _alpha_eq(a.arg, b.arg, env_a, env_b, counter)
+    if isinstance(a, Cons):
+        return (_alpha_eq(a.head, b.head, env_a, env_b, counter)
+                and _alpha_eq(a.tail, b.tail, env_a, env_b, counter))
+    if isinstance(a, Eq):
+        return (_alpha_eq(a.lhs, b.lhs, env_a, env_b, counter)
+                and _alpha_eq(a.rhs, b.rhs, env_a, env_b, counter))
     return False
 
 

@@ -73,7 +73,17 @@ def _local_kind_type_value(occ: NodeOccupancy, type_tag: int
                 VALUE_TRUE if occ.bool_val else VALUE_FALSE)
     if kind == KIND_BIN:
         return (KIND_BIN, type_tag, BIN_VALUE_FROM_OP[occ.bin_op])
-    # VAR / LAM / APP / IF: value is NONE.
+    from .mera_encoding import KIND_NATLIT
+    if kind == KIND_NATLIT:
+        # A Peano-natural literal stores its value directly (no offset:
+        # Peano nats are >= 0, within the 16-slot value register).
+        if occ.int_val is None:
+            raise ValueError("KIND_NATLIT site missing int_val")
+        if not 0 <= occ.int_val < VALUE_CUTOFF:
+            raise IntLiteralOutOfRange(n=occ.int_val)
+        return (kind, type_tag, occ.int_val)
+    # VAR / LAM / APP / IF and the structural extended nodes
+    # (Zero / Succ / Nil / Cons / Eq): value is NONE.
     return (kind, type_tag, VALUE_NONE)
 
 
