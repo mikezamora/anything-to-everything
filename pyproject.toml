@@ -15,6 +15,8 @@ dependencies = [
     "tqdm>=4.65.0",
     "indextts",
     "jsonschema>=4.0,<5",
+    "numpy>=1.26,<2",
+    "scipy>=1.11",
 ]
 
 [project.optional-dependencies]
@@ -23,6 +25,15 @@ deepspeed = [
 ]
 viz = ["fastapi>=0.110", "uvicorn[standard]>=0.29", "websockets>=12"]
 viz-manim = ["manim>=0.18"]
+
+[dependency-groups]
+# Dev/test dependencies. uv installs these by default on `uv sync`.
+# The qft_pcn test suite requires pytest + pytest-timeout (the timeout
+# plugin is load-bearing — runaway MERA evolutions must be killable).
+dev = [
+    "pytest>=8",
+    "pytest-timeout>=2",
+]
 
 [tool.uv.workspace]
 members = [
