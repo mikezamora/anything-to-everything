@@ -29,3 +29,27 @@ def test_decode_application():
     assert isinstance(lam_f, Lam)
     app = lam_f.body.body
     assert isinstance(app, App)
+
+
+import numpy as np
+from src.qft_pcn.logic.mera_decoder import sample_mera
+
+
+def test_sample_returns_n_results():
+    state, meta = encode_mera(parse(r"\x:Int. x"))
+    out = sample_mera(state, meta, n_samples=3,
+                      rng=np.random.default_rng(0))
+    assert len(out) == 3
+    for r in out:
+        assert isinstance(r, DecodeResult)
+
+
+def test_sample_product_state_is_deterministic():
+    """For a concrete program (product state) every sample equals decode."""
+    from src.qft_pcn.logic.decoder import ast_alpha_eq
+    state, meta = encode_mera(parse(r"\x:Int. x + 1"))
+    det = decode_mera(state, meta)
+    rng = np.random.default_rng(7)
+    for _ in range(4):
+        s = sample_mera(state, meta, n_samples=1, rng=rng)[0]
+        assert ast_alpha_eq(s.ast, det.ast)
