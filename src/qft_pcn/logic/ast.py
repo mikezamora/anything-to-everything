@@ -465,18 +465,30 @@ def pretty(node: Node) -> str:
 
 @dataclass
 class HoleVar(Node):
-    """A variable-position hole with a candidate binder name list.
+    """A synthesis hole.
 
-    candidates: binder names admissible at this position (empty = any in-scope).
-    target_type: optional expected type for this hole (None = inferred).
-    name: optional diagnostic label.
-
-    Backward-compat: existing code constructs HoleVar(candidates=[...]) with
-    a list of strings. Sub-project E adds the target_type / name fields.
+    `candidates` is either:
+      - tuple[str, ...]  : binder-name candidates (var-hole; the M1 case);
+      - tuple[Node, ...] : AST sub-tree candidates (structural hole, M3 §5).
+    The two forms must NOT be mixed. An empty tuple is a var-hole meaning
+    "any in-scope binder", resolved at encode time.
     """
-    candidates: list[str]
+    candidates: tuple = ()
     target_type: "Ty | None" = None
     name: str = ""
+
+    def __post_init__(self) -> None:
+        has_str = any(isinstance(c, str) for c in self.candidates)
+        has_node = any(isinstance(c, Node) for c in self.candidates)
+        if has_str and has_node:
+            raise ValueError(
+                "HoleVar.candidates must not mix str and Node candidates")
+
+    def candidate_kind(self) -> str:
+        """'structural' if candidates are Node sub-trees, else 'var'."""
+        if any(isinstance(c, Node) for c in self.candidates):
+            return "structural"
+        return "var"
 
 
 @dataclass(frozen=True)
