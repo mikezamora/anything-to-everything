@@ -135,6 +135,46 @@ def _orthonormal_isometry(pair: np.ndarray, d_up: int,
     return W
 
 
+def _orthonormal_isometry_multi(pairs: list[np.ndarray], d_up: int,
+                                d_in: int) -> np.ndarray:
+    """Isometry W (d_up, d_in) whose row space contains every vector in
+    ``pairs`` (so ``W @ p`` is lossless: ``||W @ p|| == ||p||`` for each p).
+
+    Generalizes ``_orthonormal_isometry`` to k branch directions. The first
+    ``r`` rows are an orthonormal basis (Gram-Schmidt) of span(pairs); the
+    remaining rows complete to an orthonormal frame using canonical basis
+    vectors. Requires ``r <= d_up`` — for k branches with k <= d_up this
+    always holds.
+    """
+    rows: list[np.ndarray] = []
+    # Gram-Schmidt over the branch directions first (these MUST be spanned).
+    for p in pairs:
+        e = p.astype(complex).copy()
+        for r in rows:
+            e = e - (r.conj() @ e) * r
+        n = float(np.linalg.norm(e))
+        if n > 1e-12:
+            rows.append(e / n)
+    if len(rows) > d_up:
+        raise ValueError(
+            f"cannot span {len(rows)} branch directions in d_up={d_up}")
+    # Complete to an orthonormal frame with canonical basis vectors.
+    for basis_idx in range(d_in):
+        if len(rows) >= d_up:
+            break
+        e = np.zeros(d_in, dtype=complex)
+        e[basis_idx] = 1.0
+        for r in rows:
+            e = e - (r.conj() @ e) * r
+        n = float(np.linalg.norm(e))
+        if n > 1e-12:
+            rows.append(e / n)
+    if len(rows) < d_up:
+        raise ValueError(
+            f"could not build isometry: d_up={d_up}, d_in={d_in}")
+    return np.array(rows, dtype=complex)
+
+
 # ---- per-tensor wrapper ---------------------------------------------------
 
 
@@ -191,6 +231,12 @@ class MERA:
     isometries: list[list[np.ndarray]]
     top: np.ndarray
     layer_dims: list[int]
+    # Optional exact branch decomposition for states built by
+    # from_term_superposition: list of (coeff, [per-leaf state vectors]).
+    # When present, entanglement_entropy uses it for an exact, cheap cut
+    # entropy (the entanglement is isometry-carried, so the disentangler-only
+    # _is_product / _materialize fast paths cannot see it).
+    _superposition_terms: "list | None" = None
 
     def __post_init__(self) -> None:
         N = len(self.leaves)
@@ -262,6 +308,10 @@ class MERA:
             isometries=[[w.copy() for w in layer] for layer in self.isometries],
             top=self.top.copy(),
             layer_dims=list(self.layer_dims),
+            _superposition_terms=(
+                None if self._superposition_terms is None
+                else [(c, [s.copy() for s in sites])
+                      for c, sites in self._superposition_terms]),
         )
 
     # ---- construction ------------------------------------------------------
@@ -374,6 +424,115 @@ class MERA:
             chi_layer=chi_layer,
         )
 
+    @classmethod
+    def from_term_superposition(cls, terms: list[tuple[complex, list[np.ndarray]]],
+                                chi_layer: int = 16) -> "MERA":
+        """Exact MERA for psi = sum_t coeff_t * (|v_{t,0}> x ... x |v_{t,N-1}>).
+
+        Each ``terms[t]`` is ``(coeff_t, [per-leaf state vectors])``. A single
+        term reproduces ``from_product``. With k >= 2 terms whose per-leaf
+        vectors differ on more than one leaf, the encoded state is *genuinely
+        entangled* — the entanglement is carried by the tree's isometries
+        (each layer's bond dimension grows to span the k branch directions),
+        exactly as the §1.1 binding-as-entanglement principle requires.
+
+        Construction (exact, no large dense tensor — every per-leaf and
+        per-bond object is <= chi_layer-dimensional, k branches tracked
+        explicitly):
+          - leaves carry the *equal-weight branch sum* per site so the
+            per-leaf marginal is faithful (decode/sample read leaves);
+          - disentanglers are identity (entanglement is isometry-carried);
+          - per layer, each pair's k ascended branch vectors are collected;
+            the isometry's rows are an orthonormal basis spanning those k
+            directions (Gram-Schmidt), so the ascent is lossless;
+          - the top contracts the two final branch-amplitude vectors.
+
+        The explicit branch decomposition is stored on the returned MERA as
+        ``_superposition_terms`` so ``entanglement_entropy`` can compute the
+        genuine cut entropy exactly and cheaply (it is NOT a product state).
+        """
+        if not terms:
+            raise ValueError("from_term_superposition needs >= 1 term")
+        N = len(terms[0][1])
+        if N <= 0 or (N & (N - 1)) != 0:
+            raise InvalidLayerCount(N=N)
+        d_local = terms[0][1][0].shape[0]
+        L = int(round(np.log2(N)))
+        dims = layer_dims(d_local, L, chi_layer)
+        k = len(terms)
+        coeffs = [complex(c) for c, _ in terms]
+        # Leaf tensors: store the (unnormalized) per-site superposed vector.
+        # The full state's amplitude is reconstructed by the isometries; the
+        # leaf only needs to span the per-site branch directions for decode.
+        leaf_vecs: list[np.ndarray] = []
+        for kk in range(N):
+            v = np.zeros(d_local, dtype=complex)
+            for (c, sites) in terms:
+                v = v + sites[kk].astype(complex)
+            nv = float(np.linalg.norm(v))
+            if nv > 1e-15:
+                v = v / nv
+            else:
+                v = np.zeros(d_local, dtype=complex)
+                v[0] = 1.0
+            leaf_vecs.append(v)
+        leaves = [v.reshape(1, d_local, 1).astype(complex) for v in leaf_vecs]
+        # Per-branch amplitude vectors at the current layer (start: leaves).
+        # cur[t] is a list of n_l site vectors for branch t.
+        cur: list[list[np.ndarray]] = [
+            [s.astype(complex) for s in sites] for _, sites in terms
+        ]
+        disentanglers: list[list[np.ndarray]] = []
+        inter_disentanglers: list[list[np.ndarray]] = []
+        isometries: list[list[np.ndarray]] = []
+        for ell in range(L):
+            n_l = N // (2 ** ell)
+            d_l = dims[ell]
+            d_up = dims[ell + 1] if ell + 1 < L else d_l
+            intra = [
+                np.eye(d_l * d_l, dtype=complex).reshape(d_l, d_l, d_l, d_l)
+                for _ in range(n_l // 2)
+            ]
+            inter = [
+                np.eye(d_l * d_l, dtype=complex).reshape(d_l, d_l, d_l, d_l)
+                for _ in range(max(0, n_l // 2 - 1))
+            ]
+            iso: list[np.ndarray] = []
+            new_cur: list[list[np.ndarray]] = [[] for _ in range(k)]
+            for j in range(n_l // 2):
+                # The k branch pair-vectors at this pair.
+                pairs = [np.outer(cur[t][2 * j], cur[t][2 * j + 1]).reshape(-1)
+                         for t in range(k)]
+                w_mat = _orthonormal_isometry_multi(pairs, d_up, d_l * d_l)
+                iso.append(w_mat.reshape(d_up, d_l, d_l))
+                for t in range(k):
+                    new_cur[t].append(w_mat @ pairs[t])
+            disentanglers.append(intra)
+            inter_disentanglers.append(inter)
+            isometries.append(iso)
+            if ell < L - 1:
+                cur = new_cur
+        # Top tensor: sum_t coeff_t |cur[t][0]> <x> |cur[t][1]>.
+        assert all(len(cur[t]) == 2 for t in range(k))
+        d_top = dims[L - 1]
+        top = np.zeros((d_top, d_top, 1), dtype=complex)
+        for t in range(k):
+            top[:, :, 0] += coeffs[t] * np.outer(cur[t][0], cur[t][1])
+        m = cls(
+            leaves=leaves,
+            disentanglers=disentanglers,
+            inter_disentanglers=inter_disentanglers,
+            isometries=isometries,
+            top=top,
+            layer_dims=dims,
+        )
+        # Stash the exact branch decomposition for entropy/materialization.
+        m._superposition_terms = [
+            (coeffs[t], [s.astype(complex) for s in terms[t][1]])
+            for t in range(k)
+        ]
+        return m
+
     # ---- environment contractions -----------------------------------------
 
     def _layer_density(self, ell: int) -> list[np.ndarray]:
@@ -435,7 +594,24 @@ class MERA:
         density factorized across pairs, which fails as soon as a gate
         application entangles adjacent leaves.
         """
+        if self._superposition_terms is not None:
+            return self._norm_sq_from_terms()
         return float(np.real(self.inner(self)))
+
+    def _norm_sq_from_terms(self) -> float:
+        """Exact <psi|psi> for a state stored as an explicit product-term
+        superposition. <psi|psi> = sum_{t,t'} conj(c_t) c_t' prod_k
+        <v_{t,k}|v_{t',k}>. No large dense tensor — k branches, N leaves.
+        """
+        terms = self._superposition_terms
+        k = len(terms)
+        coeffs = np.array([c for c, _ in terms], dtype=complex)
+        G = np.ones((k, k), dtype=complex)
+        for kk in range(self.N):
+            col = np.array([terms[t][1][kk].astype(complex) for t in range(k)])
+            G = G * (col.conj() @ col.T)
+        cc = np.outer(coeffs.conj(), coeffs)
+        return float(np.real(np.sum(cc * G)))
 
     # ---- normalization and inner product ---------------------------------
 
@@ -444,10 +620,20 @@ class MERA:
 
         Distributes the rescaling across leaves so no tensor grows huge:
         each leaf is divided by n^(1/(2N)), giving norm_sq -> 1 exactly.
+
+        For a term-superposition state the rescaling is applied to the
+        branch coefficients and the top tensor (the leaves carry only the
+        per-site marginal direction and must stay unit-norm).
         """
         n = self.norm_sq()
         if n < 1e-30:
             raise ValueError("cannot normalize a zero-norm MERA")
+        if self._superposition_terms is not None:
+            s = np.sqrt(n)
+            self._superposition_terms = [
+                (c / s, sites) for c, sites in self._superposition_terms]
+            self.top = self.top / s
+            return self
         scale = n ** (0.5 / self.N)
         for k in range(self.N):
             self.leaves[k] = self.leaves[k] / scale
@@ -630,6 +816,8 @@ class MERA:
         d = self.d_local
         if op.shape != (d, d):
             raise ValueError(f"op shape {op.shape}, expected ({d}, {d})")
+        if self._superposition_terms is not None:
+            return self._local_expectation_from_terms(leaf, op)
         op_layer = op
         pos = leaf
         for ell in range(self.L - 1):
@@ -648,6 +836,28 @@ class MERA:
             val = np.einsum('ab,bB,aB->', T.conj(), op_layer, T,
                             optimize='greedy')
         return complex(val)
+
+    def _local_expectation_from_terms(self, leaf: int,
+                                      op: np.ndarray) -> complex:
+        """Exact <psi|O_leaf|psi> for a term-superposition state.
+
+        <O> = sum_{t,t'} conj(c_t) c_t' (prod_{k != leaf} <v_{t,k}|v_{t',k}>)
+              * <v_{t,leaf}| O |v_{t',leaf}>.
+        """
+        terms = self._superposition_terms
+        k = len(terms)
+        coeffs = np.array([c for c, _ in terms], dtype=complex)
+        G = np.ones((k, k), dtype=complex)
+        for kk in range(self.N):
+            if kk == leaf:
+                continue
+            col = np.array([terms[t][1][kk].astype(complex) for t in range(k)])
+            G = G * (col.conj() @ col.T)
+        col_l = np.array([terms[t][1][leaf].astype(complex) for t in range(k)])
+        # Oll[t, t'] = <v_{t,leaf}| op |v_{t',leaf}>
+        Oll = col_l.conj() @ op @ col_l.T
+        cc = np.outer(coeffs.conj(), coeffs)
+        return complex(np.sum(cc * G * Oll))
 
     def two_site_expectation(self, leaf: int, op: np.ndarray) -> complex:
         """<psi | O_{leaf, leaf+1} | psi> for a two-leaf operator.
@@ -794,6 +1004,8 @@ class MERA:
         if not 0 <= cut < self.N - 1:
             raise ValueError(
                 f"cut {cut} out of range [0, {self.N - 1})")
+        if self._superposition_terms is not None:
+            return self._entropy_from_terms(cut)
         if self._is_product():
             return 0.0
         psi = self._materialize()      # shape (d_local,) * N
@@ -809,6 +1021,63 @@ class MERA:
         if total > 1e-15:
             p = p / total
         p = p[p > 1e-15]
+        return float(-(p * np.log(p)).sum())
+
+    def _entropy_from_terms(self, cut: int) -> float:
+        """Exact von Neumann entropy across ``cut`` for a state stored as an
+        explicit product-term superposition (``_superposition_terms``).
+
+        psi = sum_t c_t |L_t> (x) |R_t>, with L_t the product of leaf
+        vectors 0..cut and R_t the product of leaves cut+1..N-1.
+
+        The reduced density on the left subsystem has the same nonzero
+        spectrum as the k x k matrix in the branch basis; we diagonalize
+        that (k <= a few) — no large dense tensor. The branch vectors are
+        not orthogonal, so we work in the (possibly non-orthonormal) branch
+        frame: spectrum of rho_L = eigenvalues of  X = G_L^{1/2}-free form
+        computed as eig of (C* G_R C-weighted) — done via the standard
+        trick: rho_L ~ eig of  M  where
+            M[t, t'] = c_t conj(c_{t'}) <R_{t'}|R_t> <L_{t'}|L_t-projected>.
+        Simplest robust route: build the k x k "left" and "right" Gram
+        matrices and form the Hermitian  rho-spectrum matrix.
+        """
+        terms = self._superposition_terms
+        k = len(terms)
+        coeffs = np.array([c for c, _ in terms], dtype=complex)
+        left_idx = list(range(cut + 1))
+        right_idx = list(range(cut + 1, self.N))
+
+        def gram(idx_set: list[int]) -> np.ndarray:
+            G = np.ones((k, k), dtype=complex)
+            for kk in idx_set:
+                col = np.array([
+                    terms[t][1][kk].astype(complex) for t in range(k)])
+                # overlap[t, t'] = <v_t | v_t'>
+                ov = col.conj() @ col.T
+                G = G * ov
+            return G
+
+        GL = gram(left_idx)
+        GR = gram(right_idx)
+        # Full state norm^2 = sum_{t,t'} conj(c_t) c_t' GL[t,t'] GR[t,t'].
+        cc = np.outer(coeffs.conj(), coeffs)
+        norm_sq = float(np.real(np.sum(cc * GL * GR)))
+        if norm_sq < 1e-30:
+            return 0.0
+        # Reduced density on the LEFT subsystem, expressed in the branch
+        # frame: rho_L = sum_{t,t'} conj(c_t) c_t' GR[t,t'] |L_t'><L_t|.
+        # Its nonzero spectrum = spectrum of the k x k matrix
+        #   K[t', t] = (conj(c_t) c_t' GR[t,t']) * GL[t',t]
+        # because <L_t | L_t'> = GL[t,t']. (Standard non-orthogonal
+        # reduced-density spectrum identity.)
+        K = (cc.T * GR.T) * GL
+        K = K / norm_sq
+        ev = np.linalg.eigvals(K)
+        p = np.real(ev)
+        p = p[p > 1e-12]
+        if p.size == 0:
+            return 0.0
+        p = p / p.sum()
         return float(-(p * np.log(p)).sum())
 
     def _materialize(self) -> np.ndarray:

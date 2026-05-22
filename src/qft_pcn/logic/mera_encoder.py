@@ -16,8 +16,11 @@ from ._types import compute_site_types
 from ._typing_extension import compute_tobl_tags
 from ._mera_layout import compute_layout, MeraLayout
 from ._mera_leaves import node_leaf_vectors
-from .mera_encoding import MERA_LEAF_DIM, KIND_LAM, KIND_FORALL, KIND_FIX
-from .encoding import KIND_PAD as _ENC_KIND_PAD, TYPE_ARR_NESTED
+from ._mera_holes import encode_hole_state
+from .mera_encoding import (
+    MERA_LEAF_DIM, KIND_LAM, KIND_FORALL, KIND_FIX,
+)
+from .encoding import KIND_PAD as _ENC_KIND_PAD, KIND_VAR, BID_0, TYPE_ARR_NESTED
 from src.qft_pcn.qft.mera import MERA
 
 
@@ -64,17 +67,27 @@ def _has_holes(ast: Node) -> bool:
     return found[0]
 
 
+def _hole_nodes(sites: list[NodeOccupancy]) -> list[int]:
+    """Indices of nodes whose var_ref carries HoleVar candidates."""
+    out: list[int] = []
+    for node_idx, occ in enumerate(sites):
+        if (occ.kind == KIND_VAR and occ.var_ref is not None
+                and occ.var_ref.candidates):
+            out.append(node_idx)
+    return out
+
+
 def encode_mera(ast: Node, n_nodes_max: int = 32,
                 chi_layer: int = 16) -> tuple[MERA, MeraEncodingMeta]:
     """Encode an AST into a unit-norm MERA (spec §6).
 
-    Concrete path only in this task; if the AST has holes, raise
-    NotImplementedError (Part 2 supplies the hole path).
+    Concrete (hole-free) programs encode to a product MERA. Hole-bearing
+    programs (HoleVar use sites) start from a product MERA with the hole's
+    bid leaf in a superposition over candidate binder bid indices, then
+    apply CNOT-like entangling gates so the encoded state carries genuine
+    tree entanglement between the hole and the candidate binders (spec
+    §5.3 — the §1.1 binding-as-entanglement principle on the MERA tree).
     """
-    if _has_holes(ast):
-        raise NotImplementedError(
-            "hole-bearing encoding is implemented in Part 2 (Task 10)")
-
     # Front-half: reuse the MPS encoder pipeline.
     sites = serialize_preorder(ast, N=n_nodes_max)
     type_tags = compute_site_types(ast, sites)
@@ -82,8 +95,12 @@ def encode_mera(ast: Node, n_nodes_max: int = 32,
     n_nodes = sum(1 for occ in sites if occ.kind != _ENC_KIND_PAD)
 
     layout = compute_layout(n_nodes)
+    hole_nodes = _hole_nodes(sites)
 
-    # Build the 5N + pad leaf vectors, node-major.
+    # Build the 5N + pad concrete leaf vectors, node-major. A hole node's
+    # leaves are filled with the concrete form for its first candidate;
+    # the per-branch overrides in the hole path replace the bid leaf and
+    # the chosen binders' witness leaves (spec §5.3).
     leaf_vectors: list[np.ndarray] = []
     for node_idx in range(n_nodes):
         five = node_leaf_vectors(sites[node_idx], type_tags[node_idx])
@@ -91,8 +108,27 @@ def encode_mera(ast: Node, n_nodes_max: int = 32,
     while len(leaf_vectors) < layout.n_leaves:
         leaf_vectors.append(_pad_leaf_vector())
 
-    # Concrete program -> product MERA.
-    state = MERA.from_product(leaf_vectors, chi_layer=chi_layer)
+    if hole_nodes:
+        # Hole path (spec §5.3): build the rank-k branch superposition and
+        # encode it as a genuinely tree-entangled MERA. Each hole resolves
+        # to one of its candidate binders; the hole's bid leaf and the
+        # chosen binder's witness leaf are entangled through the tree.
+        holes: list[dict] = []
+        for node_idx in hole_nodes:
+            var_ref = sites[node_idx].var_ref
+            holes.append({
+                "hole_bid_leaf": layout.leaf_of(node_idx, "bid"),
+                "cand_bid_values": [BID_0 + depth
+                                    for _, depth in var_ref.candidates],
+                "cand_witness_leaves": [
+                    layout.leaf_of(binder_site, "value")
+                    for binder_site, _ in var_ref.candidates],
+            })
+        state = encode_hole_state(leaf_vectors, holes, chi_layer=chi_layer)
+    else:
+        # Concrete path: product MERA, no tree entanglement needed.
+        state = MERA.from_product(leaf_vectors, chi_layer=chi_layer)
+
     state.normalize()
 
     # Binder / use bookkeeping for the meta.
