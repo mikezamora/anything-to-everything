@@ -63,6 +63,21 @@ class UnitaryViolation(MERAError):
 # ---- pure helpers ---------------------------------------------------------
 
 
+def _is_identity_matrix(u: np.ndarray, atol: float = 1e-12) -> bool:
+    """Fast identity check for a (square-reshapeable) disentangler tensor.
+
+    Mathematically equivalent to ``np.allclose(u.reshape(n, n), np.eye(n),
+    atol=atol)`` but avoids np.allclose's per-element isclose/within_tol
+    machinery and the np.eye allocation — both dominate _is_product when it
+    is called once per inner product during imaginary-time evolution.
+    """
+    d = u.shape[0]
+    n = d * d
+    flat = u.reshape(n, n)
+    diff = flat - np.eye(n, dtype=flat.dtype)
+    return bool(np.max(np.abs(diff)) <= atol) if diff.size else True
+
+
 def layer_dims(d_local: int, L: int, chi_layer: int = 16) -> list[int]:
     """Per-layer bond dim schedule: [d_0, d_1, ..., d_{L-1}].
 
@@ -237,6 +252,10 @@ class MERA:
     # entropy (the entanglement is isometry-carried, so the disentangler-only
     # _is_product / _materialize fast paths cannot see it).
     _superposition_terms: "list | None" = None
+    # Memoized _is_product() result. None = not yet computed / invalidated.
+    # Disentanglers are only mutated by apply_local_gate's reconstruction
+    # (the two assignment sites in apply_local_gate), which clear this.
+    _is_product_cache: "bool | None" = None
 
     def __post_init__(self) -> None:
         N = len(self.leaves)
@@ -737,6 +756,26 @@ class MERA:
             raise ValueError(
                 f"d_local mismatch: {self.d_local} vs {other.d_local}")
         L = self.L
+        # Product-state fast path: when both operands are product MERAs
+        # (identity disentanglers) that share the SAME tree of isometries,
+        # disentanglers and top tensor, the double-network contraction
+        # telescopes exactly to the product of the per-leaf overlaps
+        # (every isometry W satisfies W^dag W = I and cancels). This is
+        # the common case for imaginary-time evolution, where the ket is
+        # a copy of the bra with only leaf tensors mutated; it replaces an
+        # O(N) sequence of tensor contractions with O(N) vector dot
+        # products. The result is mathematically identical to the network
+        # contraction below (verified by the MERA inner-product tests).
+        if (self._superposition_terms is None
+                and other._superposition_terms is None
+                and self._is_product() and other._is_product()
+                and self._same_tree(other)):
+            val = complex(1.0)
+            for k in range(self.N):
+                bra = self.leaves[k][0, :, 0].conj()
+                ket = other.leaves[k][0, :, 0]
+                val *= complex(bra @ ket)
+            return val
         if L == 1:
             # N=2: top sits directly above the two leaves (no isometry
             # ascent consumed in norm_sq either). Contract leaves with
@@ -987,18 +1026,45 @@ class MERA:
         """
         if self._superposition_terms is not None:
             return len(self._superposition_terms) <= 1
+        if self._is_product_cache is not None:
+            return self._is_product_cache
+        result = True
         for layer in self.disentanglers:
             for u in layer:
-                d = u.shape[0]
-                if not np.allclose(u.reshape(d * d, d * d),
-                                   np.eye(d * d), atol=1e-12):
+                if not _is_identity_matrix(u):
+                    result = False
+                    break
+            if not result:
+                break
+        if result:
+            for layer in self.inter_disentanglers:
+                for u in layer:
+                    if not _is_identity_matrix(u):
+                        result = False
+                        break
+                if not result:
+                    break
+        self._is_product_cache = result
+        return result
+
+    def _same_tree(self, other: "MERA") -> bool:
+        """True if `other` shares this MERA's isometry/disentangler/top
+        tensors (leaves may differ). Used to guard the product-state
+        inner-product fast path: the leaf-overlap telescoping identity
+        only holds when bra and ket are built on the same tree."""
+        if not np.array_equal(self.top, other.top):
+            return False
+        for sl, ol in ((self.disentanglers, other.disentanglers),
+                       (self.inter_disentanglers, other.inter_disentanglers),
+                       (self.isometries, other.isometries)):
+            if len(sl) != len(ol):
+                return False
+            for slay, olay in zip(sl, ol):
+                if len(slay) != len(olay):
                     return False
-        for layer in self.inter_disentanglers:
-            for u in layer:
-                d = u.shape[0]
-                if not np.allclose(u.reshape(d * d, d * d),
-                                   np.eye(d * d), atol=1e-12):
-                    return False
+                for a, b in zip(slay, olay):
+                    if not np.array_equal(a, b):
+                        return False
         return True
 
     def entanglement_entropy(self, cut: int) -> float:
@@ -1210,6 +1276,8 @@ class MERA:
             self.disentanglers[0][leaf // 2] = recon4
         else:
             self.inter_disentanglers[0][(leaf - 1) // 2] = recon4
+        # A reconstructed disentangler is generally non-identity.
+        self._is_product_cache = None
         return trunc_err
 
     def apply_local_gate(self, leaf: int, gate: np.ndarray) -> None:
