@@ -1747,9 +1747,322 @@ Curriculum learning currently uses heuristic difficulty estimates (Bengio et al.
 
 ---
 
-### 12.9 The combined extension stack
+### 12.9 Self-modification via meta-Hamiltonian
 
-When all eight extensions are built on top of the §10–11 roadmap, the architecture has these capabilities simultaneously:
+#### Physics origin
+
+In any operator-algebraic system, the Hamiltonian itself is just another tensor in operator space. A system can in principle reason about its own structure by treating its own `H` as the substrate of a second, meta-level optimization. This is the operational realization of Gödelian self-reference — the system that contains a description of itself.
+
+The closest physics analog is renormalization-group flow on the *operator algebra*: starting from a bare set of operators (axioms), the system discovers effective operators at coarser scales (theorems). The discovery is itself an action of the system on its own description. Wilson 1971, Polchinski 1984 on exact RG, and more recently Cao-Carroll on emergent space from entanglement (2017) treat the operator algebra as a dynamical object.
+
+The closest computer-science precedent is Schmidhuber's Gödel machine (2003) — a classical proposal for a self-rewriting program with provable optimality. Never operationalized at scale.
+
+#### QPCN realization
+
+The "meta-QPCN" has the following structure:
+
+- **Substrate**: an MPS encoding the lower-level QPCN's Hamiltonian (operators are themselves vectors in a larger space; the Hamiltonian-as-state lives in the operator Hilbert space).
+- **Meta-observables**: properties of the lower-level Hamiltonian — gap size, redundancy patterns, symmetry generators, anomaly polynomials, ground-state degeneracy.
+- **Meta-constraints**: "the lower-level Hamiltonian should have these properties" — e.g., "minimize redundancy among constraint terms while preserving correctness."
+- **Meta-evolution**: imag-time relaxation in the meta-Hamiltonian moves the lower-level Hamiltonian toward a configuration that satisfies the meta-constraints.
+
+The meta-QPCN's outputs are *new versions of the lower-level QPCN's Hamiltonian*. Successive iterations refine the encoding itself.
+
+This is bounded self-reference: the meta-QPCN cannot rewrite the meta-meta-QPCN (no infinite tower), but the single-level self-modification is operational and well-defined.
+
+#### Capability
+
+**Architecture-aware learning**. The system can:
+- Discover more efficient Hamiltonian compilations for specific problem classes (compress the constraint Hamiltonian).
+- Identify redundant or inconsistent constraints automatically (detect them as anomalies in the meta-Hamiltonian).
+- Rewrite its own typing rules when a recurring pattern suggests a better encoding (e.g., a new field species that captures common structure).
+- In the limit, perform structural self-improvement: each generation of the system is better at producing the next generation.
+
+This is *operational* Gödelian self-reference: the system reasons about itself, but in a bounded and well-defined way.
+
+#### Implementation
+
+`composition/meta_hamiltonian.py`:
+- Encode `H_lower` as an MPS in operator-Hilbert space (this requires extending the existing MPS infrastructure to operator-valued tensors — MPOs, matrix product operators).
+- Build `H_meta` from meta-constraints (e.g., quadratic penalty for redundancy: `||commutator(H_i, H_j)||^2`).
+- Imag-time evolve in the meta system.
+- Decode the new `H_lower'` and replace.
+
+Computational cost: each meta-step requires representing `H_lower` as an MPO (typically polynomial in the number of constraint terms) and evolving it. Cost scales with the size of the lower-level Hamiltonian, but the meta-evolution is run only periodically (every N wake-sleep cycles), so the amortized cost is low.
+
+#### Risks and mitigations
+
+| Risk | Mitigation |
+|---|---|
+| **Self-modification breaks correctness**: the rewritten Hamiltonian no longer encodes the same theorems | After each meta-step, verify on a held-out set of known-correct theorems; reject if any regresses |
+| **Goedelian paradoxes**: self-reference produces logical contradictions | Bounded levels — meta-QPCN can rewrite lower-level QPCN but not itself. No infinite tower of meta-meta. |
+| **Catastrophic rewrites**: meta-step makes the encoding much worse | Conservative step sizes; require strict improvement on a benchmark suite before committing |
+| **Cost of MPO representation**: scaling | Restrict meta-modifications to small subsystems of `H_lower` at a time |
+
+#### Acceptance test
+
+Take a constraint Hamiltonian compiled from STLC typing rules. Confirm by classical type checking that it correctly identifies all well-typed programs in a test corpus. Run the meta-QPCN for 10 cycles, refining the Hamiltonian. After: verify the new Hamiltonian (a) still correctly identifies the same set of well-typed programs, (b) has measurably fewer constraint terms (compression), and (c) has a larger gap (faster inference). All three must improve.
+
+#### Why this would seem implausible
+
+Self-modifying AI systems are a topic with a long history of failed attempts (Schmidhuber's Gödel machine never produced practical results; most attempts at meta-learning are bounded to hyperparameter tuning). A working self-modification mechanism that provably preserves correctness while improving efficiency would be among the most surprising claims in the paper. The key is that the substrate's operator-algebraic structure gives the rigor that classical attempts lacked.
+
+---
+
+### 12.10 Holographic compilation
+
+#### Physics origin
+
+The MERA tensor network has a natural geometric interpretation as discrete hyperbolic space (Swingle 2012), and its multi-scale structure realizes the renormalization group: high-energy / short-distance physics at the leaves, low-energy / long-distance effective physics at the root. Coarse-graining flows from the leaves up; primitive operations live at the bottom of the tree.
+
+In computer science, this structure is *exactly* compilation. High-level constructs (a function `map f xs`) at the top compile to low-level operations (loops, register allocations, machine code) at the leaves. Compilation passes are coarse-graining steps; optimization passes are RG transformations on the effective Hamiltonian.
+
+To my knowledge, this exact correspondence has never been published, despite the underlying mathematics being well-established in both fields independently.
+
+#### QPCN realization
+
+A MERA-structured QPCN representing a program has:
+- Leaves: low-level operations (assembly-like instructions, register operations).
+- Middle layers: intermediate representations (basic blocks, dataflow nodes).
+- Root: high-level constructs (functions, types, modules).
+
+Compilation passes become operations on the MERA:
+- **Lowering** (high-level to low-level): apply isometries to coarse-grain from root toward leaves. Standard MERA operation.
+- **Optimization** (semantics-preserving rewrites): apply unitary transformations between MERA layers that preserve the boundary correlation functions (= preserve program semantics). RG-equivalent transformations.
+- **Inlining**: a higher-level node is "unfolded" into its lower-level expansion. This is MERA's tree-to-graph conversion.
+- **Constant folding**: at any level, expressions with all-constant inputs evaluate to constants. This is precisely fixed-point analysis on the MERA.
+
+The crucial point: each optimization pass is provably equivalence-preserving because RG transformations preserve the relevant correlators (= semantic observables of the program).
+
+#### Capability
+
+**Compiler optimizations that are provably semantics-preserving by construction**. Unlike traditional compilers (which validate optimization passes through testing or limited formal verification), the QPCN's holographic compilation:
+- Is automatic — discovers optimization opportunities through RG flow rather than hand-written pass design.
+- Is provably correct — RG transformations preserve correlation functions = program behavior.
+- Is multi-language — works at the right MERA level regardless of source language; cross-language optimizations are natural.
+- Discovers new optimization patterns through the same abstraction-discovery mechanism (§10.9) used for lemma discovery.
+
+#### Implementation
+
+`composition/holographic_compilation.py`:
+- Build a MERA encoding of the source program (extension of §10.4 MERA infrastructure).
+- For each MERA layer, identify the operations available there (compiler IR level).
+- Define optimization passes as MERA-layer operations: disentanglers that simplify entanglement structure, isometries that introduce abstractions, conjugations that preserve correlators.
+- Apply passes in any order; commutativity is guaranteed by the RG semantics.
+
+Computational cost: MERA operations are well-understood and scale polynomially in MERA depth and bond dimension. Compilation time competitive with hand-written compilers for problems within the architecture's domain.
+
+#### Risks and mitigations
+
+| Risk | Mitigation |
+|---|---|
+| MERA encoding loses information about specific compilation targets | Augment leaves with target-specific data; coarse-graining preserves the relevant invariants |
+| Optimization "infinite regress" — keep applying passes without termination | Use the §12.8 dynamical-phase-transition detector to identify when optimization has converged |
+| Cross-language assumptions break | Restrict initial scope to a single source language; extend later |
+| Source-to-MERA encoding is non-trivial for some constructs (e.g., dynamic dispatch) | Use the §10.1 AST encoder's flexibility; handle dynamic features via §16.1's effectful-program extensions |
+
+#### Acceptance test
+
+Take a small program in the QPCN's source language (a Haskell-like STLC). Apply optimization passes via holographic compilation. Verify by direct execution and equivalence checking (§12.2 topological invariants) that the optimized program has identical observable behavior. Compare against hand-written compiler optimizations (e.g., GHC's Core-to-Core passes) on the same examples; the holographic compiler should achieve comparable or better optimization quality.
+
+#### Why this would seem implausible
+
+A compiler that is *automatic*, *provably correct*, *multi-language*, and *capability-growing* (through library discovery) is essentially the dream of compiler research. Existing automated approaches (superoptimization, equality saturation) are limited in scope or correctness; existing provably-correct approaches (CompCert) are hand-written and language-specific. A single substrate that delivers all four is currently considered out of reach.
+
+---
+
+### 12.11 Modular Hamiltonian and entanglement spectrum
+
+#### Physics origin
+
+The modular Hamiltonian `K = -log ρ_A` of a quantum subregion `A` is the generator of entanglement dynamics. Its eigenvalues — the *entanglement spectrum* — carry rich information about topological structure that the energy spectrum alone does not. Li & Haldane 2008 first identified the entanglement spectrum as a topological classifier for fractional quantum Hall states. Subsequent work (Pollmann et al. 2010, Kitaev-Preskill 2006 topological entropy) showed the entanglement spectrum is the most sensitive diagnostic of topologically ordered phases.
+
+For any MPS, the entanglement spectrum at a bond is the set of squared Schmidt coefficients across that bond — exactly the quantity our §10.4 MERA infrastructure already computes.
+
+#### QPCN realization
+
+For any QPCN inference run, at each bond in the MPS we have access to:
+- The full set of Schmidt coefficients (the entanglement spectrum).
+- The modular Hamiltonian (its negative log).
+- Symmetry properties of the entanglement spectrum (degeneracies, eigenvalue ratios).
+
+Different types of proof states have characteristically different entanglement spectra:
+- **Trivial proofs** (direct application): nearly degenerate spectrum, low entropy, sharp gap.
+- **Inductive proofs**: power-law spectrum reflecting scale-invariant structure.
+- **Critical proofs** (near phase transitions, §12.8): characteristic conformal field theory spectrum with prediction power for critical exponents.
+- **Topologically protected proofs**: degenerate spectra protected by symmetry — these proofs are robust to perturbations.
+
+The modular Hamiltonian's eigenvalues are diagnostics for *what kind* of proof was found, not just whether it's correct.
+
+#### Capability
+
+**Fine-grained classification of proof states**. Beyond just "did we find a proof?", the architecture can determine:
+- The proof's topological class (which connects to §12.3 degeneracy counting).
+- Whether the proof is at or near a critical point (which connects to §12.8 phase transitions).
+- The proof's robustness to small perturbations of the constraints (topologically protected = robust).
+- Whether two ostensibly different proofs are in the same topological class.
+- Whether a partial proof has discovered the "right shape" for the full proof (matching entanglement spectrum to known proven patterns).
+
+This is a strictly finer diagnostic than residual energy alone; two proofs with the same `⟨H⟩` can have completely different entanglement spectra, indicating qualitatively different proof structures.
+
+#### Implementation
+
+`composition/entanglement_spectrum.py`:
+- After each QPCN inference, compute the Schmidt coefficients at each bond (standard MPS operation, already in `mps.py::entanglement_entropy`).
+- Compute the modular Hamiltonian's spectrum from the Schmidt values: `K_i = -log(λ_i^2)`.
+- Classify the spectrum: power-law fit, degeneracy pattern, conformal-tower structure.
+- Report the classification alongside the proof itself.
+
+Computational cost: one SVD per bond per inference, which is already part of standard MPS operations. The classification step is negligible.
+
+#### Risks and mitigations
+
+| Risk | Mitigation |
+|---|---|
+| Numerical noise in small Schmidt coefficients obscures the spectrum | Truncate the spectrum at a clean cutoff; report only the well-resolved part |
+| Classification scheme is too coarse for some proof classes | Extend the classification taxonomy as new patterns are discovered (this is itself a wake-sleep abstraction-discovery target) |
+| Bond dimension `χ` limits the resolvable spectrum | Use the highest `χ` the search can afford; resolved entanglement spectrum grows with `χ` |
+
+#### Acceptance test
+
+Build a corpus of proofs of varying topological character: trivial direct proofs (e.g., `id : A → A`), inductive proofs (e.g., `length (xs ++ ys) = length xs + length ys`), proofs requiring auxiliary lemmas (e.g., `reverse (reverse xs) = xs`). Compute entanglement spectra for each. Confirm that the classification scheme correctly assigns each proof to its expected class.
+
+#### Why this would seem implausible
+
+Existing automated theorem provers report only success/failure and proof length. A system that reports "this proof is in the topologically protected class corresponding to scale-invariant inductive structure" gives information about *how* a proof works at a level of mathematical sophistication usually associated with research mathematics, not automated tools.
+
+---
+
+### 12.12 Quantum extremal surfaces for minimum-complexity proofs
+
+#### Physics origin
+
+The Ryu-Takayanagi formula (Ryu & Takayanagi 2006) computes the entanglement entropy of a CFT subregion as the area of a minimal surface in the bulk AdS geometry. Hubeny-Rangamani-Takayanagi 2007 generalized to dynamic spacetimes via *extremal surfaces*. Engelhardt-Wall 2015 added quantum corrections, giving the *quantum extremal surface (QES)* formula.
+
+The QES formula is the most precise statement to date of the holographic principle: bulk geometric quantities are computable from boundary entanglement data via extremization. The conjectured connection between computational complexity and geometric volume (Susskind 2016, the "complexity = volume" or "complexity = action" conjectures) places computational complexity itself as a holographic observable.
+
+#### QPCN realization
+
+The §11.4 framing established that the MERA substrate is holographic — bulk operations correspond to boundary entanglement structure. Applying QES machinery: the *minimum complexity* of a proof of a theorem corresponds to the area of an extremal surface anchored at the theorem statement on the MERA boundary.
+
+Concretely:
+- **Boundary**: theorem statement, encoded as a set of constraints on boundary MPS sites.
+- **Bulk**: the MERA tree above the boundary.
+- **Extremal surface**: a surface in the MERA tree that minimizes a functional (entanglement area + bulk action), anchored at the boundary constraints.
+- **Minimum proof complexity**: the value of the minimized functional, computable *before* running the actual proof search.
+
+This is the analog of computing the minimum-cost path in a graph by examining the graph's structure, not by running pathfinding.
+
+#### Capability
+
+**A priori prediction of proof complexity from theorem geometry alone**. Before doing any proof search, the QPCN can determine:
+- The minimum number of MERA layers needed to express the proof (proof depth).
+- The minimum bond dimension needed (proof entanglement complexity).
+- A lower bound on the proof's length (operations required).
+- Whether the theorem is "geometrically natural" (small QES = easy proof) or "geometrically unnatural" (large QES = inherently hard proof).
+
+This information lets the architecture allocate compute intelligently: easy theorems get cheap searches; hard theorems get expensive searches; geometrically impossible theorems (no consistent extremal surface) get rejected without trying.
+
+#### Implementation
+
+`composition/quantum_extremal_surface.py`:
+- Build the MERA representation of the theorem's boundary constraints.
+- Set up the QES functional: entanglement area + bulk action, parameterized over candidate surfaces.
+- Optimize via gradient descent on the surface parameters (standard QES computation).
+- Return the minimal value (proof complexity lower bound) and the surface itself (proof structure).
+
+Computational cost: QES optimization is well-studied in physics; for MERA networks it's polynomial in MERA depth. Specific cost depends on the surface parameterization but is generally fast relative to the actual proof search.
+
+#### Risks and mitigations
+
+| Risk | Mitigation |
+|---|---|
+| QES is a lower bound only — actual proof may be longer than the QES estimate | This is fine for resource allocation purposes; the bound is informative even when not tight |
+| Multiple competing extremal surfaces (degeneracy) | Report all of them; this corresponds to multiple distinct proof strategies (connection to §12.3) |
+| QES depends on the specific MERA encoding | Use a canonical encoding; report complexity relative to the canonical form |
+
+#### Acceptance test
+
+For a corpus of theorems with known proof lengths (e.g., from Lean Mathlib), compute the QES lower bound. Verify that:
+- The QES is always a true lower bound (no proof shorter than QES).
+- The QES correlates with actual proof length (Spearman ρ > 0.7 on a held-out set).
+- For theorems where the QES is provably impossible (no surface satisfies the boundary), the actual search confirms unprovability (consistency with §12.1 anomaly detection).
+
+#### Why this would seem implausible
+
+Predicting proof complexity from theorem structure alone, without doing the proof, would be considered approximately impossible by mainstream proof theory. Even informal estimates by expert mathematicians often misjudge proof difficulty by orders of magnitude. A geometric formula that gives provable lower bounds would be remarkable.
+
+---
+
+### 12.13 Bidirectional time evolution for goal-directed search
+
+#### Physics origin
+
+Schrödinger evolution `e^{-iHt}` is unitary, so it can be run forward (`t > 0`) or backward (`t < 0`) with equal facility. The forward direction propagates known initial conditions to derived consequences; the backward direction propagates known final conditions to required initial conditions. The Loschmidt echo `|⟨Ψ_0 | e^{+iHt} e^{-iHt} | Ψ_0⟩|^2 = 1` is the trivial identity expressing that backward evolution exactly inverts forward evolution.
+
+In the path integral formulation, both directions are summed over: the propagator from initial state `|i⟩` to final state `|f⟩` is the sum over all paths connecting them, weighted by `e^{iS/ℏ}`. Forward and backward propagation are dual descriptions of the same Feynman sum.
+
+#### QPCN realization
+
+The QPCN's real-time evolution (§4.7, `evolution.py::trotter_step` with `imaginary=False`) is unitary. Switching the sign of `dt` runs it backward. This costs nothing — same code, same simulator.
+
+For proof search and type inference, bidirectional evolution maps onto:
+- **Forward evolution from axioms**: derive consequences of known premises. Standard logical inference.
+- **Backward evolution from goal**: derive what premises would imply the goal. This is "goal-directed search" or backward reasoning, used in Prolog, sequent calculus, etc.
+- **Meeting in the middle**: run both simultaneously; the overlap region is where the proof exists.
+
+The meeting-in-the-middle proof search is conceptually a quantum walk: forward and backward states evolve under their respective dynamics until they overlap. The overlap region — the manifold of states reachable from axioms *and* required by the goal — is the proof.
+
+For type inference specifically:
+- Forward: types propagate up from values (a literal `5` has type `Int`; an application of `+` to two `Int`s has type `Int`).
+- Backward: types propagate down from expected results (a function expected to return `String` must produce strings somewhere).
+- Bidirectional: both directions simultaneously, with the meeting condition giving the inferred types throughout.
+
+This is precisely bidirectional type checking (Pierce-Turner 2000), but realized as a continuous unitary process on the MPS rather than a discrete walking algorithm.
+
+#### Capability
+
+**Native simultaneous bidirectional reasoning**. Currently, proof systems are typically either forward (tableau, resolution) or backward (Prolog, sequent calculus). Bidirectional systems (e.g., bidirectional type checking) exist but are special-purpose. The QPCN does both directions *for any reasoning task* with zero additional infrastructure.
+
+Specific capabilities unlocked:
+- **Counterfactual reasoning**: "what initial conditions would have produced this outcome?" is a single backward evolution.
+- **Inverse problems**: given an output, find inputs that produce it. Native via backward evolution.
+- **Bidirectional type inference**: optimal in both convergence speed and inference quality vs. unidirectional methods.
+- **Proof search with intermediate goals**: forward from axioms, backward from goal, look for overlap. Cuts the search space exponentially compared to one-directional search.
+
+#### Implementation
+
+`composition/bidirectional.py`:
+- Add a `direction` parameter to `evolution.py::trotter_step`: `forward` (default), `backward`, or `bidirectional` (alternates).
+- For bidirectional search: maintain two MPS states (`|Ψ_forward⟩` from axioms, `|Ψ_backward⟩` from goal); evolve them simultaneously; measure overlap.
+- When overlap exceeds threshold, the meeting point gives the proof intermediate.
+
+Computational cost: doubles per-step cost (two MPS evolved simultaneously) but typically halves convergence time, net win for hard problems. The doubling is exact because forward and backward are identical operations modulo `dt` sign.
+
+#### Risks and mitigations
+
+| Risk | Mitigation |
+|---|---|
+| Forward and backward never overlap (proof doesn't exist) | After bounded evolution time, declare no proof; consistent with §12.1 anomaly detection |
+| Multiple overlap regions (multiple proof paths) | Report all; corresponds to §12.3 topological degeneracy |
+| Phase coherence issues between forward and backward states | Standard quantum mechanics; relative phases are physical and informative |
+
+#### Acceptance test
+
+Compare bidirectional vs unidirectional proof search on a benchmark of theorems with intermediate-difficulty proofs. The bidirectional search should:
+- Find proofs in fewer total Trotter steps on average.
+- Successfully find proofs that unidirectional search fails to find within the same budget.
+- Correctly report "no proof" when bidirectional search exhausts its budget without overlap.
+
+#### Why this would seem implausible
+
+Bidirectional reasoning as a *first-class* primitive in an inference system is unusual. Most reasoning systems pick a direction and stick with it. A system that natively does both directions simultaneously, exploiting the symmetric structure of unitary evolution, would be a clean improvement over standard search methods. The simplicity of the change (just flip `dt`'s sign) makes the capability gain seem too easy — but the math is exact.
+
+---
+
+### 12.14 The combined extension stack
+
+When all thirteen §12 extensions are built on top of the §10–11 roadmap, the architecture has these capabilities simultaneously:
 
 | Capability | From | Currently published baseline |
 |---|---|---|
@@ -1764,31 +2077,41 @@ When all eight extensions are built on top of the §10–11 roadmap, the archite
 | **Automatic identification of missing lemmas** | §12.6 | None (tactics report cryptic failures) |
 | **Predictive complexity theory** | §12.7 | Empirical scaling laws only |
 | **Self-detecting capability transitions** | §12.8 | Heuristic curriculum learning |
+| **Operational self-modification of own Hamiltonian** | §12.9 | Schmidhuber Gödel machine (theoretical only) |
+| **Provably semantics-preserving holographic compilation** | §12.10 | CompCert (hand-written, language-specific) |
+| **Topological classification of proof states** | §12.11 | None (current provers only report success/failure) |
+| **A priori proof complexity from theorem geometry** | §12.12 | None (proof difficulty currently estimated empirically) |
+| **Native bidirectional reasoning (forward + backward simultaneously)** | §12.13 | Bidirectional type checking (limited scope) |
 
-The first three (§10.7, §10.8–10.9, §10.10–10.11) are well-defined engineering targets with published precedents validating they're achievable. The last eight (§12.1–12.8) are physics-derived extensions where each individual capability has rigorous foundation but the combination is novel.
+The first three (§10.7, §10.8–10.9, §10.10–10.11) are well-defined engineering targets with published precedents validating they're achievable. The thirteen §12 extensions are physics-derived; each individual capability has rigorous foundation but the combination is novel.
 
 The publication strategy for a system with all of this:
 
 1. **First paper** (workshop/short): §10.7 STLC synthesis with formal correctness guarantees. Validate the core architecture.
 2. **Second paper** (mid-tier conference): §10.8–10.11 hierarchical composition demo with capability growth measurements. Validate the wake-sleep cycle for proof construction.
-3. **Third paper** (top venue, after §12 extensions): the combined system, claiming the eight extension capabilities. This is the paper reviewers may find implausible — but each individual claim is referenced to published physics.
+3. **Third paper** (top venue, after §12 extensions): the combined system, claiming the thirteen extension capabilities. This is the paper reviewers may find implausible — but each individual claim is referenced to published physics.
 
-### 12.10 Implementation priority order
+### 12.15 Implementation priority order
 
 Within §12, the most efficient build order (by cost-to-implement vs. capability gain):
 
 | Order | Extension | Why now |
 |---|---|---|
 | 1 | **§12.5 Holographic codes** | Lowest implementation cost (MERA already does this); immediate robustness benefit |
-| 2 | **§12.6 Goldstone modes** | Standard eigenvalue calculation on existing Hamiltonian; immediate UX benefit (better error messages) |
-| 3 | **§12.3 Topological degeneracy** | Spectral analysis of existing Hamiltonians; gives valuable a-priori information |
-| 4 | **§12.2 Topological invariants** | Wilson-loop calculations on existing MPS; enables compiler verification |
-| 5 | **§12.8 Dynamical phase transitions** | One overlap calculation per cycle; closes the curriculum-adaptation loop |
-| 6 | **§12.1 Anomalies** | Requires symmetry-generator extraction from typing rules; highest novelty |
-| 7 | **§12.7 Replica method** | Requires careful analytic continuation; highest mathematical sophistication |
-| 8 | **§12.4 Conformal bootstrap** | Requires SDP solver integration and rich bootstrap-system formulation; highest implementation difficulty |
+| 2 | **§12.13 Bidirectional time evolution** | Just flip `dt` sign in existing TEBD; immediate doubling of effective search capability |
+| 3 | **§12.11 Modular Hamiltonian / entanglement spectrum** | Uses existing Schmidt-coefficient computation; gives fine-grained proof classification |
+| 4 | **§12.6 Goldstone modes** | Standard eigenvalue calculation on existing Hamiltonian; immediate UX benefit (better error messages) |
+| 5 | **§12.3 Topological degeneracy** | Spectral analysis of existing Hamiltonians; gives valuable a-priori information |
+| 6 | **§12.2 Topological invariants** | Wilson-loop calculations on existing MPS; enables compiler verification |
+| 7 | **§12.8 Dynamical phase transitions** | One overlap calculation per cycle; closes the curriculum-adaptation loop |
+| 8 | **§12.10 Holographic compilation** | Requires full MERA buildout (§10.4) but conceptually elegant once available |
+| 9 | **§12.12 Quantum extremal surfaces** | Requires MERA + RT-formula machinery; a priori proof complexity prediction |
+| 10 | **§12.1 Anomalies** | Requires symmetry-generator extraction from typing rules; highest novelty |
+| 11 | **§12.7 Replica method** | Requires careful analytic continuation; highest mathematical sophistication |
+| 12 | **§12.9 Self-modification via meta-Hamiltonian** | Requires MPO infrastructure for operator-valued substrate; most ambitious |
+| 13 | **§12.4 Conformal bootstrap** | Requires SDP solver integration and rich bootstrap-system formulation; highest implementation difficulty |
 
-Extensions 1–3 give the most immediate value and should be built right after the §10.7 first milestone. Extensions 4–5 add genuine novelty without enormous cost. Extensions 6–8 are the spectacular ones — to be built once the foundations are stable, and they're what would make the combined-system paper a flagship result.
+Extensions 1–4 are immediate wins with existing infrastructure. Extensions 5–7 add genuine novelty without enormous cost. Extensions 8–13 are the spectacular ones — built once the foundations are stable, and they're what would make the combined-system paper a flagship result.
 
 ---
 
@@ -2410,6 +2733,11 @@ src/qft_pcn/
     ├── goldstone.py                    # § 12.6: automatic missing-lemma identification
     ├── replica.py                      # § 12.7: predictive typical-case complexity
     ├── dynamical_pt.py                 # § 12.8: self-detecting curriculum
+    ├── meta_hamiltonian.py             # § 12.9: self-modification (operator-valued substrate)
+    ├── holographic_compilation.py      # § 12.10: provably-correct compiler passes via RG
+    ├── entanglement_spectrum.py        # § 12.11: modular-Hamiltonian proof classification
+    ├── quantum_extremal_surface.py     # § 12.12: a priori proof complexity from QES
+    ├── bidirectional.py                # § 12.13: forward + backward simultaneous evolution
     └── tests/
         ├── test_lemma_library.py
         ├── test_subtree_miner.py
@@ -2423,7 +2751,12 @@ src/qft_pcn/
         ├── test_holographic_correction.py
         ├── test_goldstone.py
         ├── test_replica.py
-        └── test_dynamical_pt.py
+        ├── test_dynamical_pt.py
+        ├── test_meta_hamiltonian.py
+        ├── test_holographic_compilation.py
+        ├── test_entanglement_spectrum.py
+        ├── test_quantum_extremal_surface.py
+        └── test_bidirectional.py
 ```
 
 ---
@@ -2476,6 +2809,13 @@ src/qft_pcn/
 - **type@k** — Our distinctive metric: fraction of `k` candidates that are type-correct. The QPCN's claimed advantage is `type@1 = 1.0`.
 - **Pre-registration** — Publishing experimental hypotheses and decision rules before running the experiments, to prevent post-hoc cherry-picking. §14.7.
 - **Frustration-free Hamiltonian** — A Hamiltonian where every local term is simultaneously minimized by the global ground state. Enables fast convergence and clean correctness guarantees.
+- **MPO (Matrix Product Operator)** — A tensor-network representation of operators, dual to MPS. Used in §12.9 to encode the QPCN's own Hamiltonian as a quantum state for meta-level reasoning.
+- **Modular Hamiltonian** — `K = -log ρ_A` for a subsystem `A`. Generator of entanglement dynamics; its spectrum is the entanglement spectrum (§12.11).
+- **Entanglement spectrum** — The set of eigenvalues of a reduced density matrix (or equivalently, the squared Schmidt coefficients at a bond). Li & Haldane 2008 established it as a topological classifier.
+- **Quantum extremal surface (QES)** — Generalization of the Ryu-Takayanagi minimal surface to quantum-corrected, dynamic geometries (Engelhardt-Wall 2015). Used in §12.12 to compute a priori proof complexity.
+- **Ryu-Takayanagi formula** — `S(A) = Area(γ_A) / 4G_N` connecting CFT entanglement entropy to minimal-surface area in AdS bulk. Foundation of §12.12.
+- **Gödel machine** — Schmidhuber 2003. A theoretical self-modifying program with provable optimality. The classical precursor to §12.9.
+- **Bidirectional reasoning** — Inference that runs simultaneously from premises (forward) and goal (backward), looking for a meeting point. Standard in some PL contexts (Pierce-Turner bidirectional typing); §12.13 makes it universal via unitarity.
 
 ---
 
@@ -2637,6 +2977,34 @@ Real published work, no fake URLs. Cited by author and year so they're searchabl
 - Vidal, G. (2003). *Efficient classical simulation of slightly entangled quantum computations.* PRL.
 - White, S. R. (1992). *Density matrix formulation for quantum renormalization groups.* PRL (original DMRG).
 - Schollwöck, U. (2011). *The density-matrix renormalization group in the age of matrix product states.* Annals of Physics. (Standard review.)
+
+### Self-modification and meta-learning
+- Schmidhuber, J. (2003). *Gödel machines: Self-referential universal problem solvers making provably optimal self-improvements.* Tech Report IDSIA. (The classical precursor to §12.9.)
+- Schmidhuber, J. (2007). *Gödel machines: Fully self-referential optimal universal self-improvers.* In Artificial General Intelligence (Springer).
+
+### Compilation and program optimization
+- Leroy, X. (2006). *Formal certification of a compiler back-end.* POPL. (CompCert — hand-written, language-specific provably-correct compiler.)
+- Tate, R., Stepp, M., Tatlock, Z., & Lerner, S. (2009). *Equality saturation: a new approach to optimization.* POPL.
+- Willsey, M., Nandi, C., Wang, Y. R., Flatt, O., Tatlock, Z., & Panchekha, P. (2021). *Egg: Fast and extensible equality saturation.* POPL.
+
+### Entanglement spectrum and topological classification
+- Li, H., & Haldane, F. D. M. (2008). *Entanglement spectrum as a generalization of entanglement entropy.* PRL. (Foundational for §12.11.)
+- Pollmann, F., Turner, A. M., Berg, E., & Oshikawa, M. (2010). *Entanglement spectrum of a topological phase in one dimension.* PRB.
+- Kitaev, A., & Preskill, J. (2006). *Topological entanglement entropy.* PRL.
+
+### Ryu-Takayanagi and quantum extremal surfaces
+- Ryu, S., & Takayanagi, T. (2006). *Holographic derivation of entanglement entropy from the anti-de Sitter space/conformal field theory correspondence.* PRL.
+- Hubeny, V. E., Rangamani, M., & Takayanagi, T. (2007). *A covariant holographic entanglement entropy proposal.* JHEP.
+- Engelhardt, N., & Wall, A. C. (2015). *Quantum extremal surfaces: holographic entanglement entropy beyond the classical regime.* JHEP.
+- Susskind, L. (2016). *Computational complexity and black hole horizons.* Fortschritte der Physik. (Complexity = volume / complexity = action conjectures.)
+
+### Bidirectional reasoning
+- Pierce, B. C., & Turner, D. N. (2000). *Local type inference.* TOPLAS. (Bidirectional type checking.)
+- Dunfield, J., & Krishnaswami, N. R. (2021). *Bidirectional typing.* ACM Computing Surveys. (Modern survey of the approach.)
+
+### Renormalization group on operator algebras
+- Polchinski, J. (1984). *Renormalization and effective lagrangians.* NPB. (Exact renormalization group.)
+- Cao, C., Carroll, S. M., & Michalakis, S. (2017). *Space from Hilbert space: recovering geometry from bulk entanglement.* PRD. (Emergent space from operator-algebraic structure.)
 
 ---
 
