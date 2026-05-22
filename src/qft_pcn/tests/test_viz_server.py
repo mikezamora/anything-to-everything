@@ -134,6 +134,36 @@ def test_export_download_not_ready_returns_404():
     assert r.status_code == 404
 
 
+def test_export_job_table_is_bounded():
+    # The in-memory _export_jobs dict is capped; submitting more than the cap
+    # evicts the oldest entries so it cannot grow without limit.
+    from src.qft_pcn.viz import server as server_mod
+
+    c = TestClient(app)
+    server_mod._export_jobs.clear()
+    run_id = c.post("/run", json={"layers": ["manifold"],
+                                  "steps": 2, "grid": 8}).json()["run_id"]
+    for _ in range(server_mod._MAX_EXPORT_JOBS + 10):
+        c.post("/export", json={"run_id": run_id})
+    assert len(server_mod._export_jobs) <= server_mod._MAX_EXPORT_JOBS
+
+
+def test_export_error_path_has_no_output():
+    # On the error path the job must carry an `error` message and never an
+    # `output` key, so /download correctly reports the export is unavailable.
+    c = TestClient(app)
+    run_id = c.post("/run", json={"layers": ["manifold"],
+                                  "steps": 2, "grid": 8}).json()["run_id"]
+    job_id = c.post("/export", json={"run_id": run_id}).json()["job_id"]
+    job = c.get(f"/export/{job_id}").json()
+    if job["status"] == "error":
+        assert job.get("error")
+        assert "output" not in job
+    elif job["status"] == "done":
+        # With manim installed: done implies a populated output path.
+        assert job.get("output")
+
+
 def test_run_clamps_steps():
     from src.qft_pcn.viz import server as server_mod
     from src.qft_pcn.viz.runs import _MAX_STEPS

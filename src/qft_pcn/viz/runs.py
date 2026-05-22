@@ -183,9 +183,12 @@ def run_simulation(spec: RunSpec) -> Iterator[Frame]:
 
     qpcn_targets = {(0, "A", "n"): 0.25} if qpcn is not None else {}
 
-    # Recorder retains every captured Frame in `recorder.frames`. This is
-    # deliberate: Task 5's `/export` reuses the recorded sequence to render a
-    # Manim movie, so the retention is not a leak.
+    # Recorder retains every captured Frame in `recorder.frames` for callers
+    # that consume the generator's side effects. Note `/export` does NOT reuse
+    # this sequence: it re-derives frames by re-running this (deterministic,
+    # seeded) simulation from scratch -- an intentional trade-off, since runs
+    # are tiny and re-running avoids threading the recorded state across the
+    # request boundary.
     for _ in range(spec.steps):
         snaps: dict[str, dict] = {}
 

@@ -15,7 +15,8 @@ from pathlib import Path
 
 from .scenes import scene_class_for
 
-# Manim quality presets: (resolution, frame_rate). "low" keeps renders fast.
+# Manim quality presets: (pixel_height, pixel_width, fps). "low" keeps
+# renders fast.
 _QUALITY: dict[str, tuple[int, int, int]] = {
     "low": (480, 854, 15),
     "medium": (720, 1280, 30),
@@ -23,7 +24,8 @@ _QUALITY: dict[str, tuple[int, int, int]] = {
 }
 
 
-def render_layer(layer: str, frames: list, out_dir, quality: str = "low") -> Path:
+def render_layer(layer: str, frames: list, out_dir: str | Path,
+                 quality: str = "low") -> Path:
     """Render the recorded `frames` for `layer` to an MP4 in `out_dir`.
 
     Args:
