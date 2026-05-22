@@ -4,8 +4,8 @@
     {"id": 7, "subject": "Task 1: Viz instrumentation — schema, snapshots, recorder", "status": "completed"},
     {"id": 8, "subject": "Task 2: FastAPI + WebSocket server", "status": "completed", "blockedBy": [7]},
     {"id": 9, "subject": "Task 3: React + Vite app shell", "status": "completed", "blockedBy": [7]},
-    {"id": 10, "subject": "Task 4: Per-layer visualization panels", "status": "in_progress", "blockedBy": [8, 9]},
-    {"id": 11, "subject": "Task 5: Manim export pipeline", "status": "pending", "blockedBy": [7]}
+    {"id": 10, "subject": "Task 4: Per-layer visualization panels", "status": "completed", "blockedBy": [8, 9]},
+    {"id": 11, "subject": "Task 5: Manim export pipeline", "status": "completed", "blockedBy": [7]}
   ],
   "lastUpdated": "2026-05-22T00:00:00Z"
 }
