@@ -21,10 +21,16 @@ _MAX_GRID = 32
 
 
 def _safe(fn: Callable[[], Any]) -> Any:
-    """Call `fn`, returning None on any AttributeError/KeyError/TypeError."""
+    """Call `fn`, returning None for a missing optional attribute.
+
+    Only `(AttributeError, KeyError, TypeError)` are swallowed — those signal
+    an optional attribute simply not present on this substrate variant.
+    `ValueError`/`IndexError` indicate a real coding error in a snapshot
+    (e.g. an out-of-range entropy cut) and are deliberately allowed to surface.
+    """
     try:
         return fn()
-    except (AttributeError, KeyError, TypeError, IndexError, ValueError):
+    except (AttributeError, KeyError, TypeError):
         return None
 
 
@@ -73,8 +79,9 @@ def snapshot_network(net: Any) -> dict:
             "channels": _safe(lambda l=layer: l.phi.channels),
         })
 
-    # free_energy needs an observation; expose the cheap aggregate instead.
-    free_energy = _safe(
+    # A true free energy needs an observation; expose the cheap curvature
+    # aggregate instead, under an honest key name.
+    mean_abs_ricci = _safe(
         lambda: float(np.abs(net.manifold.ricci_scalar()).mean())
     )
 
@@ -82,7 +89,7 @@ def snapshot_network(net: Any) -> dict:
         "metric_h": metric_h,
         "ricci": ricci,
         "fields": fields,
-        "free_energy": free_energy,
+        "mean_abs_ricci": mean_abs_ricci,
         "step": _safe(lambda: int(net._step)),
     }
 
@@ -200,9 +207,10 @@ def snapshot_mera(m: Any) -> dict:
 
     entropies = None
     if n_leaves:
+        # entanglement_entropy uses 0-indexed cuts: valid 0..n_leaves-2.
         entropies = [
             _safe(lambda c=c: float(m.entanglement_entropy(c)))
-            for c in range(1, n_leaves)
+            for c in range(n_leaves - 1)
         ]
 
     return {
@@ -216,26 +224,37 @@ def snapshot_mera(m: Any) -> dict:
 # ---- variational quantum circuit ---------------------------------------------
 
 def snapshot_vqc(vqc: Any) -> dict:
-    """Snapshot a variational quantum circuit / quantum generative map."""
-    params = _safe(lambda: np.asarray(vqc.params).tolist())
-    if params is None:
-        params = _safe(lambda: np.asarray(vqc.theta).tolist())
+    """Snapshot a `QuantumGenerativeMap` or `QuantumConvMap`.
+
+    `QuantumGenerativeMap` stores trainable angles on `theta` (shape
+    n_layers x n_qubits x 2). `QuantumConvMap` wraps one in `.qmap` and adds
+    a classical `.bias`; we read through to the inner map for the angles.
+    """
+    # QuantumConvMap delegates to an inner QuantumGenerativeMap (`.qmap`).
+    inner = _safe(lambda: vqc.qmap)
+    src = inner if inner is not None else vqc
 
     return {
-        "params": params,
-        "n_qubits": _safe(lambda: int(vqc.n_qubits)),
-        "n_layers": _safe(lambda: int(vqc.n_layers)),
-        "kernel": _safe(lambda: np.asarray(vqc.kernel).tolist()),
+        "theta": _safe(lambda: np.asarray(src.theta).tolist()),
+        "n_qubits": _safe(lambda: int(src.n_qubits)),
+        "n_layers": _safe(lambda: int(src.n_layers)),
+        "input_scale": _safe(lambda: float(src.input_scale)),
+        "bias": _safe(lambda: np.asarray(vqc.bias).tolist()),
     }
 
 
 # ---- logic encoder -----------------------------------------------------------
 
 def snapshot_logic(enc: Any) -> dict:
-    """Snapshot a logic encoder / encoding result. Minimal + defensive."""
+    """Snapshot a logic Hamiltonian (e.g. `EvalHamiltonian`).
+
+    These classes expose the site count as `N` and the rule-term list as
+    `terms`; there is no `n_sites`/`d_local`/`state` attribute.
+    """
     return {
-        "n_sites": _safe(lambda: int(enc.n_sites)),
-        "d_local": _safe(lambda: int(enc.d_local)),
-        "bond_dims": _safe(lambda: list(enc.state.bond_dimensions())),
+        "n_sites": _safe(lambda: int(enc.N)),
         "term_count": _safe(lambda: len(enc.terms)),
+        "lambda_beta": _safe(lambda: float(enc.lambda_beta)),
+        "lambda_arith": _safe(lambda: float(enc.lambda_arith)),
+        "lambda_if": _safe(lambda: float(enc.lambda_if)),
     }
