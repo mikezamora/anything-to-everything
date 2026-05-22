@@ -250,10 +250,25 @@ def snapshot_logic(enc: Any) -> dict:
 
     These classes expose the site count as `N` and the rule-term list as
     `terms`; there is no `n_sites`/`d_local`/`state` attribute.
+
+    Each `EvalTerm` in `enc.terms` is a frozen dataclass with `rule_id`
+    (str), `site` (int) and `arity` (int) fields; we emit those verbatim as
+    JSON-ready dicts so a panel can lay out the real AST/term structure.
     """
+    def _terms() -> list:
+        out = []
+        for t in enc.terms:
+            out.append({
+                "rule_id": str(t.rule_id),
+                "site": int(t.site),
+                "arity": int(t.arity),
+            })
+        return out
+
     return {
         "n_sites": _safe(lambda: int(enc.N)),
         "term_count": _safe(lambda: len(enc.terms)),
+        "terms": _safe(_terms) or [],
         "lambda_beta": _safe(lambda: float(enc.lambda_beta)),
         "lambda_arith": _safe(lambda: float(enc.lambda_arith)),
         "lambda_if": _safe(lambda: float(enc.lambda_if)),

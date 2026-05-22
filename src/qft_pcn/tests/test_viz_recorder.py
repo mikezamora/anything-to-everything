@@ -262,3 +262,13 @@ def test_snapshot_logic_contents():
     assert snap["lambda_beta"] is not None
     assert snap["lambda_arith"] is not None
     assert snap["lambda_if"] is not None
+    # `terms` exposes the real AST/rule-term list, one dict per EvalTerm.
+    assert "terms" in snap
+    terms = snap["terms"]
+    assert isinstance(terms, list)
+    assert len(terms) == snap["term_count"]
+    for t in terms:
+        assert set(t) == {"rule_id", "site", "arity"}
+        assert isinstance(t["rule_id"], str) and t["rule_id"]
+        assert isinstance(t["site"], int) and 0 <= t["site"] < snap["n_sites"]
+        assert isinstance(t["arity"], int) and t["arity"] == 2
