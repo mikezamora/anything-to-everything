@@ -63,3 +63,38 @@ def test_binding_is_entanglement_structural_marker():
         f"expected > 0.5. A value near 0 means binding was encoded as a "
         f"classical lookup, not entanglement — spec §5, §1.1 violated."
     )
+
+
+from src.qft_pcn.logic.encoding import (
+    EncodingTooLarge, TooManyBinders, IntLiteralOutOfRange,
+    IllScopedVar, UnsupportedNode,
+)
+
+
+def test_encoding_too_large_raises():
+    with pytest.raises(EncodingTooLarge):
+        encode_mera(parse(r"\x:Int. x + x + x"), n_nodes_max=3)
+
+
+def test_too_many_binders_raises():
+    src = (r"\a:Int. \b:Int. \c:Int. \d:Int. \e:Int. \f:Int. \g:Int. "
+           r"\h:Int. a")
+    with pytest.raises(TooManyBinders):
+        encode_mera(parse(src))
+
+
+def test_int_literal_out_of_range_raises():
+    with pytest.raises(IntLiteralOutOfRange):
+        encode_mera(parse(r"\x:Int. x + 99"))
+
+
+def test_ill_scoped_var_raises():
+    with pytest.raises(IllScopedVar):
+        encode_mera(parse("undefined_name"))
+
+
+def test_unsupported_node_raises():
+    class _Bogus:
+        pass
+    with pytest.raises(UnsupportedNode):
+        encode_mera(_Bogus())  # type: ignore[arg-type]
