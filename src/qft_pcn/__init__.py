@@ -31,7 +31,7 @@ except ImportError:
 
 # Logic layer (sub-project A — AST <-> MPS encoder).
 from . import logic
-from .logic import encode, decode, sample, parse, pretty
+from .logic import encode, decode, sample, parse, pretty, encode_mera, decode_mera
 
 # Sub-project G public surface (LLM bridge).
 from .bridge import (
@@ -58,6 +58,8 @@ __all__ = [
     "encode",
     "decode",
     "sample",
+    "encode_mera",
+    "decode_mera",
     "parse",
     "pretty",
     # Bridge

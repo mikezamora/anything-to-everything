@@ -98,3 +98,11 @@ def test_unsupported_node_raises():
         pass
     with pytest.raises(UnsupportedNode):
         encode_mera(_Bogus())  # type: ignore[arg-type]
+
+
+def test_top_level_import_path():
+    """encode_mera/decode_mera reachable from the package surface."""
+    from src.qft_pcn.logic import encode_mera as e2, decode_mera as d2
+    state, meta = e2(parse(r"\x:Int. x"))
+    res = d2(state, meta)
+    assert res.residual_norm < 1e-10

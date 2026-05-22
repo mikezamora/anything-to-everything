@@ -88,8 +88,19 @@ from .debugger import (
     register_stlc_seed_templates,
 )
 
+# ---- Sub-project M1: MERA-native logic encoder ---------------------------
+from .mera_encoder import encode_mera, MeraEncodingMeta
+from .mera_decoder import decode_mera, sample_mera
+from .ast import (
+    Zero, Succ, NatLit, Nil, Cons, Eq, Forall, Fix,
+    TNat, TList, TEq, TProp,
+)
+
 __all__ = [
     "encode", "decode", "sample", "DecodeResult", "ast_alpha_eq",
+    "encode_mera", "decode_mera", "sample_mera", "MeraEncodingMeta",
+    "Zero", "Succ", "NatLit", "Nil", "Cons", "Eq", "Forall", "Fix",
+    "TNat", "TList", "TEq", "TProp",
     "Node", "Var", "Lam", "App", "IntLit", "BoolLit", "If", "Bin",
     "HoleVar", "substitute_hole", "TypeHole",
     "Ty", "TInt", "TBool", "TArrow", "parse", "pretty",
