@@ -106,3 +106,36 @@ def test_export_status_lookup():
     r = c.get(f"/export/{job_id}")
     assert r.status_code == 200
     assert r.json()["status"] == "queued"
+
+
+def test_export_status_unknown_returns_404():
+    c = TestClient(app)
+    r = c.get("/export/deadbeef")
+    assert r.status_code == 404
+
+
+def test_run_clamps_steps():
+    from src.qft_pcn.viz import server as server_mod
+    from src.qft_pcn.viz.runs import _MAX_STEPS
+
+    c = TestClient(app)
+    run_id = c.post("/run", json={"layers": ["manifold"],
+                                  "steps": 10_000_000,
+                                  "grid": 8}).json()["run_id"]
+    spec = server_mod._registry.get(run_id)
+    assert spec.steps <= _MAX_STEPS
+
+
+def test_ws_streams_error_on_failure(monkeypatch):
+    def _boom(spec):
+        raise RuntimeError("simulated failure")
+        yield  # pragma: no cover - makes _boom a generator
+
+    monkeypatch.setattr("src.qft_pcn.viz.server.run_simulation", _boom)
+    c = TestClient(app)
+    run_id = c.post("/run", json={"layers": ["manifold"],
+                                  "steps": 2, "grid": 8}).json()["run_id"]
+    with c.websocket_connect(f"/ws/{run_id}") as ws:
+        msg = ws.receive_json()
+        assert "error" in msg
+        assert "simulated failure" in msg["error"]

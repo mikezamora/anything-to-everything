@@ -8,9 +8,10 @@ queues a (stub) Manim render job; the real render is wired in a later task.
 
 from __future__ import annotations
 
+import json
 import uuid
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
 from .runs import RunSpec, RunRegistry, run_simulation
@@ -53,6 +54,11 @@ async def stream(ws: WebSocket, run_id: str):
         await ws.send_text('{"done": true}')
     except WebSocketDisconnect:
         pass
+    except Exception as exc:  # noqa: BLE001
+        # A mid-stream failure would otherwise close the socket abruptly with
+        # no application-level signal; send a terminal error frame first.
+        await ws.send_text(json.dumps({"error": str(exc)}))
+        await ws.close(code=1011)
 
 
 @app.post("/export")
@@ -73,5 +79,5 @@ def export_status(job_id: str):
     """Return the status of a queued export job."""
     job = _export_jobs.get(job_id)
     if job is None:
-        return {"job_id": job_id, "status": "not_found"}
+        raise HTTPException(status_code=404, detail="job not found")
     return job

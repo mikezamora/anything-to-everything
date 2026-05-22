@@ -22,6 +22,7 @@ from ..network import NetworkConfig, QFTPCNNetwork
 from ..qft.hamiltonian import FieldSpecies
 from ..qft.mera import MERA
 from ..qft.qpcn import QPCN, QPCNConfig
+from . import snapshots
 from .recorder import Recorder
 from .schema import Frame
 
@@ -49,7 +50,7 @@ class RunSpec:
         """
         d = d or {}
         layers = list(d.get("layers") or ["manifold"])
-        steps = int(d.get("steps", _DEFAULT_STEPS))
+        steps = min(int(d.get("steps", _DEFAULT_STEPS)), _MAX_STEPS)
         grid = int(d.get("grid", _DEFAULT_GRID))
         seed = d.get("seed")
         seed = int(seed) if seed is not None else None
@@ -76,8 +77,10 @@ class RunRegistry:
 # ---- substrate builders ------------------------------------------------------
 
 # Substrate dimensions are clamped to keep every run cheap regardless of the
-# grid the caller requests.
+# grid the caller requests. _MAX_STEPS bounds run length so a single request
+# cannot exhaust server resources.
 _MAX_GRID = 16
+_MAX_STEPS = 500
 _QPCN_SITES = 4
 _QPCN_CHI = 8
 _MERA_LEAVES = 4
@@ -180,8 +183,9 @@ def run_simulation(spec: RunSpec) -> Iterator[Frame]:
 
     qpcn_targets = {(0, "A", "n"): 0.25} if qpcn is not None else {}
 
-    from . import snapshots
-
+    # Recorder retains every captured Frame in `recorder.frames`. This is
+    # deliberate: Task 5's `/export` reuses the recorded sequence to render a
+    # Manim movie, so the retention is not a leak.
     for _ in range(spec.steps):
         snaps: dict[str, dict] = {}
 
