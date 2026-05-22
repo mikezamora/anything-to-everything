@@ -16,6 +16,10 @@ export interface Size {
  * Track an element's pixel size via `ResizeObserver`. Returns a ref to attach
  * and the current size. Falls back to a sane default before first measure
  * (jsdom reports 0x0).
+ *
+ * Returns `React.RefObject<T>`: under the installed React 18 types,
+ * `useRef<T>(null)` resolves to `RefObject<T>` (whose `.current` is already
+ * `T | null`), and that type is what JSX `ref=` props accept.
  */
 export function useSize<T extends HTMLElement>(): [
   React.RefObject<T>,
@@ -72,6 +76,18 @@ export function sequential(t: number): string {
   return `rgb(${Math.round(20 + 40 * x)}, ${Math.round(
     30 + 200 * x,
   )}, ${Math.round(60 + 195 * x)})`;
+}
+
+/**
+ * Deterministic colour for a field species, keyed on the species' index in a
+ * stable name-sorted ordering. Both the 3-D surfaces and the coupling graph
+ * use this so a species reads the same colour in both views.
+ */
+export function speciesColor(name: string, names: string[]): string {
+  const ordered = [...names].sort();
+  const i = ordered.indexOf(name);
+  const denom = Math.max(1, ordered.length - 1);
+  return sequential((i < 0 ? 0 : i) / denom);
 }
 
 /** Normalize a numeric grid (2-D array) to [-1, 1] by its peak abs value. */

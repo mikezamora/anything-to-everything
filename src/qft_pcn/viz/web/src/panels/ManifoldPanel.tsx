@@ -7,7 +7,7 @@
  * Reads `frame.layer_states.manifold` (shape: `snapshot_network`).
  */
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
@@ -63,6 +63,8 @@ function Surface({
     () => gridGeometry(height, colorGrid),
     [height, colorGrid],
   );
+  // Dispose the old GPU buffer when a new frame replaces this geometry.
+  useEffect(() => () => geo.dispose(), [geo]);
   return (
     <mesh geometry={geo} rotation={[-Math.PI / 2, 0, 0]}>
       <meshStandardMaterial

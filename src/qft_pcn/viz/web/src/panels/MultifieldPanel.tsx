@@ -14,7 +14,7 @@ import * as THREE from 'three';
 import * as d3 from 'd3';
 import type { Frame } from '../lib/types';
 import { PanelShell } from './PanelShell';
-import { useSize, normGrid, sequential, diverging } from './common';
+import { useSize, normGrid, speciesColor, diverging } from './common';
 
 type Grid = number[][];
 
@@ -29,8 +29,6 @@ interface MultifieldState {
   couplings?: Record<string, number> | null;
   step?: number | null;
 }
-
-const SPECIES_HUE = ['#5fd0c8', '#d0a05f', '#a05fd0', '#5f8fd0', '#d05f8f'];
 
 function FieldSurface({
   grid,
@@ -55,6 +53,8 @@ function FieldSurface({
     g.computeVertexNormals();
     return g;
   }, [grid]);
+  // Dispose the old GPU buffer when a new frame replaces this geometry.
+  useEffect(() => () => geo.dispose(), [geo]);
   return (
     <mesh geometry={geo} rotation={[-Math.PI / 2, 0, 0]} position={[0, y, 0]}>
       <meshStandardMaterial
@@ -79,15 +79,14 @@ function CouplingGraph({
   const [ref, size] = useSize<HTMLDivElement>();
   const svgRef = useRef<SVGSVGElement>(null);
 
-  useEffect(() => {
-    const svg = d3.select(svgRef.current);
-    svg.selectAll('*').remove();
-    if (!names.length) return;
-    const { width, height } = size;
+  interface Node extends d3.SimulationNodeDatum {
+    id: string;
+  }
 
-    interface Node extends d3.SimulationNodeDatum {
-      id: string;
-    }
+  // Force layout: run the 200-tick simulation ONLY when the graph topology
+  // (names / couplings) changes. Positions are computed in a unit-square
+  // [0,1]^2 frame so they can be cheaply rescaled on resize without re-running.
+  const layout = useMemo(() => {
     const nodes: Node[] = names.map((id) => ({ id }));
     const links = Object.entries(couplings)
       .map(([key, g]) => {
@@ -95,8 +94,8 @@ function CouplingGraph({
         return { source: a, target: b, g };
       })
       .filter((l) => names.includes(l.source) && names.includes(l.target));
+    if (!names.length) return { nodes, links };
 
-    const maxG = d3.max(links, (l) => Math.abs(l.g)) ?? 1;
     const sim = d3
       .forceSimulation<Node>(nodes)
       .force(
@@ -104,12 +103,31 @@ function CouplingGraph({
         d3
           .forceLink<Node, (typeof links)[number]>(links)
           .id((d) => d.id)
-          .distance(90),
+          .distance(0.25),
       )
-      .force('charge', d3.forceManyBody().strength(-220))
-      .force('center', d3.forceCenter(width / 2, height / 2))
+      .force('charge', d3.forceManyBody().strength(-0.6))
+      .force('center', d3.forceCenter(0.5, 0.5))
       .stop();
     for (let i = 0; i < 200; i++) sim.tick();
+    sim.stop();
+    return { nodes, links };
+  }, [names, couplings]);
+
+  useEffect(() => {
+    const svg = d3.select(svgRef.current);
+    svg.selectAll('*').remove();
+    if (!names.length) return;
+    const { width, height } = size;
+    const { nodes, links } = layout;
+
+    // Rescale the unit-square layout into the current pixel viewport.
+    const pad = 28;
+    const px = (u: number | undefined) =>
+      pad + (u ?? 0.5) * (width - 2 * pad);
+    const py = (u: number | undefined) =>
+      pad + (u ?? 0.5) * (height - 2 * pad);
+
+    const maxG = d3.max(links, (l) => Math.abs(l.g)) ?? 1;
 
     const link = svg
       .append('g')
@@ -118,10 +136,10 @@ function CouplingGraph({
       .join('line')
       .attr('stroke', (l) => diverging(l.g / maxG))
       .attr('stroke-width', (l) => 1 + (Math.abs(l.g) / maxG) * 6)
-      .attr('x1', (l) => (l.source as unknown as Node).x ?? 0)
-      .attr('y1', (l) => (l.source as unknown as Node).y ?? 0)
-      .attr('x2', (l) => (l.target as unknown as Node).x ?? 0)
-      .attr('y2', (l) => (l.target as unknown as Node).y ?? 0);
+      .attr('x1', (l) => px((l.source as unknown as Node).x))
+      .attr('y1', (l) => py((l.source as unknown as Node).y))
+      .attr('x2', (l) => px((l.target as unknown as Node).x))
+      .attr('y2', (l) => py((l.target as unknown as Node).y));
     void link;
 
     svg
@@ -136,15 +154,15 @@ function CouplingGraph({
       .attr(
         'x',
         (l) =>
-          (((l.source as unknown as Node).x ?? 0) +
-            ((l.target as unknown as Node).x ?? 0)) /
+          (px((l.source as unknown as Node).x) +
+            px((l.target as unknown as Node).x)) /
           2,
       )
       .attr(
         'y',
         (l) =>
-          (((l.source as unknown as Node).y ?? 0) +
-            ((l.target as unknown as Node).y ?? 0)) /
+          (py((l.source as unknown as Node).y) +
+            py((l.target as unknown as Node).y)) /
           2,
       )
       .text((l) => l.g.toFixed(2));
@@ -154,11 +172,11 @@ function CouplingGraph({
       .selectAll('g')
       .data(nodes)
       .join('g')
-      .attr('transform', (d) => `translate(${d.x ?? 0},${d.y ?? 0})`);
+      .attr('transform', (d) => `translate(${px(d.x)},${py(d.y)})`);
     node
       .append('circle')
       .attr('r', 14)
-      .attr('fill', (_d, i) => SPECIES_HUE[i % SPECIES_HUE.length])
+      .attr('fill', (d) => speciesColor(d.id, names))
       .attr('stroke', '#0b0e14')
       .attr('stroke-width', 2);
     node
@@ -169,7 +187,7 @@ function CouplingGraph({
       .attr('text-anchor', 'middle')
       .attr('dy', 3)
       .text((d) => d.id.slice(0, 4));
-  }, [names, couplings, size]);
+  }, [names, layout, size]);
 
   return (
     <div ref={ref} style={{ width: '100%', height: '100%' }}>
@@ -206,7 +224,7 @@ export function MultifieldPanel({ frame }: { frame: Frame }) {
                     key={name}
                     grid={phi}
                     y={(i - (names.length - 1) / 2) * 1.3}
-                    color={sequential(i / Math.max(1, names.length - 1))}
+                    color={speciesColor(name, names)}
                   />
                 );
               })}

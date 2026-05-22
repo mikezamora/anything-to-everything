@@ -20,14 +20,14 @@ interface MeraState {
   entropies?: Array<number | null> | null;
 }
 
-interface MNode {
+export interface MNode {
   x: number;
   y: number;
   depth: number;
   kind: 'leaf' | 'isometry' | 'disentangler';
   bond: number;
 }
-interface MEdge {
+export interface MEdge {
   a: MNode;
   b: MNode;
   width: number;
@@ -38,7 +38,7 @@ interface MEdge {
  * each coarser layer sits on a smaller-radius circle. Within a layer the nodes
  * alternate isometry / disentangler glyphs.
  */
-function buildTree(
+export function buildTree(
   nLeaves: number,
   layerDims: number[],
   bondDims: number[],
