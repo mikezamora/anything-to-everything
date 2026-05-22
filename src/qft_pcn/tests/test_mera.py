@@ -557,6 +557,65 @@ def test_entropy_of_bell_pair_at_leaves_0_and_1():
     assert abs(S - np.log(2)) < 1e-6, f"S={S}, expected ln 2"
 
 
+# ---- _entropy_from_terms regression: branch-superposition cut entropy -----
+
+
+def _basis_vec(i: int, d: int = 2) -> np.ndarray:
+    v = np.zeros(d, dtype=complex)
+    v[i] = 1.0
+    return v
+
+
+def test_term_superposition_one_leaf_difference_is_product():
+    """A 2-term superposition differing on exactly ONE leaf is a genuine
+    product state: |0000> + |1000> = (|0>+|1>) (x) |0> (x) |0> (x) |0>.
+
+    Every cut must have S = 0. Before the _entropy_from_terms fix the
+    buggy K = cc.T*GR.T*GL form wrongly reported ln(2) at every cut.
+    """
+    z, o = _basis_vec(0), _basis_vec(1)
+    t1 = (1.0, [z, z, z, z])
+    t2 = (1.0, [o, z, z, z])
+    m = MERA.from_term_superposition([t1, t2]).normalize()
+    for cut in range(m.N - 1):
+        S = m.entanglement_entropy(cut)
+        assert abs(S) < 1e-9, f"cut {cut}: S={S}, expected 0 (product state)"
+
+
+def test_term_superposition_two_leaf_difference_is_entangled():
+    """A 2-term superposition differing on TWO leaves on the same side of
+    a cut is genuinely entangled across that cut.
+
+    |0000> + |1100>: leaves 0,1 differ. The cut after leaf 1 separates
+    {0,1} from {2,3}; both branches agree on the right, so S(cut=1) = 0,
+    but the cut after leaf 0 splits the differing leaves and yields ln 2.
+    """
+    z, o = _basis_vec(0), _basis_vec(1)
+    t1 = (1.0, [z, z, z, z])
+    t2 = (1.0, [o, o, z, z])
+    m = MERA.from_term_superposition([t1, t2]).normalize()
+    S0 = m.entanglement_entropy(0)
+    assert abs(S0 - np.log(2)) < 1e-9, f"cut 0: S={S0}, expected ln 2"
+    # Cuts 1 and 2: both branches' product on each side is consistent
+    # (the two differing leaves sit together on the left), so S = 0.
+    for cut in (1, 2):
+        S = m.entanglement_entropy(cut)
+        assert abs(S) < 1e-9, f"cut {cut}: S={S}, expected 0"
+
+
+def test_term_superposition_is_not_reported_as_product():
+    """_is_product() must not claim a 2-term entangled superposition is a
+    product state (its disentanglers are identity; entanglement is
+    isometry-carried)."""
+    z, o = _basis_vec(0), _basis_vec(1)
+    m = MERA.from_term_superposition(
+        [(1.0, [z, z, z, z]), (1.0, [o, o, z, z])])
+    assert not m._is_product()
+    # A single-term superposition IS a product state.
+    m1 = MERA.from_term_superposition([(1.0, [z, z, z, z])])
+    assert m1._is_product()
+
+
 # ---- Task 19: mera_evolution TEBD + energy --------------------------------
 
 

@@ -977,7 +977,16 @@ class MERA:
     def _is_product(self) -> bool:
         """True if all disentanglers (intra + inter, every layer) are the
         identity. Used as the product-state entropy fast path.
+
+        Guard: a term-superposition state carries its entanglement in the
+        isometries, NOT the disentanglers (which stay identity). The
+        disentangler-only check below cannot see that entanglement, so it
+        would falsely report such a state as product. If a non-trivial
+        term decomposition is present (>= 2 distinct terms), defer to it:
+        only a single-term superposition is genuinely a product state.
         """
+        if self._superposition_terms is not None:
+            return len(self._superposition_terms) <= 1
         for layer in self.disentanglers:
             for u in layer:
                 d = u.shape[0]
@@ -1066,12 +1075,19 @@ class MERA:
             return 0.0
         # Reduced density on the LEFT subsystem, expressed in the branch
         # frame: rho_L = sum_{t,t'} conj(c_t) c_t' GR[t,t'] |L_t'><L_t|.
-        # Its nonzero spectrum = spectrum of the k x k matrix
-        #   K[t', t] = (conj(c_t) c_t' GR[t,t']) * GL[t',t]
-        # because <L_t | L_t'> = GL[t,t']. (Standard non-orthogonal
-        # reduced-density spectrum identity.)
-        K = (cc.T * GR.T) * GL
-        K = K / norm_sq
+        # The nonzero spectrum of an operator written in a non-orthonormal
+        # frame as  sum_{t',t} A[t',t] |L_t'><L_t|  equals the spectrum of
+        # the k x k matrix  GL @ A^T , where GL[t,t'] = <L_t|L_t'>.
+        # Here A[t',t] = conj(c_t) c_t' GR[t,t'], so
+        #   A^T[t,t'] = c_t conj(c_t') GR[t',t]
+        #             = (outer(coeffs, coeffs.conj()) * GR.T)[t, t'].
+        # Hence  K = GL @ B  with  B = outer(coeffs, coeffs.conj()) * GR.T.
+        # The previous form  K = (cc.T * GR.T) * GL  was elementwise (not a
+        # matrix product) and over-reported entropy: a 2-term superposition
+        # differing on a single leaf (a genuine product state, S=0) was
+        # reported as ln(2).
+        B = np.outer(coeffs, coeffs.conj()) * GR.T
+        K = (GL @ B) / norm_sq
         ev = np.linalg.eigvals(K)
         p = np.real(ev)
         p = p[p > 1e-12]

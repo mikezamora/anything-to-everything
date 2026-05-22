@@ -1,8 +1,9 @@
 """Tests for decode_mera (spec §7)."""
 from __future__ import annotations
+import numpy as np
 from src.qft_pcn.logic.ast import parse, Lam, Var, App, IntLit, TInt
 from src.qft_pcn.logic.mera_encoder import encode_mera
-from src.qft_pcn.logic.mera_decoder import decode_mera, DecodeResult
+from src.qft_pcn.logic.mera_decoder import decode_mera, DecodeResult, sample_mera
 
 
 def test_decode_identity_lambda():
@@ -29,10 +30,6 @@ def test_decode_application():
     assert isinstance(lam_f, Lam)
     app = lam_f.body.body
     assert isinstance(app, App)
-
-
-import numpy as np
-from src.qft_pcn.logic.mera_decoder import sample_mera
 
 
 def test_sample_returns_n_results():
