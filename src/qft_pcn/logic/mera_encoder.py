@@ -17,7 +17,7 @@ from ._typing_extension import compute_tobl_tags
 from ._mera_layout import compute_layout, MeraLayout
 from ._mera_leaves import node_leaf_vectors
 from .mera_encoding import MERA_LEAF_DIM, KIND_LAM, KIND_FORALL, KIND_FIX
-from .encoding import KIND_PAD as _ENC_KIND_PAD
+from .encoding import KIND_PAD as _ENC_KIND_PAD, TYPE_ARR_NESTED
 from src.qft_pcn.qft.mera import MERA
 
 
@@ -32,6 +32,7 @@ class MeraEncodingMeta:
     site_to_ast_path: dict[int, tuple[int, ...]]
     binder_leaves: dict[int, int]      # binder AST node -> its bid leaf
     use_to_binder: dict[int, int]      # use's bid leaf -> binder's bid leaf
+    nested_type_index: dict[int, "object"] = field(default_factory=dict)
     layout: MeraLayout = field(repr=False, default=None)
 
 
@@ -107,6 +108,14 @@ def encode_mera(ast: Node, n_nodes_max: int = 32,
             binder_node = occ.var_ref.binder_site
             use_to_binder[use_leaf] = layout.leaf_of(binder_node, "bid")
 
+    # Nested-arrow type side table, keyed by node index — exactly what the
+    # MPS meta.nested_type_index carries, so the shared structural parse
+    # can recover a Lam's higher-order param type.
+    nested_type_index: dict[int, object] = {}
+    for node_idx in range(n_nodes):
+        if type_tags[node_idx] == TYPE_ARR_NESTED and sites[node_idx].ty is not None:
+            nested_type_index[node_idx] = sites[node_idx].ty
+
     meta = MeraEncodingMeta(
         n_nodes=n_nodes, n_leaves=layout.n_leaves, L=layout.L,
         leaf_dim=MERA_LEAF_DIM,
@@ -116,6 +125,7 @@ def encode_mera(ast: Node, n_nodes_max: int = 32,
                           if occ.kind != _ENC_KIND_PAD},
         binder_leaves=binder_leaves,
         use_to_binder=use_to_binder,
+        nested_type_index=nested_type_index,
         layout=layout,
     )
     return state, meta

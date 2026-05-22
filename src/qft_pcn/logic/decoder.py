@@ -164,6 +164,26 @@ def decode(state: MPS, meta: EncodingMeta) -> DecodeResult:
             ts[k + 1] = np.einsum('lr,rds->lds', left_vec, ts[k + 1],
                                   optimize='greedy')
 
+    ast = parse_kind_stream(decoded_sites, meta.nested_type_index)
+    return DecodeResult(ast=ast, residual_norm=residual_acc)
+
+
+def parse_kind_stream(decoded_sites: list[tuple],
+                      nested_type_index: Optional[dict[int, Ty]] = None
+                      ) -> Node:
+    """Rebuild an AST from a pre-order stream of per-site basis tuples.
+
+    Each tuple is ``(kind, type, bid, value, tobl)`` (the trailing tobl
+    entry is structural-parse-irrelevant and ignored). The stream is
+    consumed in pre-order; trailing PAD sites are permitted and skipped.
+    Var->Lam wiring uses a lexical binder stack.
+
+    Shared by the MPS decoder (`decode`) and the MERA decoder
+    (`decode_mera`): the structural parse must not be duplicated.
+    """
+    if nested_type_index is None:
+        nested_type_index = {}
+    n_total = len(decoded_sites)
     pos = [0]
     binder_stack: list[Lam] = []
     name_counter = [0]
@@ -174,10 +194,10 @@ def decode(state: MPS, meta: EncodingMeta) -> DecodeResult:
         return f"_v{n}"
 
     def _parse_one() -> Node:
-        if pos[0] >= meta.N:
+        if pos[0] >= n_total:
             raise DecodeError("ran out of sites mid-parse")
         site_idx = pos[0]
-        ki, ti, bi, vi, _oi = decoded_sites[site_idx]
+        ki, ti, bi, vi = decoded_sites[site_idx][:4]
         pos[0] += 1
         if ki == KIND_PAD:
             raise DecodeError(f"unexpected PAD at site {site_idx}")
@@ -191,7 +211,7 @@ def decode(state: MPS, meta: EncodingMeta) -> DecodeResult:
             target_lam = binder_stack[-1 - depth]
             return Var(name=target_lam.param)
         if ki == KIND_LAM:
-            ty = _type_from_tag(ti, site_idx, meta.nested_type_index)
+            ty = _type_from_tag(ti, site_idx, nested_type_index)
             param_ty = ty.src if isinstance(ty, TArrow) else TInt()
             name = _fresh_name()
             lam = Lam(param=name, param_ty=param_ty, body=Var(name=name))
@@ -217,19 +237,54 @@ def decode(state: MPS, meta: EncodingMeta) -> DecodeResult:
                 raise DecodeError(f"site {site_idx}: unknown bin op value {vi}")
             l = _parse_one(); r = _parse_one()
             return Bin(op=op, lhs=l, rhs=r)
+        node = _parse_extended_kind(ki, ti, bi, vi, site_idx, _parse_one)
+        if node is not None:
+            return node
         raise DecodeError(f"site {site_idx}: unknown kind {ki}")
 
     ast = _parse_one()
 
-    while pos[0] < meta.N:
-        ki, _, _, _, _ = decoded_sites[pos[0]]
+    while pos[0] < n_total:
+        ki = decoded_sites[pos[0]][0]
         if ki != KIND_PAD:
             raise DecodeError(
                 f"site {pos[0]} not PAD after AST parse (kind={ki})"
             )
         pos[0] += 1
 
-    return DecodeResult(ast=ast, residual_norm=residual_acc)
+    return ast
+
+
+def _parse_extended_kind(ki, ti, bi, vi, site_idx, parse_one):
+    """Parse an extended-calculus node (Nat/List/Eq/...).
+
+    Returns the parsed Node, or None if `ki` is not an extended kind.
+    Lives in decoder.py so both the MPS and MERA structural parses can
+    decode the extended calculus through the shared `parse_kind_stream`.
+    """
+    from .mera_encoding import (
+        KIND_ZERO, KIND_SUCC, KIND_NATLIT, KIND_NIL, KIND_CONS,
+        KIND_EQ, KIND_FORALL, KIND_FIX,
+    )
+    from .ast import Zero, Succ, NatLit, Nil, Cons, Eq
+    if ki == KIND_ZERO:
+        return Zero()
+    if ki == KIND_SUCC:
+        return Succ(arg=parse_one())
+    if ki == KIND_NATLIT:
+        return NatLit(val=vi)
+    if ki == KIND_NIL:
+        return Nil()
+    if ki == KIND_CONS:
+        head = parse_one(); tail = parse_one()
+        return Cons(head=head, tail=tail)
+    if ki == KIND_EQ:
+        lhs = parse_one(); rhs = parse_one()
+        return Eq(lhs=lhs, rhs=rhs)
+    if ki in (KIND_FORALL, KIND_FIX):
+        raise DecodeError(
+            f"site {site_idx}: Forall/Fix binder decoding is Part-2 scope")
+    return None
 
 
 # ---- alpha-equivalence helper ---------------------------------------------
@@ -334,66 +389,5 @@ def _decode_from_indices(flat_indices: list[int],
                          meta: EncodingMeta) -> DecodeResult:
     """Build an AST from a sampled list of local-basis indices."""
     decoded_sites = [_decompose_basis_index(f) for f in flat_indices]
-
-    pos = [0]
-    binder_stack: list[Lam] = []
-    name_counter = [0]
-
-    def _fresh_name() -> str:
-        n = name_counter[0]; name_counter[0] += 1
-        return f"_v{n}"
-
-    def _parse_one() -> Node:
-        if pos[0] >= meta.N:
-            raise DecodeError("ran out of sites mid-parse (sample)")
-        site_idx = pos[0]
-        ki, ti, bi, vi, _oi = decoded_sites[site_idx]
-        pos[0] += 1
-        if ki == KIND_PAD:
-            raise DecodeError(f"unexpected PAD at site {site_idx} (sample)")
-        if ki == KIND_VAR:
-            depth = bi - 1
-            if depth < 0 or depth >= len(binder_stack):
-                raise DecodeError(
-                    f"site {site_idx} (sample): VAR with bid={bi}, "
-                    f"stack size {len(binder_stack)}")
-            target_lam = binder_stack[-1 - depth]
-            return Var(name=target_lam.param)
-        if ki == KIND_LAM:
-            ty = _type_from_tag(ti, site_idx, meta.nested_type_index)
-            param_ty = ty.src if isinstance(ty, TArrow) else TInt()
-            name = _fresh_name()
-            lam = Lam(param=name, param_ty=param_ty, body=Var(name=name))
-            binder_stack.append(lam)
-            body = _parse_one()
-            binder_stack.pop()
-            lam.body = body
-            return lam
-        if ki == KIND_APP:
-            fn = _parse_one(); arg = _parse_one()
-            return App(fn=fn, arg=arg)
-        if ki == KIND_INT:
-            return IntLit(val=vi - INT_LIT_OFFSET)
-        if ki == KIND_BOOL:
-            return BoolLit(val=(vi == 1))
-        if ki == KIND_IF:
-            c = _parse_one(); a = _parse_one(); b = _parse_one()
-            return If(cond=c, then_b=a, else_b=b)
-        if ki == KIND_BIN:
-            op = BIN_OP_FROM_VALUE.get(vi)
-            if op is None:
-                raise DecodeError(
-                    f"site {site_idx} (sample): unknown bin op value {vi}")
-            l = _parse_one(); r = _parse_one()
-            return Bin(op=op, lhs=l, rhs=r)
-        raise DecodeError(f"site {site_idx} (sample): unknown kind {ki}")
-
-    ast = _parse_one()
-    while pos[0] < meta.N:
-        ki, _, _, _, _ = decoded_sites[pos[0]]
-        if ki != KIND_PAD:
-            raise DecodeError(
-                f"site {pos[0]} (sample) not PAD after parse, kind={ki}"
-            )
-        pos[0] += 1
+    ast = parse_kind_stream(decoded_sites, meta.nested_type_index)
     return DecodeResult(ast=ast, residual_norm=0.0)
