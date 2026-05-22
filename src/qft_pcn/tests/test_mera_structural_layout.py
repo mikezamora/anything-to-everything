@@ -25,8 +25,11 @@ def test_expand_reports_one_region():
 
 def test_region_n_max_is_largest_candidate_node_count():
     _skel, regions = _expand_structural_holes(_p3_sketch())
-    # candidates have 1, 2, 3 nodes -> n_max = 3
-    assert regions[0].n_max == 3
+    # Total AST node counts: Var(x)=1; App(f,x)=3 (App + 2 Vars);
+    # App(f, App(f,x))=5 (App + Var + App + 2 Vars). n_max = 5 — the
+    # candidate's footprint in the layout is its total node count
+    # (each node occupies 5 leaf slots), matching the M1 serializer.
+    assert regions[0].n_max == 5
 
 
 def test_region_has_k_branches():

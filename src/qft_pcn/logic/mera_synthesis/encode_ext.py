@@ -54,19 +54,18 @@ class HoleRegion:
 
 
 def _count_nodes(ast: Node) -> int:
-    """Number of AST nodes contributing to leaf width in `ast`.
+    """Total number of AST nodes (pre-order, no PAD) in `ast`.
 
-    Counts terminal (leaf) sub-trees — those with no `Node`-typed child
-    attribute in `_CHILD_ATTRS`. This is the count that drives `n_max`
-    sizing of the hole region: each leaf occupies one MERA leaf slot,
-    so the candidate's footprint in the layout equals its number of
-    terminal AST nodes.
+    Matches the M1 serializer's node count — `len(serialize_preorder(ast))`
+    minus PAD entries — which is what Task 4 uses to size each candidate's
+    n_j (one node => five leaf slots in the structural-hole region).
     """
-    children = [getattr(ast, attr, None) for attr in _CHILD_ATTRS]
-    child_nodes = [c for c in children if isinstance(c, Node)]
-    if not child_nodes:
-        return 1
-    return sum(_count_nodes(c) for c in child_nodes)
+    n = 1
+    for attr in _CHILD_ATTRS:
+        child = getattr(ast, attr, None)
+        if isinstance(child, Node):
+            n += _count_nodes(child)
+    return n
 
 
 def _structural_holes_in_preorder(ast: Node):
