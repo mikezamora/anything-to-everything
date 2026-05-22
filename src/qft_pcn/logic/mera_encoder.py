@@ -37,6 +37,7 @@ class MeraEncodingMeta:
     use_to_binder: dict[int, int]      # use's bid leaf -> binder's bid leaf
     nested_type_index: dict[int, "object"] = field(default_factory=dict)
     layout: MeraLayout = field(repr=False, default=None)
+    children_of_node: dict[int, list[int]] = field(default_factory=dict)
 
 
 def _binder_kinds() -> set[int]:
@@ -152,6 +153,26 @@ def encode_mera(ast: Node, n_nodes_max: int = 32,
         if type_tags[node_idx] == TYPE_ARR_NESTED and sites[node_idx].ty is not None:
             nested_type_index[node_idx] = sites[node_idx].ty
 
+    # children_of_node: parent AST node index -> child node indices.
+    # A node c is a child of node p iff c's ast_path == p's ast_path + (j,)
+    # for some j (one level deeper, directly under p). This is layout
+    # metadata from the pre-order walk (spec §5.6 (b)) — NOT an AST walk.
+    children_of_node: dict[int, list[int]] = {}
+    path_to_node: dict[tuple, int] = {}
+    for node_idx in range(n_nodes):
+        path_to_node[sites[node_idx].ast_path] = node_idx
+    for node_idx in range(n_nodes):
+        children_of_node[node_idx] = []
+    for node_idx in range(n_nodes):
+        path = sites[node_idx].ast_path
+        if len(path) >= 1:
+            parent_path = path[:-1]
+            parent = path_to_node.get(parent_path)
+            if parent is not None and parent != node_idx:
+                children_of_node[parent].append(node_idx)
+    for node_idx in children_of_node:
+        children_of_node[node_idx].sort()
+
     meta = MeraEncodingMeta(
         n_nodes=n_nodes, n_leaves=layout.n_leaves, L=layout.L,
         leaf_dim=MERA_LEAF_DIM,
@@ -163,5 +184,6 @@ def encode_mera(ast: Node, n_nodes_max: int = 32,
         use_to_binder=use_to_binder,
         nested_type_index=nested_type_index,
         layout=layout,
+        children_of_node=children_of_node,
     )
     return state, meta
