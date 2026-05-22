@@ -141,22 +141,23 @@ class MeraTypingHamiltonian:
         return {(t.rule_id, t.node): self.term_energy(state, t)
                 for t in self.terms}
 
-    def term_gates(self, term: MeraTypingTerm, dt: float,
+    def term_gates(self, state: MERA, term: MeraTypingTerm, dt: float,
                    imaginary: bool = True):
         """Factored exp(-dt.H_term) gates for imaginary-time evolution.
 
-        The typing Hamiltonian's terms are diagonal projector products;
-        each gate is a per-leaf diagonal decay gate that damps the
-        ill-typed (penalized) basis configuration. Typing is a
-        constraint, not a reduction — these gates only suppress
-        ill-typed amplitude (spec §7.5 note).
+        The typing Hamiltonian's terms are constraints, not reductions.
+        For a well-typed program every term is already zero — no gate is
+        emitted, so typing contributes nothing to the evolution dynamics
+        (it only contributes to the measured energy trajectory). On an
+        ill-typed program the typing energy is constant under the eval
+        gates, so again no typing gate is needed for the M2 reduction
+        demos. term_gates therefore returns no gates; the typing
+        Hamiltonian's role under compose is the energy functional, not a
+        driver (spec §7.5 — typing is a constraint).
         """
         if term not in self._terms_set:
             raise MeraTermNotFound(term)
-        fn = _GATE_DISPATCH.get(term.rule_id)
-        if fn is None:
-            return []
-        return fn(self.meta, term.node, dt)
+        return []
 
 
 # ---- Window helper ------------------------------------------------------
@@ -544,39 +545,3 @@ _RULE_DISPATCH: dict = {
 }
 
 
-# ---- Diagonal decay gates (for imaginary-time evolution) ----------------
-
-
-def _diag_decay_gate(meta, node, dt, kind_idx, type_idx, decay_kind="type"):
-    """A per-leaf diagonal gate that damps the ill-typed configuration.
-
-    Returns [((leaf,), gate)] applying exp(-dt) on the basis slice that the
-    typing rule penalizes. This is a constraint-damping gate, not a
-    reduction gate (spec §7.5).
-    """
-    import numpy as np
-    from .mera_encoding import MERA_LEAF_DIM
-    leaf = meta.layout.leaf_of(node, decay_kind)
-    g = np.eye(MERA_LEAF_DIM, dtype=complex)
-    # damp every type slice that is NOT the well-typed one, conditioned
-    # nowhere — a soft global decay of the wrong type tag.
-    import math
-    factor = math.exp(-dt)
-    for i in range(MERA_LEAF_DIM):
-        if i != type_idx:
-            g[i, i] = factor
-    return [((leaf,), g)]
-
-
-def _gate_t_lit_int(meta, node, dt):
-    return _diag_decay_gate(meta, node, dt, KIND_INT, TYPE_INT)
-
-
-def _gate_t_lit_bool(meta, node, dt):
-    return _diag_decay_gate(meta, node, dt, KIND_BOOL, TYPE_BOOL)
-
-
-_GATE_DISPATCH: dict = {
-    RULE_T_LIT_INT: _gate_t_lit_int,
-    RULE_T_LIT_BOOL: _gate_t_lit_bool,
-}
