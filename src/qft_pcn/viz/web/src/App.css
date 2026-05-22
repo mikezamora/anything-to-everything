@@ -1,0 +1,160 @@
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.run-controls {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+  padding: 0.5rem 1rem;
+  background: var(--bg-elev);
+  border-bottom: 1px solid var(--border);
+}
+
+.run-controls .title {
+  font-weight: 600;
+}
+
+.run-controls label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  color: var(--fg-dim);
+}
+
+.run-controls input[type='number'] {
+  width: 4rem;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.2rem 0.3rem;
+}
+
+.run-layers {
+  display: flex;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.run-controls button {
+  background: var(--accent);
+  color: #0b0d10;
+  border: none;
+  border-radius: 4px;
+  padding: 0.35rem 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.run-controls button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.error-bar {
+  background: #3a1f1f;
+  color: var(--error);
+  padding: 0.4rem 1rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.layer-selector {
+  width: 160px;
+  background: var(--bg-elev);
+  border-right: 1px solid var(--border);
+  padding: 0.5rem;
+  overflow-y: auto;
+}
+
+.layer-selector h2 {
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+  margin: 0.3rem 0.4rem;
+}
+
+.layer-selector ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.layer-selector button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  color: var(--fg);
+  border: none;
+  border-radius: 4px;
+  padding: 0.4rem 0.6rem;
+  cursor: pointer;
+}
+
+.layer-selector button:hover {
+  background: var(--border);
+}
+
+.layer-selector button.active {
+  background: var(--accent);
+  color: #0b0d10;
+  font-weight: 600;
+}
+
+.panel-area {
+  flex: 1;
+  padding: 1rem;
+  overflow: auto;
+}
+
+.panel-area h2 {
+  margin-top: 0;
+  text-transform: capitalize;
+}
+
+.panel-area pre {
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.8rem;
+  overflow: auto;
+}
+
+.panel-area .empty {
+  color: var(--fg-dim);
+}
+
+.timeline {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.5rem 1rem;
+  background: var(--bg-elev);
+  border-top: 1px solid var(--border);
+}
+
+.timeline input[type='range'] {
+  flex: 1;
+}
+
+.timeline-label {
+  color: var(--fg-dim);
+  white-space: nowrap;
+}
+
+.timeline-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  color: var(--fg-dim);
+}
