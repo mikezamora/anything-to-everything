@@ -74,8 +74,17 @@ def _is_identity_matrix(u: np.ndarray, atol: float = 1e-12) -> bool:
     d = u.shape[0]
     n = d * d
     flat = u.reshape(n, n)
-    diff = flat - np.eye(n, dtype=flat.dtype)
-    return bool(np.max(np.abs(diff)) <= atol) if diff.size else True
+    if flat.size == 0:
+        return True
+    # Equivalent to max(|flat - I|) <= atol but without allocating np.eye:
+    # bound the diagonal's deviation from 1 and the off-diagonal magnitude
+    # separately. abs_off is a working copy with the diagonal zeroed.
+    abs_off = np.abs(flat)
+    diag = np.diagonal(flat)
+    if np.max(np.abs(diag - 1.0)) > atol:
+        return False
+    np.fill_diagonal(abs_off, 0.0)
+    return bool(np.max(abs_off) <= atol)
 
 
 def layer_dims(d_local: int, L: int, chi_layer: int = 16) -> list[int]:
@@ -318,7 +327,7 @@ class MERA:
         return self.leaves[0].shape[1]
 
     def copy(self) -> "MERA":
-        return MERA(
+        clone = MERA(
             leaves=[s.copy() for s in self.leaves],
             disentanglers=[[u.copy() for u in layer]
                            for layer in self.disentanglers],
@@ -332,6 +341,13 @@ class MERA:
                 else [(c, [s.copy() for s in sites])
                       for c, sites in self._superposition_terms]),
         )
+        # Disentanglers are copied verbatim, so the product-state status is
+        # identical to the source. Propagating the cache avoids re-scanning
+        # every disentangler with _is_identity_matrix on the fresh copy —
+        # the dominant cost of inner() during imaginary-time evolution,
+        # where the ket is a leaf-mutated copy of the bra each trotter step.
+        clone._is_product_cache = self._is_product_cache
+        return clone
 
     # ---- construction ------------------------------------------------------
 

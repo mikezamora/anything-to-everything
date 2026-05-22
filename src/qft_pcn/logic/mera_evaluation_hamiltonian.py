@@ -78,7 +78,24 @@ def _value_leaf(meta, node):
 
 
 def _leaf_argmax(state: MERA, leaf: int) -> int:
-    """Argmax basis index of a leaf's marginal (concrete product MERA)."""
+    """Argmax basis index of a leaf's marginal (concrete product MERA).
+
+    For a product MERA the leaf marginal is exactly the per-component
+    weight |v_leaf|^2 of the leaf's state vector: the double-network
+    ascent telescopes (every isometry W satisfies W^dag W = I) and the
+    other leaves' overlaps cancel in the argmax. This reads the leaf
+    tensor directly — the same data decode/sample already consume
+    (spec §5.4) — replacing 16 full causal-cone ascents per call, the
+    dominant cost of term_gates during imaginary-time evolution. The
+    argmax is identical to the projector-expectation form (verified
+    against state.local_expectation for every leaf).
+
+    A genuine term-superposition state has no single definite leaf
+    value, so fall back to the exact projector form there.
+    """
+    if state._superposition_terms is None:
+        v = state.leaves[leaf][0, :, 0]
+        return int(np.argmax(np.abs(v) ** 2))
     p = np.empty(MERA_LEAF_DIM, dtype=float)
     for b in range(MERA_LEAF_DIM):
         proj = np.zeros((MERA_LEAF_DIM, MERA_LEAF_DIM), dtype=complex)
