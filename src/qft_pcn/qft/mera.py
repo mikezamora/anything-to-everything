@@ -1000,6 +1000,15 @@ class MERA:
             out.append(max(w.shape[0] for w in iso_layer) if iso_layer else 0)
         return out
 
+    def layer_dimensions(self) -> list[int]:
+        """Per-layer bond dimensions [d_0, ..., d_{L-1}] (read-only).
+
+        Interface-only accessor used by the M2 Fix-recursion O(log N)
+        demo to assert no layer's bond dimension exceeds chi_layer
+        through an imaginary-time evolution. No behavior change.
+        """
+        return list(self.layer_dims)
+
     def layer_metric(self, layer: int) -> np.ndarray:
         """Effective metric tensor at the given layer (spec §6.3).
 
