@@ -47,18 +47,24 @@ def node_leaf(meta, node: int, species: str) -> int:
 
 def mutate_leaf(state, leaf: int, old_idx: int, new_idx: int):
     """Test helper: swap basis slices `old_idx` and `new_idx` of one leaf
-    of a MERA state, returning a mutated copy. Used by the per-rule
-    isolation tests to surgically inject a typing violation.
+    of a product (concrete) MERA state, returning a mutated copy. Used by
+    the per-rule isolation tests to surgically inject a typing violation.
 
-    Applies a 16x16 permutation gate (a swap of two basis vectors) via
-    MERA.apply_local_gate — the gate is local, so the rest of the tree
-    is untouched.
+    A product MERA's isometries are built from its leaf vectors; a bare
+    apply_local_gate would leave those isometries stale and orthogonal to
+    the mutated leaf. So this helper extracts the per-leaf vectors,
+    applies the basis swap to the target leaf, and rebuilds the product
+    MERA via MERA.from_product so the causal-cone isometries match.
     """
+    from src.qft_pcn.qft.mera import MERA
+    leaf_vecs = [state.leaves[k][0, :, 0].astype(complex).copy()
+                 for k in range(state.N)]
     g = np.eye(MERA_LEAF_DIM, dtype=complex)
     g[old_idx, old_idx] = 0.0
     g[new_idx, new_idx] = 0.0
     g[new_idx, old_idx] = 1.0
     g[old_idx, new_idx] = 1.0
-    out = state.copy()
-    out.apply_local_gate(leaf, g)
+    leaf_vecs[leaf] = g @ leaf_vecs[leaf]
+    out = MERA.from_product(leaf_vecs, chi_layer=state.layer_dims[-1])
+    out.normalize()
     return out
