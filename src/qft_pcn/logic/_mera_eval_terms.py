@@ -113,40 +113,63 @@ def fix_penalty_ops(fix_kind_leaf: int, use_kind_leaf: int,
 # (product) MERA every redex configuration is definite, so the reduced
 # leaf values are a fixed function of the unreduced ones.
 #
-# Each per-leaf transition is realized as a single-leaf Hermitian
-# generator h = |r><u| + |u><r| - |u><u| - |r><r| restricted to the
-# (unreduced, reduced) basis pair of that leaf, and the imaginary-time
-# gate exp(-dt . lam . (P_pen - h_offdiag)) swings amplitude u -> r while
-# damping the unreduced (penalized) configuration. Because the gate is a
-# single-leaf 16x16 operator it is trivially within the no-dense-operator
-# budget (spec §1.3). The redex-presence projector is enforced by the
-# evaluation Hamiltonian only applying these gates when the redex term's
-# diagonal penalty is non-zero on the current state (the eval driver
-# checks this); off-redex leaves are never touched.
+# Mechanism (lifted from the MPS substrate's factored_evolution.py).
+# Reduction is a one-way rewrite: the gate must drive |u> -> |r> FULLY and
+# leave |r> fixed, so that imaginary-time evolution relaxes to <H>=0. The
+# proven MPS path applies projector-boost / amplitude-mixing closed forms
+# whose UNREDUCED weight strictly decays and whose REDUCED configuration is
+# the exact zero-energy fixed point. A *Hermitian* per-term generator with a
+# u<->r off-diagonal coupling CANNOT have |r> as an eigenvector (the
+# off-diagonal forces <u|H|r>=0 there), so exp(-dt H) relaxes to a MIXED
+# ground state that keeps residual weight on |u> -- <H> floors above 0.
+#
+# The correct generator is the NON-HERMITIAN one-way drive on span{|u>,|r>}
+#
+#     H = lam * ( |u><u| - |r><u| )            (M := (|u> - |r>)<u|)
+#
+# M is idempotent (M^2 = M, since <u|u>=1, <u|r>=0), so the imaginary-time
+# gate has the SAME closed form factored_evolution.py uses for its
+# projector gates, exp(-dt c P) = I + (e^{-dt c} - 1) P:
+#
+#     g = exp(-dt lam H) = I + (e^{-dt lam} - 1) * M
+#       g|u> = s|u> + (1-s)|r>      g|r> = |r>      s = e^{-dt lam}
+#
+# H|r> = 0: |r> is the exact zero-energy ground state -- the gate's only
+# fixed point on the subspace -- and the unreduced weight decays by the
+# factor s < 1 every application, so accumulated over Trotter steps the
+# leaf is driven FULLY to |r>. The diagonal redex penalty P_unreduced =
+# |u><u| therefore decreases strictly monotonically (architecture §13.1).
+# Identity on every other basis state; a single-leaf 16x16 operator, well
+# within the no-dense-operator budget (spec §1.3). The redex-presence
+# projector is enforced by the evaluation Hamiltonian only applying these
+# gates when the redex term's diagonal penalty is non-zero on the current
+# state (the eval driver checks this); off-redex leaves are never touched.
 
 
 def single_leaf_transition_gate(u_idx: int, r_idx: int, dt: float,
                                 lam: float) -> np.ndarray:
-    """A 16x16 imaginary-time gate that swings amplitude from basis state
-    `u_idx` (unreduced) toward `r_idx` (reduced).
+    """A 16x16 imaginary-time gate that drives basis state `u_idx`
+    (unreduced) fully toward `r_idx` (reduced).
 
-    Built from the Hermitian generator H restricted to span{|u>, |r>}:
-        H = lam * ( |u><u| - |u><r| - |r><u| )
-    Its ground state on that 2-dim subspace is the symmetric/relaxed
-    combination biased to |r> (|u> carries the +lam penalty, |r> carries
-    0). exp(-dt.H) therefore moves amplitude u -> r and decays |u>.
-    Identity on every other basis state.
+    Built from the non-Hermitian one-way generator on span{|u>, |r>}:
+        H = lam * ( |u><u| - |r><u| )
+    whose idempotent operator M = |u><u| - |r><u| gives the projector-boost
+    closed form (the same form factored_evolution.py uses):
+        g = I + (e^{-dt.lam} - 1) * M
+    so g|u> = s|u> + (1-s)|r> with s = e^{-dt.lam} < 1 and g|r> = |r>.
+    |r> is the exact zero-energy fixed point; the unreduced weight decays
+    every application, so accumulated Trotter steps drive the leaf fully to
+    |r> and the redex penalty falls monotonically to 0. Identity on every
+    other basis state.
     """
     if u_idx == r_idx:
         return np.eye(MERA_LEAF_DIM, dtype=complex)
-    H = np.zeros((MERA_LEAF_DIM, MERA_LEAF_DIM), dtype=complex)
-    H[u_idx, u_idx] = lam
-    H[u_idx, r_idx] = -lam
-    H[r_idx, u_idx] = -lam
-    # Hermitian 2x2 block -> matrix exponential of -dt H.
-    from scipy.linalg import expm
-    g = expm(-dt * H)
-    return g.astype(complex)
+    g = np.eye(MERA_LEAF_DIM, dtype=complex)
+    s = np.exp(-dt * lam)
+    # g = I + (s - 1) * M, with M = |u><u| - |r><u|.
+    g[u_idx, u_idx] = s
+    g[r_idx, u_idx] = 1.0 - s
+    return g
 
 
 def fix_transition_gate(u_fix: int, r_fix: int, u_use: int, r_use: int,

@@ -104,6 +104,43 @@ def _leaf_argmax(state: MERA, leaf: int) -> int:
     return int(np.argmax(p))
 
 
+def _leaf_argmax_in(state: MERA, leaf: int, allowed) -> int:
+    """Dominant basis index of a leaf RESTRICTED to `allowed` indices.
+
+    During imaginary-time evolution a redex leaf is a genuine {unreduced,
+    reduced} superposition; a plain argmax flips to the reduced index once
+    the rotation passes 50%, which would corrupt the operand/operator
+    values the transition gate is built from. Restricting the argmax to
+    the set of indices a leaf can carry IN THE UNREDUCED redex (e.g. the
+    operator set {+,-,*} for a BIN value leaf, or the non-PAD literal
+    slots for an operand value leaf) reads the unreduced configuration
+    stably for the whole reduction, so the gate keeps targeting the right
+    result. Pure addressing of the leaf's own weights (spec §1.2)."""
+    w = _leaf_weights(state, leaf)
+    allowed = list(allowed)
+    best = allowed[0]
+    best_w = -1.0
+    for idx in allowed:
+        if 0 <= idx < w.shape[0] and w[idx] > best_w:
+            best_w = w[idx]
+            best = idx
+    return int(best)
+
+
+def _leaf_weights(state: MERA, leaf: int) -> np.ndarray:
+    """Per-basis weight vector |v_leaf|^2 of a leaf (concrete product MERA)
+    or the projector-expectation marginal for a superposition state."""
+    if state._superposition_terms is None:
+        v = state.leaves[leaf][0, :, 0]
+        return np.abs(v) ** 2
+    p = np.empty(MERA_LEAF_DIM, dtype=float)
+    for b in range(MERA_LEAF_DIM):
+        proj = np.zeros((MERA_LEAF_DIM, MERA_LEAF_DIM), dtype=complex)
+        proj[b, b] = 1.0
+        p[b] = float(np.real(state.local_expectation(leaf, proj)))
+    return p
+
+
 class MeraEvalHamiltonian:
     """Structural evaluation Hamiltonian over a MERA leaf layout (spec §7)."""
 
@@ -239,9 +276,20 @@ class MeraEvalHamiltonian:
         moves: list[tuple[int, int, int]] = []
         if term.rule_id in (RULE_R_ARITH, RULE_R_CMP):
             lhs, rhs = kids[0], kids[1]
-            op_v = _leaf_argmax(state, _value_leaf(meta, node))
-            a_v = _leaf_argmax(state, _value_leaf(meta, lhs))
-            b_v = _leaf_argmax(state, _value_leaf(meta, rhs))
+            # Read operator / operand values STABLY from the unreduced
+            # configuration: a plain argmax drifts once the reduction
+            # rotation passes 50%, which would re-target the gate at a
+            # wrong (or out-of-range) result and silently abort it.
+            if term.rule_id == RULE_R_ARITH:
+                _op_set = (VALUE_PLUS, VALUE_MINUS, VALUE_TIMES)
+            else:
+                _op_set = (VALUE_LT, VALUE_EQ)
+            op_v = _leaf_argmax_in(state, _value_leaf(meta, node), _op_set)
+            # Operand value leaves reduce toward slot 0; the unreduced
+            # literal is the dominant NON-zero slot.
+            _lit_slots = range(1, MERA_LEAF_DIM)
+            a_v = _leaf_argmax_in(state, _value_leaf(meta, lhs), _lit_slots)
+            b_v = _leaf_argmax_in(state, _value_leaf(meta, rhs), _lit_slots)
             if term.rule_id == RULE_R_ARITH:
                 res = arith_result_value_idx(op_v, a_v, b_v)
                 res_kind = KIND_INT
@@ -287,9 +335,30 @@ class MeraEvalHamiltonian:
             moves, fix_pair_gates = self._fix_moves(state, node, dt, lam)
         gates = []
         for leaf, u, r in moves:
-            if u == r:
+            # The drive is gradual: a single application of the
+            # u->r gate drains only a factor (1 - e^{-dt.lam}) of the
+            # unreduced weight, so over a step or two the leaf becomes a
+            # genuine {u, r} superposition. An argmax-derived `u` flips to
+            # `r` once the reduced weight passes 50%, which would halt the
+            # rotation half-completed (spec §7.4 / M2: the drive must run
+            # until the leaf is FULLY |r>). So `u` here is the dominant
+            # NON-r basis index -- the still-unreduced configuration --
+            # and the gate is emitted while any unreduced residual remains
+            # (|<u|psi>|^2 > eps), not while argmax != r. The gate leaves
+            # |r> fixed, so emitting it once the leaf is essentially |r>
+            # is a harmless near-identity.
+            # NOTE: the `u` carried in the move is argmax-derived and is
+            # unreliable once the leaf has rotated past the 50% mark
+            # (argmax flips to `r`, making the move look like a no-op).
+            # Only `r` is trusted; `u_eff` is recomputed from the leaf's
+            # actual weights as the dominant NON-r index.
+            w = _leaf_weights(state, leaf)
+            w_masked = w.copy()
+            w_masked[r] = -1.0
+            u_eff = int(np.argmax(w_masked))
+            if u_eff == r or w[u_eff] <= 1e-9:
                 continue
-            g = single_leaf_transition_gate(u, r, dt, lam)
+            g = single_leaf_transition_gate(u_eff, r, dt, lam)
             gates.append(((leaf,), g))
         if term.rule_id == RULE_R_FIX:
             gates.extend(fix_pair_gates)
