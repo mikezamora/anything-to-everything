@@ -68,11 +68,11 @@ works; an export job simply finishes with status `error`.
 
 ## Launch both at once
 
-From the repo root, `scripts/viz.ps1` starts the uvicorn backend and the
-`pnpm dev` frontend together (PowerShell, Windows host):
+`scripts/viz.sh` starts the uvicorn backend and the `pnpm dev` frontend
+together (bash / WSL):
 
-```powershell
-./scripts/viz.ps1
+```bash
+./scripts/viz.sh
 ```
 
 ## Tests
