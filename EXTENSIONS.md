@@ -79,6 +79,48 @@ it unblocks.
 - Per `docs/superpowers/plans/2026-05-23-i-task-10-blocker-fixes.md`
   blocker #3.
 
+## RESOLVED — I-Task-10 blocker #4: R-Eq-Refl reduction rule (`Eq lhs rhs -> BoolLit(True)` when lhs == rhs)
+
+- Resolution: new `RULE_R_EQ_REFL = "R-Eq-Refl"` term added to
+  `MeraEvalHamiltonian` (`src/qft_pcn/logic/mera_evaluation_hamiltonian.py`).
+  Diagonal redex projector built in
+  `_mera_eval_terms.eqrefl_penalty_ops` as
+  `lam * P[KIND_EQ](eq_kind_leaf) * (I - P_equal_pair)` per
+  (species, paired-sub-tree-leaf-pair), with
+  `I - P_equal_pair = I - sum_i P_i(lhs) * P_i(rhs)` factored as
+  17 small `dict[leaf -> (16,16)]` operators per (species, pair)
+  (1 positive base + 16 negative match terms) — never a 16^2 dense
+  operator (spec §1.3). The Hamiltonian walks lhs/rhs sub-trees in
+  lockstep BFS via `_eq_paired_subtree(eq_node)` (pure
+  `meta.children_of_node` addressing, spec §1.2), emitting one factored
+  term per (species, paired node). `<H>=0` iff every species on every
+  paired sub-tree node carries the same basis index — structural
+  reflexivity. Transition gate (`_eq_refl_moves`) fires WHEN the
+  diagonal residual hits 0 (guarded by `_eq_refl_unfinished`, which
+  bypasses the default `term_energy < 1e-9` early-return in
+  `term_gates` exactly while the Eq node is still KIND_EQ and the
+  residual confirms reflexivity): the Eq node's kind leaf rotates
+  `KIND_EQ -> KIND_BOOL`, the value leaf to `VALUE_TRUE`, and the
+  lhs/rhs sub-trees collapse to PAD (mirrors R-If's branch-keep
+  promote/collapse). The frozen-leaves filter (#6) preserves any
+  Forall-bound Var leaves inside the collapsed sub-trees — universal
+  quantification survives the promotion intact (§1.1).
+- Tests: `src/qft_pcn/tests/test_mera_eqrefl_rule.py` — 5 cases:
+  diagonal-zero on `Eq Zero Zero`, diagonal-positive on
+  `Eq Zero (NatLit 5)`, closed `Eq Zero Zero -> BoolLit(True)`
+  reduction, `forall x. Eq x x` diagonal-zero from the start, and the
+  load-bearing composite `forall x:Nat. Eq (x + Zero) x` combining
+  R-AddZero (#3) + R-Eq-Refl (#4) + Forall-protected (#5) — the
+  §10.10 induction theorem path. All assert eventual relaxation +
+  promotion to BoolLit(True) without weakening.
+- No-regression: M2 reduction, eval-Hamiltonian, fix-recursion,
+  add-zero, and forall-protected suites (26 passed) unchanged.
+- Unblocks: I-Task-10 substrate completeness — the §10.10 induction
+  theorem path now relaxes end-to-end. Downstream M3 acceptance demo
+  (`forall x:Nat. Eq (x + 0) x`) is no longer substrate-blocked.
+- Per `docs/superpowers/plans/2026-05-23-i-task-10-blocker-fixes.md`
+  blocker #4.
+
 ## RESOLVED — I-Task-10 blocker #5: Forall-protected leaves under relaxation
 
 - Resolution: `MeraEncodingMeta`
