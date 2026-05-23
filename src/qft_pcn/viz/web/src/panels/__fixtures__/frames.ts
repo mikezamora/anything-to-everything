@@ -134,6 +134,7 @@ export const meraFrame: Frame = {
       layer_dims: [2, 4, 4],
       bond_dims: [2, 3, 4],
       entropies: [0.1, 0.3, 0.5, 0.62, 0.5, 0.3, 0.1],
+      iso_residuals: [1.2e-7, 3.4e-6, 8.9e-5],
     },
   },
 };

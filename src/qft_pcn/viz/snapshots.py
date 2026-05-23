@@ -211,7 +211,14 @@ def snapshot_hamiltonian(H: Any) -> dict:
 # ---- MERA --------------------------------------------------------------------
 
 def snapshot_mera(m: Any) -> dict:
-    """Snapshot a `MERA`: leaf count, per-layer bond dims, cut entropies."""
+    """Snapshot a `MERA`: leaf count, per-layer bond dims, cut entropies.
+
+    `iso_residuals` is a per-layer mean of `||W W† − I||_F` over each
+    layer's 2->1 isometries (W has shape `(d_out, d_in_left, d_in_right)`,
+    reshaped to `(d_out, d_in_left * d_in_right)` so the isometry condition
+    is `W W† = I_{d_out}`). It's a cheap drift indicator for variational
+    MERA training.
+    """
     leaves = _safe(lambda: m.leaves)
     n_leaves = len(leaves) if leaves is not None else None
 
@@ -223,11 +230,31 @@ def snapshot_mera(m: Any) -> dict:
             for c in range(n_leaves - 1)
         ]
 
+    iso_residuals = None
+    isos = _safe(lambda: m.isometries)
+    if isos is not None:
+        try:
+            layer_means = []
+            for layer_isos in isos:
+                errs = []
+                for W in layer_isos:
+                    W2 = np.asarray(W)
+                    d_out = W2.shape[0]
+                    M = W2.reshape(d_out, -1)
+                    gram = M @ M.conj().T
+                    errs.append(float(np.linalg.norm(
+                        gram - np.eye(d_out), ord='fro')))
+                layer_means.append(float(np.mean(errs)) if errs else 0.0)
+            iso_residuals = layer_means
+        except (ValueError, IndexError, AttributeError):
+            iso_residuals = None
+
     return {
         "n_leaves": n_leaves,
         "layer_dims": _safe(lambda: list(m.layer_dims)),
         "bond_dims": _safe(lambda: list(m.bond_dimensions())),
         "entropies": entropies,
+        "iso_residuals": iso_residuals,
     }
 
 

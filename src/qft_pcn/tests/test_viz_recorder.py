@@ -232,6 +232,14 @@ def test_snapshot_mera_contents():
     # Vacuum product MERA: zero entanglement at every cut.
     for s in snap["entropies"]:
         assert s is not None and abs(s) < 1e-9
+    # iso_residuals: one float per MERA layer; vacuum isometries are exactly
+    # canonical, so each layer's mean residual should be ~0.
+    assert "iso_residuals" in snap
+    assert isinstance(snap["iso_residuals"], list)
+    assert len(snap["iso_residuals"]) == len(snap["layer_dims"])
+    for r in snap["iso_residuals"]:
+        assert isinstance(r, float)
+        assert r < 1e-9
 
 
 @pytest.mark.skipif(not _HAS_QISKIT, reason="qiskit not installed")

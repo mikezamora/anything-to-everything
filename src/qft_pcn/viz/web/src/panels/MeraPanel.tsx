@@ -22,6 +22,37 @@ interface MeraState {
   layer_dims?: number[] | null;
   bond_dims?: number[] | null;
   entropies?: Array<number | null> | null;
+  iso_residuals?: number[] | null;
+}
+
+/** Tiny per-layer sparkline of isometry-violation residuals (jsdom-safe SVG). */
+function IsoResidualSparkline({ values }: { values: number[] }) {
+  if (values.length === 0) return null;
+  const W = 120;
+  const H = 28;
+  const pad = 3;
+  const maxV = Math.max(1e-30, ...values);
+  const n = values.length;
+  const xAt = (i: number) =>
+    pad + (n === 1 ? (W - 2 * pad) / 2 : (i / (n - 1)) * (W - 2 * pad));
+  const yAt = (v: number) => H - pad - (v / maxV) * (H - 2 * pad);
+  const d = values
+    .map((v, i) =>
+      `${i === 0 ? 'M' : 'L'} ${xAt(i).toFixed(2)} ${yAt(v).toFixed(2)}`,
+    )
+    .join(' ');
+  return (
+    <svg
+      width={W}
+      height={H}
+      viewBox={`0 0 ${W} ${H}`}
+      role="img"
+      aria-label="iso residuals per layer"
+      style={{ display: 'inline-block', verticalAlign: 'middle' }}
+    >
+      <path d={d} fill="none" stroke="#ef9090" strokeWidth={1.5} />
+    </svg>
+  );
 }
 
 export interface MNode {
@@ -198,26 +229,53 @@ function EntropyCutLine({ entropies }: { entropies: Array<number | null> }) {
 
 export function MeraPanel({
   frame,
+  baselineFrame,
 }: {
   frame: Frame;
-  /** Optional baseline frame; reserved for future diff overlays (no-op). */
+  /**
+   * Optional baseline frame. When present the panel renders a 2-up side-by-
+   * side layout: active disk on the left, baseline on the right; each shrunk
+   * to half-width. 3D structural views don't admit a pixel-wise diff, so the
+   * comparison is visual rather than computed.
+   */
   baselineFrame?: Frame;
 }) {
   const st = (frame.layer_states.mera ?? {}) as MeraState;
+  const bst = (baselineFrame?.layer_states.mera ?? {}) as MeraState;
   const nLeaves = st.n_leaves ?? 0;
   const layerDims = (st.layer_dims as number[] | null) ?? [];
   const bondDims = (st.bond_dims as number[] | null) ?? [];
   const entropies = (st.entropies ?? []) as Array<number | null>;
+  const isoResiduals = (st.iso_residuals ?? []) as number[];
+  const isoMax =
+    isoResiduals.length > 0 ? Math.max(...isoResiduals) : null;
   const hasData = nLeaves > 0;
+  const showCompare = !!baselineFrame && (bst.n_leaves ?? 0) > 0;
+  const baseLayerDims = (bst.layer_dims as number[] | null) ?? [];
+  const baseBondDims = (bst.bond_dims as number[] | null) ?? [];
+  const baseEntropies = (bst.entropies ?? []) as Array<number | null>;
 
   const readouts = (
     <PanelReadouts
       cells={[
-        { label: 'leaves', value: st.n_leaves ?? '—' },
-        { label: 'layers', value: layerDims.length },
+        {
+          label: 'leaves',
+          value: st.n_leaves ?? '—',
+          baselineValue: bst.n_leaves ?? null,
+        },
+        {
+          label: 'layers',
+          value: layerDims.length,
+          baselineValue: baselineFrame ? baseLayerDims.length : null,
+        },
         {
           label: 'max χ',
           value: bondDims.length > 0 ? Math.max(...bondDims) : '—',
+          baselineValue: baseBondDims.length > 0 ? Math.max(...baseBondDims) : null,
+        },
+        {
+          label: 'iso err (max)',
+          value: isoMax == null ? '—' : isoMax.toExponential(2),
         },
       ]}
     />
@@ -237,18 +295,83 @@ export function MeraPanel({
     >
       {hasData && (
         <div
+          data-testid="mera-layout"
+          data-compare={showCompare ? 'side-by-side' : 'single'}
           style={{ display: 'flex', flexDirection: 'column', height: '100%' }}
         >
-          <div style={{ flex: '1 1 auto', minHeight: 0 }}>
-            <MeraScene
-              nLeaves={nLeaves}
-              layerDims={layerDims}
-              bondDims={bondDims}
-            />
+          <div
+            style={{
+              flex: '1 1 auto',
+              minHeight: 0,
+              display: 'flex',
+              flexDirection: 'row',
+            }}
+          >
+            <div
+              data-testid="mera-disk-active"
+              style={{
+                flex: showCompare ? '1 1 50%' : '1 1 100%',
+                minWidth: 0,
+                minHeight: 0,
+              }}
+            >
+              <MeraScene
+                nLeaves={nLeaves}
+                layerDims={layerDims}
+                bondDims={bondDims}
+              />
+            </div>
+            {showCompare && (
+              <div
+                data-testid="mera-disk-baseline"
+                style={{ flex: '1 1 50%', minWidth: 0, minHeight: 0 }}
+              >
+                <MeraScene
+                  nLeaves={bst.n_leaves ?? 0}
+                  layerDims={baseLayerDims}
+                  bondDims={baseBondDims}
+                />
+              </div>
+            )}
           </div>
-          {entropies.length > 0 && (
-            <div style={{ flex: '0 0 auto', padding: '4px 8px' }}>
-              <EntropyCutLine entropies={entropies} />
+          {(entropies.length > 0 || (showCompare && baseEntropies.length > 0)) && (
+            <div
+              style={{
+                flex: '0 0 auto',
+                padding: '4px 8px',
+                display: 'flex',
+                gap: 12,
+              }}
+            >
+              {entropies.length > 0 && (
+                <div
+                  data-testid="mera-entropy-active"
+                  style={{
+                    flex: showCompare ? '1 1 50%' : '1 1 100%',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                  }}
+                >
+                  <EntropyCutLine entropies={entropies} />
+                  {isoResiduals.length > 0 && (
+                    <span
+                      data-testid="mera-iso-sparkline"
+                      title="‖W†W − I‖ per MERA layer"
+                    >
+                      <IsoResidualSparkline values={isoResiduals} />
+                    </span>
+                  )}
+                </div>
+              )}
+              {showCompare && baseEntropies.length > 0 && (
+                <div
+                  data-testid="mera-entropy-baseline"
+                  style={{ flex: '1 1 50%' }}
+                >
+                  <EntropyCutLine entropies={baseEntropies} />
+                </div>
+              )}
             </div>
           )}
         </div>
