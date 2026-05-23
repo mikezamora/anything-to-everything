@@ -216,6 +216,22 @@ export function MultifieldPanel({
   const names = Object.keys(fields);
   const hasData = names.length > 0;
 
+  // Per-pair signed coupling cells + time-series traces. Architectural
+  // diagnostic §2.2 / §4.5: correlated pairs grow their coupling;
+  // uncorrelated pairs stay near zero. mean|g| alone hides per-pair
+  // structure and sign (D-5), so surface every (a,b) entry directly.
+  const couplings = st.couplings ?? {};
+  const couplingPairKeys = Object.keys(couplings);
+  const pairCells = couplingPairKeys.map((pk) => {
+    const v = couplings[pk];
+    const signed = `${v >= 0 ? '+' : ''}${v.toFixed(3)}`;
+    return {
+      label: `g[${pk}]`,
+      value: signed,
+      baselineValue: bst.couplings?.[pk] ?? null,
+    };
+  });
+
   const readouts = (
     <PanelReadouts
       cells={[
@@ -225,6 +241,7 @@ export function MultifieldPanel({
           baselineValue: bst.mean_abs_coupling ?? null,
           highlightId: 'mean_abs_coupling',
         },
+        ...pairCells,
         ...names.map((name) => {
           const baseNorm = baseFields[name]?.phi
             ? norm2(baseFields[name]!.phi)
@@ -239,6 +256,16 @@ export function MultifieldPanel({
     />
   );
 
+  // Distinct colours per pair so each trace reads clearly against mean|g|.
+  const pairPalette = ['#9aedc1', '#fbc66a', '#ef9090', '#6cd0ff', '#d291ff', '#5fd0c8'];
+  const pairMetrics = couplingPairKeys.map((pk, i) => ({
+    key: `g:${pk}`,
+    label: `g[${pk}]`,
+    color: pairPalette[i % pairPalette.length],
+    select: (ls: Record<string, unknown>) =>
+      (ls.couplings as Record<string, number> | undefined)?.[pk],
+  }));
+
   const metricsStrip = (
     <MetricsStrip
       layer="multifield"
@@ -249,6 +276,7 @@ export function MultifieldPanel({
           color: '#fbc66a',
           select: (ls) => ls.mean_abs_coupling as number,
         },
+        ...pairMetrics,
       ]}
     />
   );

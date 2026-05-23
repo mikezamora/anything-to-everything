@@ -51,6 +51,43 @@ describe('MultifieldPanel readouts', () => {
     expect(deltas[0].textContent).toContain('+0.050');
   });
 
+  it('renders a per-pair signed coupling cell for each (a,b) in couplings (D-5)', () => {
+    render(<MultifieldPanel frame={multifieldFrame} />);
+    // multifieldFrame has couplings: alpha|beta=+0.6, beta|gamma=-0.3, alpha|gamma=+0.15
+    expect(screen.getByText('g[alpha|beta]')).toBeInTheDocument();
+    expect(screen.getByText('g[beta|gamma]')).toBeInTheDocument();
+    expect(screen.getByText('g[alpha|gamma]')).toBeInTheDocument();
+    // Signed prefix renders so positive/negative direction is visible.
+    expect(screen.getByText('+0.600')).toBeInTheDocument();
+    expect(screen.getByText('-0.300')).toBeInTheDocument();
+  });
+
+  it('renders per-pair MetricsStrip traces (one per (a,b) coupling key) once enough frames are pushed (D-5)', () => {
+    let s = useVizStore.getState();
+    s.openRun('B');
+    s = useVizStore.getState();
+    s.setActiveRun('B');
+    for (let i = 0; i < 5; i++) {
+      s = useVizStore.getState();
+      s.pushFrame('B', {
+        step: i,
+        layer_states: {
+          multifield: {
+            mean_abs_coupling: 0.1 + 0.02 * i,
+            couplings: {
+              'alpha|beta': 0.1 * i,
+              'beta|gamma': -0.05 * i,
+            },
+          },
+        },
+      });
+    }
+    const { container } = render(<MultifieldPanel frame={multifieldFrame} />);
+    // 1 mean|g| + N pair traces. multifieldFrame.couplings has 3 pairs ⇒ ≥4 paths.
+    const paths = container.querySelectorAll('.metrics-strip path');
+    expect(paths.length).toBeGreaterThanOrEqual(4);
+  });
+
   it('renders a MetricsStrip path once enough frames are pushed', () => {
     let s = useVizStore.getState();
     s.openRun('A');

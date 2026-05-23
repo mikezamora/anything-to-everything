@@ -52,8 +52,10 @@ export const EXPLAINERS: Record<string, ExplainerSpec> = {
     ],
     elements: [
       { name: '3D surface per field', meaning: 'belief Φ for that species' },
-      { name: 'Coupling graph / matrix', meaning: 'live g_ij entries (≥3 fields ⇒ matrix view)', code: 'multifield.py:couplings' },
-      { name: 'Mean |g|', meaning: 'aggregate coupling strength', code: 'snapshot_multifield:mean_abs_coupling' },
+      { name: 'Coupling graph / matrix', meaning: 'live g_ij entries (≥3 fields ⇒ matrix view); edge stroke uses a diverging ramp so positive and negative couplings are visually distinct', code: 'multifield.py:couplings' },
+      { name: 'Per-pair g[(a,b)] cells', meaning: 'signed current value per pair — the architectural diagnostic §2.2 / §4.5; correlated pairs grow, uncorrelated stay near zero', code: 'snapshot_multifield:couplings' },
+      { name: 'Per-pair MetricsStrip traces', meaning: 'time series of each g_{ij} so the user can see WHICH pairs are converging' },
+      { name: 'Mean |g|', meaning: 'aggregate coupling strength (legacy scalar — hides per-pair structure)', code: 'snapshot_multifield:mean_abs_coupling' },
     ],
     math: [
       { tex: 'L_\\text{int} = \\sum_{i<j} g_{ij}(x)\\, \\Phi_i(x)\\, \\Phi_j(x)', caption: 'Yukawa interaction Lagrangian.' },
