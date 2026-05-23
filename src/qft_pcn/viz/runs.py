@@ -12,7 +12,7 @@ with tiny dimensions so a full run streams in well under a second.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Iterator
+from typing import Callable, Iterator, Optional
 
 import numpy as np
 
@@ -200,7 +200,10 @@ def _build_multifield(spec: RunSpec) -> MultiFieldNetwork:
 
 # ---- simulation driver -------------------------------------------------------
 
-def run_simulation(spec: RunSpec) -> Iterator[Frame]:
+def run_simulation(
+    spec: RunSpec,
+    on_build: Optional[Callable[[dict], None]] = None,
+) -> Iterator[Frame]:
     """Run the requested substrate(s) and yield one `Frame` per step.
 
     Layers are grouped by substrate: `manifold` runs on a `QFTPCNNetwork`;
@@ -245,6 +248,21 @@ def run_simulation(spec: RunSpec) -> Iterator[Frame]:
         _vqc_rng = np.random.default_rng(0 if spec.seed is None else spec.seed)
         vqc_x = _vqc_rng.standard_normal(vqc.n_qubits)
         vqc_target = np.full(vqc.n_qubits, 0.5)
+
+    # Publish the live substrate handles so callers (e.g. RunController) can
+    # mutate parameters mid-stream while paused. Mutations are direct attribute
+    # writes; the per-step snapshot is taken AFTER any pause-time mutation, so
+    # the next frame reflects the change immediately.
+    if on_build is not None:
+        on_build({
+            "network": net,
+            "multifield": multifield,
+            "qpcn": qpcn,
+            "mera": mera,
+            "logic_H": logic_H,
+            "logic_state": logic_state,
+            "vqc": vqc,
+        })
 
     observation = None
     if net is not None:

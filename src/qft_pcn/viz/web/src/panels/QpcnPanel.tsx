@@ -12,12 +12,24 @@
  * inventing one.
  */
 
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Plotly from 'plotly.js-dist-min';
 import type { Data as PlotData, Layout as PlotLayout } from 'plotly.js-dist-min';
 import type { Frame } from '../lib/types';
 import { PanelShell } from './PanelShell';
 import { MetricsStrip } from './MetricsStrip';
+import { useVizStore } from '../store';
+
+// The QPCN substrate's Hamiltonian exposes parameters by `<species>.<attr>`
+// (e.g. `A.mass`). The viz schema marks the per-attribute slots that are safe
+// to mutate live; the panel renders a slider for any snapshot-`params` key
+// whose attribute suffix matches one of these.
+const WRITABLE_QPCN_ATTRS = new Set(['mass', 'kinetic']);
+
+function attrSuffix(name: string): string {
+  const ix = name.indexOf('.');
+  return ix >= 0 ? name.slice(ix + 1) : name;
+}
 
 interface QpcnState {
   energy?: number | null;
@@ -232,6 +244,62 @@ export function QpcnPanel({
 
   const metricsStrip = <MetricsStrip layer="qpcn" metrics={metrics} />;
 
+  // ---- live-param sliders (visible only when paused on an active run) -----
+  const paused = useVizStore((s) => s.paused);
+  const activeRunId = useVizStore((s) => s.activeRunId);
+  const setError = useVizStore((s) => s.setError);
+  const writableKeys = paramKeys.filter((k) =>
+    WRITABLE_QPCN_ATTRS.has(attrSuffix(k)),
+  );
+  const [localVals, setLocalVals] = useState<Record<string, number>>({});
+
+  const showSliders = paused && !!activeRunId && writableKeys.length > 0;
+
+  async function onSlider(name: string, value: number) {
+    setLocalVals((v) => ({ ...v, [name]: value }));
+    if (!activeRunId) return;
+    try {
+      // Lazy import keeps the panel test-friendly: transport.ts is mocked
+      // at the module boundary via the global fetch stub the test installs.
+      const { transport } = await import('../lib/transport');
+      await transport.setParams(activeRunId, { qpcn: { [name]: value } });
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+
+  const sliders = showSliders ? (
+    <div
+      data-testid="qpcn-param-sliders"
+      style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: 4 }}
+    >
+      {writableKeys.map((k) => {
+        const cur = localVals[k] ?? params[k] ?? 0;
+        return (
+          <label
+            key={k}
+            style={{ display: 'flex', alignItems: 'center', gap: 6,
+                     fontSize: 11, color: '#9aa6c8' }}
+          >
+            <span style={{ minWidth: 70 }}>{k}</span>
+            <input
+              type="range"
+              min={0}
+              max={5}
+              step={0.05}
+              value={cur}
+              onChange={(e) => onSlider(k, parseFloat(e.target.value))}
+              data-testid={`qpcn-slider-${k}`}
+            />
+            <span style={{ minWidth: 48, textAlign: 'right' }}>
+              {cur.toFixed(2)}
+            </span>
+          </label>
+        );
+      })}
+    </div>
+  ) : null;
+
   return (
     <PanelShell
       title="QPCN — energy descent, errors, parameters"
@@ -250,7 +318,10 @@ export function QpcnPanel({
           height: '100%',
         }}
       >
-        <Chart data={paramData} layout={paramLayout} />
+        <div style={{ display: 'flex', flexDirection: 'column' }}>
+          <Chart data={paramData} layout={paramLayout} />
+          {sliders}
+        </div>
         <Chart data={occData} layout={occLayout} />
       </div>
     </PanelShell>

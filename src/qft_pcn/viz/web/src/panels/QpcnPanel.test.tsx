@@ -56,6 +56,25 @@ describe('QpcnPanel readouts', () => {
     expect(errDeltas.length).toBeGreaterThan(0);
   });
 
+  it('hides live-param sliders by default (not paused)', () => {
+    const s = useVizStore.getState();
+    s.openRun('R1');
+    useVizStore.getState().setActiveRun('R1');
+    const { queryByTestId } = render(<QpcnPanel frame={qpcnFrame} />);
+    expect(queryByTestId('qpcn-param-sliders')).toBeNull();
+  });
+
+  it('renders sliders for writable QPCN params when paused on an active run', () => {
+    const s = useVizStore.getState();
+    s.openRun('R1');
+    useVizStore.getState().setActiveRun('R1');
+    useVizStore.getState().setPaused(true);
+    const { getByTestId } = render(<QpcnPanel frame={qpcnFrame} />);
+    expect(getByTestId('qpcn-param-sliders')).toBeInTheDocument();
+    // fixture has `mass` as a writable suffix; `coupling`/`hopping` are not.
+    expect(getByTestId('qpcn-slider-mass')).toBeInTheDocument();
+  });
+
   it('renders MetricsStrip paths for energy + each learnable param once enough frames are pushed', () => {
     let s = useVizStore.getState();
     s.openRun('A');

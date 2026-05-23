@@ -61,3 +61,26 @@ def test_jsonl_export_streams_one_object_per_frame(client):
 def test_jsonl_export_404_for_unknown_run(client):
     res = client.get("/export/run/nope")
     assert res.status_code == 404
+
+
+def test_set_params_404_when_run_not_streaming(client):
+    """`/runs/{id}/params` requires an active WS connection for the run."""
+    res = client.post("/runs/nonexistent/params", json={"qpcn": {"mass": 1.0}})
+    assert res.status_code == 404
+
+
+def test_set_params_400_when_no_qpcn_substrate(client, monkeypatch):
+    """When the active controller has no qpcn substrate, the endpoint 400s."""
+    from src.qft_pcn.viz import server as srv
+    from src.qft_pcn.viz.runs import RunSpec
+    from src.qft_pcn.viz.controller import RunController
+
+    ctrl = RunController(RunSpec(layers=["manifold"], steps=1))
+    ctrl._substrates = {"qpcn": None}
+    srv._controllers["live"] = ctrl
+    try:
+        res = client.post("/runs/live/params", json={"qpcn": {"mass": 1.0}})
+        assert res.status_code == 400
+        assert "qpcn" in res.json()["detail"].lower()
+    finally:
+        srv._controllers.pop("live", None)

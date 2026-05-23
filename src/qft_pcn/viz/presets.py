@@ -218,9 +218,11 @@ PARAM_SCHEMA: dict[str, dict] = {
         "properties": {
             "mass": {"type": "number", "default": 1.0,
                      "minimum": 0.0, "maximum": 10.0,
+                     "writable": True,
                      "description": "Bare mass of species A."},
             "kinetic": {"type": "number", "default": 0.5,
                         "minimum": 0.0, "maximum": 5.0,
+                        "writable": True,
                         "description": "Kinetic coefficient."},
             "chi_max": {"type": "integer", "default": 8,
                         "minimum": 1, "maximum": 16,

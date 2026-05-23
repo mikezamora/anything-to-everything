@@ -29,17 +29,28 @@ class RunController:
     """
 
     def __init__(self, spec: RunSpec,
-                 runner: Optional[Callable[[RunSpec], Iterator[Frame]]]
+                 runner: Optional[Callable[..., Iterator[Frame]]]
                  = None) -> None:
         self._spec = spec
         self._runner = runner or run_simulation
         self._event = asyncio.Event()
         self._event.set()  # default: running
         self._step_request = 0
+        # Populated when `frames()` starts iterating. Maps substrate-kind
+        # (e.g. "qpcn", "vqc", "mera") to the live substrate instance, so
+        # lifecycle endpoints can mutate parameters between frames.
+        self._substrates: dict = {}
 
     async def frames(self) -> AsyncIterator[Frame]:
         """Yield one `Frame` per simulation step, gated by the event."""
-        for frame in self._runner(self._spec):
+        def _capture(subs: dict) -> None:
+            self._substrates = subs
+        # Older runner stubs may not accept `on_build`; fall back gracefully.
+        try:
+            gen = self._runner(self._spec, on_build=_capture)
+        except TypeError:
+            gen = self._runner(self._spec)
+        for frame in gen:
             await self._event.wait()
             yield frame
             await asyncio.sleep(0)

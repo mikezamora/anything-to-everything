@@ -127,6 +127,31 @@ def run_step(run_id: str):
     return {"run_id": run_id, "state": "stepped"}
 
 
+@app.post("/runs/{run_id}/params")
+def run_set_params(run_id: str, body: dict):
+    """Mutate live params on the run's substrates while paused.
+
+    Body shape: ``{"qpcn": {<param_name>: <float>, ...}}``. Only the
+    `qpcn` substrate is supported today; param names are forwarded to
+    `Hamiltonian.update_param` verbatim (e.g. ``A.mass``, ``A.kinetic``).
+    """
+    ctrl = _get_controller_or_404(run_id)
+    subs = getattr(ctrl, "_substrates", {}) or {}
+    qpcn = subs.get("qpcn")
+    if qpcn is None:
+        raise HTTPException(status_code=400,
+                            detail="run has no qpcn substrate")
+    updates = (body or {}).get("qpcn") or {}
+    applied: dict[str, float] = {}
+    for name, value in updates.items():
+        try:
+            qpcn.H.update_param(name, float(value))
+            applied[name] = float(value)
+        except (ValueError, KeyError, AttributeError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+    return {"run_id": run_id, "applied": applied}
+
+
 def _run_export(job_id: str, spec: RunSpec, layer: str) -> None:
     """Background task: re-run the simulation and render `layer` to an MP4.
 
