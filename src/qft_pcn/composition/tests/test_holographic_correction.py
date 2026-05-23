@@ -91,16 +91,23 @@ def test_corrupted_child_surfaces_syndrome():
     # Three coherent children and one corrupted child.
     clean = encode_mera(parse(src))[0]
     corrupted = encode_mera(parse(src))[0]
-    # Apply a non-identity leaf rotation: cyclic permutation of basis
-    # vectors at leaf 0. This is a Pauli-X^k style boundary error — exactly
-    # the noise model §12.5 protects against. It does NOT touch the global
-    # tree structure, so the syndrome must come from the BULK reconstruction
-    # via the ascending superoperator, not from any structural diff.
+    # Apply a non-identity two-site entangling gate at the (leaf 0, leaf 1)
+    # pair. This is exactly the §12.5 noise model: a unitary error injected
+    # at the boundary that propagates into the bulk via the ascending
+    # superoperator. apply_two_site_gate writes the gate into the layer-0
+    # disentangler, which IS traversed by local_expectation -- so the
+    # syndrome read comes from the bulk reconstruction, not any structural
+    # diff. (A bare apply_local_gate is intentionally avoided: on a product
+    # MERA the per-leaf state is encoded into the isometries+top during
+    # construction, and apply_local_gate only mutates the leaf cache used
+    # by inner() / decode; the ascending-superoperator path is unchanged
+    # by design.)
     d = corrupted.d_local
-    perm = np.zeros((d, d), dtype=complex)
-    for k in range(d):
-        perm[(k + 1) % d, k] = 1.0
-    corrupted.apply_local_gate(0, perm)
+    # Cyclic basis permutation on the d^2-dim joint pair space.
+    g = np.zeros((d * d, d * d), dtype=complex)
+    for k in range(d * d):
+        g[(k + 1) % (d * d), k] = 1.0
+    corrupted.apply_two_site_gate(0, g)
     children = {
         "ok_a": clean,
         "ok_b": encode_mera(parse(src))[0],
