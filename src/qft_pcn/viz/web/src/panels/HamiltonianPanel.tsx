@@ -186,6 +186,7 @@ function CurvatureMiniMap({ matrix }: { matrix: number[][] }) {
 
 export function HamiltonianPanel({
   frame,
+  baselineFrame: _baselineFrame,
 }: {
   frame: Frame;
   baselineFrame?: Frame;
