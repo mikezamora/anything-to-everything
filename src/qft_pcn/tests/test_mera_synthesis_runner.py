@@ -219,29 +219,24 @@ _EXPECTED: dict[str, Node] = {
 }
 
 
-# Bundle-scale structural / nested-beta problems (P3, P4, P6, P7) are
-# marked slow: they are opt-in via `--runslow`. P1, P2, P5, P8 stay in the
-# default fast lane. Full P1-P8 still runs end-to-end under --runslow --
-# no assertion is weakened by the marker.
-_slow = pytest.mark.slow
 _ALL_BUILDERS = [
     pytest.param(_P1, id="_P1"),
     pytest.param(_P2, id="_P2"),
-    pytest.param(_P3, id="_P3", marks=_slow),
-    pytest.param(_P4, id="_P4", marks=_slow),
+    pytest.param(_P3, id="_P3"),
+    pytest.param(_P4, id="_P4"),
     pytest.param(_P5, id="_P5"),
-    pytest.param(_P6, id="_P6", marks=_slow),
-    pytest.param(_P7, id="_P7", marks=_slow),
+    pytest.param(_P6, id="_P6"),
+    pytest.param(_P7, id="_P7"),
     pytest.param(_P8, id="_P8"),
 ]
 _CORRECTNESS_CASES = [
     pytest.param("P1", _P1, id="P1"),
     pytest.param("P2", _P2, id="P2"),
-    pytest.param("P3", _P3, id="P3", marks=_slow),
-    pytest.param("P4", _P4, id="P4", marks=_slow),
+    pytest.param("P3", _P3, id="P3"),
+    pytest.param("P4", _P4, id="P4"),
     pytest.param("P5", _P5, id="P5"),
-    pytest.param("P6", _P6, id="P6", marks=_slow),
-    pytest.param("P7", _P7, id="P7", marks=_slow),
+    pytest.param("P6", _P6, id="P6"),
+    pytest.param("P7", _P7, id="P7"),
 ]
 
 
@@ -286,12 +281,9 @@ def test_P8_is_refused():
         f"{res.completions[0].energy}")
 
 
-@pytest.mark.slow
 def test_energy_gap_to_second_completion():
     """Spec §9.6.3: gap between top-1 and second completion on P3
     must be >= 0.5 * w_T = 2.0 (HamiltonianWeights default w_T = 4.0).
-
-    P3-scale; opt-in via --runslow.
     """
     res = synthesize(_P3(), rng=np.random.default_rng(0))
     if len(res.completions) >= 2:
