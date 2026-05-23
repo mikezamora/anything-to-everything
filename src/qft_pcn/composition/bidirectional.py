@@ -28,6 +28,11 @@ energy landscape that can escape a local minimum (the descent gets
 trapped; the climb re-energizes the redex amplitude) and probe a
 different basin.
 
+Note: this is the imaginary-time analog of spec §12.13's literal real-time
+unitary e^{-iHt} formulation. The substrate's mera_imaginary_evolve_state
+is the TEBD imaginary-time evolution; the real-time unitary path is not
+yet wired in evolution.py::trotter_step.
+
 This module reuses the real
 :func:`mera_imaginary_evolve_state` substrate — no mock evolution, no
 re-implementation of the Trotter step. The §5.2a / §8.6

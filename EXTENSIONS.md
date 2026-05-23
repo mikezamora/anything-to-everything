@@ -26,6 +26,13 @@ it unblocks.
   classification + clustering convergence). Cross-references the open
   "List arithmetic in encoder substrate" entry that gates reverse/length.
 
+## Missing dependency: §12.13 meet-in-the-middle two-MPS overlap oracle deferred
+
+- Where: spec §12.13 (lines 2012-2014, 2037-2038 of QFT_PCN_ARCHITECTURE.md) names the headline capability as bidirectional search where forward and backward evolutions meet via two-MPS overlap. `src/qft_pcn/composition/bidirectional.py` at commit 988474f ships ONLY the row-2-of-priority chained-traversal primitive (pos-dt descent then neg-dt ascent on a single state).
+- Need: a `compute_state_overlap(state_a, state_b) -> complex` primitive on the MERA/MPS substrate, plus a `bidirectional_meet_in_middle(source_state, target_state, H, ...) -> MeetingPoint` driver that runs both directions and detects the meeting via overlap-saturation.
+- Workaround: chained traversal in `bidirectional_evolve` exercises the substrate's negative-dt path correctly and validates §1.1 entanglement preservation across both legs. Sufficient for §17-row-2 immediate-win; insufficient for §12.13 headline acceptance.
+- Unblocks: spec §12.13 full acceptance corpus (whatever proves the meet-in-the-middle capability operationally).
+
 ## RESOLVED — I-Task-10 blocker #1: `relax_program` driver in M3
 
 - Resolution: `src/qft_pcn/logic/mera_synthesis/runner.py` gains a
