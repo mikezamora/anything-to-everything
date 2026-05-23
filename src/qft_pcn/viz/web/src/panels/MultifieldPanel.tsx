@@ -14,9 +14,14 @@ import * as THREE from 'three';
 import * as d3 from 'd3';
 import type { Frame } from '../lib/types';
 import { PanelShell } from './PanelShell';
+import { PanelReadouts } from './PanelReadouts';
+import { MetricsStrip } from './MetricsStrip';
 import { useSize, normGrid, speciesColor, diverging } from './common';
 
 type Grid = number[][];
+
+const norm2 = (g?: number[][] | null) =>
+  !g ? 0 : Math.sqrt(g.flat().reduce((a, v) => a + (v || 0) ** 2, 0));
 
 interface FieldEntry {
   phi?: Grid;
@@ -27,6 +32,7 @@ interface FieldEntry {
 interface MultifieldState {
   fields?: Record<string, FieldEntry> | null;
   couplings?: Record<string, number> | null;
+  mean_abs_coupling?: number | null;
   step?: number | null;
 }
 
@@ -196,11 +202,46 @@ function CouplingGraph({
   );
 }
 
-export function MultifieldPanel({ frame }: { frame: Frame }) {
+export function MultifieldPanel({
+  frame,
+}: {
+  frame: Frame;
+  baselineFrame?: Frame;
+}) {
   const st = (frame.layer_states.multifield ?? {}) as MultifieldState;
   const fields = st.fields ?? {};
   const names = Object.keys(fields);
   const hasData = names.length > 0;
+
+  const readouts = (
+    <PanelReadouts
+      cells={[
+        {
+          label: 'mean |g|',
+          value: st.mean_abs_coupling?.toFixed(3),
+          highlightId: 'mean_abs_coupling',
+        },
+        ...names.map((name) => ({
+          label: `‖${name}.Φ‖₂`,
+          value: norm2(fields[name]?.phi).toFixed(3),
+        })),
+      ]}
+    />
+  );
+
+  const metricsStrip = (
+    <MetricsStrip
+      layer="multifield"
+      metrics={[
+        {
+          key: 'mag',
+          label: 'mean|g|',
+          color: '#fbc66a',
+          select: (ls) => ls.mean_abs_coupling as number,
+        },
+      ]}
+    />
+  );
 
   return (
     <PanelShell
@@ -208,6 +249,8 @@ export function MultifieldPanel({ frame }: { frame: Frame }) {
       step={st.step ?? frame.step}
       meta={`${names.length} fields`}
       hasData={hasData}
+      readouts={readouts}
+      metricsStrip={metricsStrip}
     >
       <div className="viz-panel__split" style={{ height: '100%' }}>
         <div style={{ position: 'relative' }}>
