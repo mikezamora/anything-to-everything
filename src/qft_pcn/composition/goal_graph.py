@@ -69,3 +69,126 @@ class Node:
     def add_child(self, child: "Node") -> None:
         child.parent = self
         self.children.append(child)
+
+
+# --- construction (spec §4.2) ----------------------------------------------
+
+from .errors import GoalGraphError  # noqa: E402
+
+COMPLEXITY_WEIGHT = 1e-9   # complexity term coefficient in F_hierarchy (spec §7)
+
+
+def build_goal_graph(root_spec: dict, root_prop: str, decomposer) -> Node:
+    """Build the root and lazily expand only the root's immediate children.
+
+    Children deeper than level 1 are populated on demand by expand_node /
+    expand_fully -- the graph can be combinatorially large (spec §4.2).
+    """
+    root_goal = make_sub_goal(root_spec, goal_prop=root_prop,
+                              boundary={}, parent_site=None)
+    root = Node(goal=root_goal, status=Status.PENDING)
+    expand_node(root, decomposer)
+    return root
+
+
+def expand_node(node: Node, decomposer) -> None:
+    """Populate node.children once, from the decomposer (idempotent)."""
+    if node.children:
+        return
+    for sub in decomposer.decompose(node):
+        node.add_child(Node(goal=sub, status=Status.PENDING))
+
+
+def expand_fully(node: Node, decomposer) -> None:
+    """Eagerly expand the whole subtree -- for tests / small graphs only."""
+    expand_node(node, decomposer)
+    for child in node.children:
+        expand_fully(child, decomposer)
+
+
+# --- cycle detection (spec §4.4) -------------------------------------------
+
+def detect_cycle(node: Node, visited: "frozenset[str]") -> bool:
+    """True iff this node's goal is already on the active path from the root.
+
+    visited is PER ACTIVE PATH, not global: the same goal_id in two
+    independent sibling subtrees is a shared lemma, not a cycle.
+    """
+    return node.goal.goal_id in visited
+
+
+def assert_acyclic(root: Node) -> None:
+    """DFS guard: a back-edge that slipped past detect_cycle is a bug."""
+    on_path: set[int] = set()
+
+    def _dfs(n: Node) -> None:
+        if id(n) in on_path:
+            raise GoalGraphError(f"back-edge at goal {n.goal.goal_id!r}")
+        on_path.add(id(n))
+        for c in n.children:
+            _dfs(c)
+        on_path.discard(id(n))
+
+    _dfs(root)
+
+
+# --- free energy (spec §7) -------------------------------------------------
+
+def compute_free_energy(root: Node) -> float:
+    """F_hierarchy = accuracy (sum of residual energies) + complexity.
+
+    The same F = accuracy + complexity a single predictive-coding layer
+    minimizes, instantiated at whole-QPCN scale (spec §7, §10.10).
+    """
+    accuracy = 0.0
+    n_nodes = 0
+
+    def _walk(n: Node) -> None:
+        nonlocal accuracy, n_nodes
+        n_nodes += 1
+        res = getattr(n.result, "residual_energy", None)
+        if res is not None and res != float("inf"):
+            accuracy += res
+        for c in n.children:
+            _walk(c)
+
+    _walk(root)
+    complexity = COMPLEXITY_WEIGHT * n_nodes
+    return accuracy + complexity
+
+
+# --- proof tree (spec §4.6) ------------------------------------------------
+
+@dataclass(frozen=True)
+class ProofTreeNode:
+    goal_prop: str
+    solved_ast: Any
+    residual_energy: float
+    children: tuple["ProofTreeNode", ...]
+
+
+@dataclass(frozen=True)
+class ProofTree:
+    root: ProofTreeNode
+    total_residual: float
+
+
+def extract_proof_tree(root: Node) -> ProofTree:
+    """Walk SOLVED nodes into a verified proof tree (spec §4.6)."""
+    total = 0.0
+
+    def _build(n: Node) -> ProofTreeNode:
+        nonlocal total
+        res = getattr(n.result, "residual_energy", 0.0)
+        ast = getattr(n.result, "solved_ast", None)
+        total += res
+        return ProofTreeNode(
+            goal_prop=n.goal.goal_prop,
+            solved_ast=ast,
+            residual_energy=res,
+            children=tuple(_build(c) for c in n.children
+                           if c.status == Status.SOLVED),
+        )
+
+    tree_root = _build(root)
+    return ProofTree(root=tree_root, total_residual=total)
