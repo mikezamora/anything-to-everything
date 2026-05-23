@@ -192,7 +192,8 @@ def decode(state: MPS, meta: EncodingMeta) -> DecodeResult:
 
 
 def parse_kind_stream(decoded_sites: list[tuple],
-                      nested_type_index: Optional[dict[int, Ty]] = None
+                      nested_type_index: Optional[dict[int, Ty]] = None,
+                      forall_protected_leaves: Optional[set[int]] = None,
                       ) -> Node:
     """Rebuild an AST from a pre-order stream of per-site basis tuples.
 
@@ -203,6 +204,19 @@ def parse_kind_stream(decoded_sites: list[tuple],
 
     Shared by the MPS decoder (`decode`) and the MERA decoder
     (`decode_mera`): the structural parse must not be duplicated.
+
+    ``forall_protected_leaves`` (Gap F): the MERA-level set of leaf
+    indices that were frozen by I-Task-10 #5 to preserve §1.1
+    binding-as-entanglement. After a R-Eq-Refl promotion collapses a
+    Forall body to ``BoolLit(True)``, the bound-Var-use sites inside
+    that body keep their ``KIND_VAR`` bits (their entanglement IS the
+    universal-quantification proof; collapsing would break §1.1).
+    During the trailing-PAD scan such sites are recognised as
+    structurally-dead AST (parsed only via the active-AST root) yet
+    entanglement-alive (the protected leaves carry the §1.1 bond
+    with the Forall binder). When ``forall_protected_leaves`` is
+    ``None`` (MPS calculus: no Forall, no protection) the trailing
+    scan stays strict.
     """
     # KIND_FORALL / KIND_FIX are extended-calculus kinds defined in
     # mera_encoding; imported here so the inline binder branches can
@@ -312,11 +326,40 @@ def parse_kind_stream(decoded_sites: list[tuple],
 
     ast = _parse_one()
 
+    # Gap F: a §1.1-protected site whose 5 species leaves all live in
+    # ``forall_protected_leaves`` is structurally-dead AST (the active
+    # AST has already been parsed via the root call above) yet
+    # entanglement-alive (the Forall binder still holds its bond with
+    # the bound Var use). The collapse gates were correctly suppressed
+    # by the evolution layer's frozen-leaves filter, so the surviving
+    # non-PAD kind bits are §1.1-CORRECT and the trailing scan must
+    # accept them. Non-protected non-PAD trailing sites remain a
+    # hard failure (Gap E's contract: R-Eq-Refl's DFS co-projects all
+    # non-protected descendants to PAD).
+    protected_set = forall_protected_leaves or set()
+    # Local import: avoid a top-level mera_encoding dependency in the
+    # MPS-only call path (parity with the KIND_FORALL/KIND_FIX imports
+    # above).
+    from .mera_encoding import LEAVES_PER_NODE
+
+    def _site_fully_protected(site_idx: int) -> bool:
+        if not protected_set:
+            return False
+        base = LEAVES_PER_NODE * site_idx
+        for offset in range(LEAVES_PER_NODE):
+            if (base + offset) not in protected_set:
+                return False
+        return True
+
     while pos[0] < n_total:
-        ki = decoded_sites[pos[0]][0]
+        site_idx = pos[0]
+        ki = decoded_sites[site_idx][0]
         if ki != KIND_PAD:
+            if _site_fully_protected(site_idx):
+                pos[0] += 1
+                continue
             raise DecodeError(
-                f"site {pos[0]} not PAD after AST parse (kind={ki})"
+                f"site {site_idx} not PAD after AST parse (kind={ki})"
             )
         pos[0] += 1
 

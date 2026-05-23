@@ -137,7 +137,12 @@ def decode_mera(state: MERA, meta: MeraEncodingMeta) -> DecodeResult:
     # tuples and ignores the trailing tobl entry (a typing-obligation tag,
     # not structural). Var->Lam wiring is done by parse_kind_stream's
     # binder stack, not duplicated here.
-    ast = parse_kind_stream(per_node, meta.nested_type_index)
+    ast = parse_kind_stream(
+        per_node,
+        meta.nested_type_index,
+        forall_protected_leaves=set(meta.forall_protected_leaves)
+        if meta.forall_protected_leaves else None,
+    )
     return DecodeResult(ast=ast, residual_norm=residual)
 
 
@@ -224,7 +229,12 @@ def sample_mera(state: MERA, meta: MeraEncodingMeta,
                     per_node.append(tuple(node_idxs))
                     node_idxs = []
             try:
-                ast = parse_kind_stream(per_node, meta.nested_type_index)
+                ast = parse_kind_stream(
+                    per_node,
+                    meta.nested_type_index,
+                    forall_protected_leaves=set(meta.forall_protected_leaves)
+                    if meta.forall_protected_leaves else None,
+                )
             except DecodeError:
                 # Un-parseable byte stream — record as a failed sample so
                 # the caller (e.g. synthesis runner) can count it via
@@ -250,7 +260,12 @@ def sample_mera(state: MERA, meta: MeraEncodingMeta,
                 per_node.append(tuple(node_idxs))
                 node_idxs = []
         try:
-            ast = parse_kind_stream(per_node, meta.nested_type_index)
+            ast = parse_kind_stream(
+                per_node,
+                meta.nested_type_index,
+                forall_protected_leaves=set(meta.forall_protected_leaves)
+                if meta.forall_protected_leaves else None,
+            )
         except DecodeError:
             continue
         results.append(DecodeResult(ast=ast, residual_norm=0.0))

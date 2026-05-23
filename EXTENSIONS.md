@@ -582,3 +582,31 @@ Original failure narrative (kept for historical context):
   (kind=1)` decode_error, with kind=1 == KIND_VAR confirming the
   Forall-protected Var seam).
 - Commit: this Gap-E partial resolution.
+- **RESOLVED** (option a): `parse_kind_stream` now accepts an optional
+  `forall_protected_leaves: set[int]` argument; in the trailing-PAD
+  scan, any site whose 5 species leaves (LEAVES_PER_NODE * site_idx
+  ..+4) are entirely contained in the protected set is recognised as
+  structurally-dead AST yet entanglement-alive per §1.1 binding-as-
+  entanglement (I-Task-10 #5). `mera_decoder.decode_mera` and
+  `mera_decoder.sample_mera` pass `meta.forall_protected_leaves`
+  through. The MPS-side default (`None`) preserves the strict
+  trailing-PAD contract; partially-protected sites (some leaves
+  protected, not all) still fail loudly. New regressions live in
+  `src/qft_pcn/tests/test_decoder_forall_protected_trailing.py`
+  (4 tests: 3 unit-level synthetic-stream pins + 1 end-to-end
+  `forall x:Nat. Eq (add x Zero) x` encode→evolve→decode_mera). All
+  Gap-E + Gap-C + Gap-F regression suites green
+  (test_mera_eqrefl_rule, test_mera_forall_protected,
+  test_decoder_forall_fix, test_decoder_forall_non_nat: 21 passed;
+  test_mera_reduction E1-E5: 7 passed).
+- **K-8 end-to-end FLIP**: with Gap F resolved, the §10.10 orchestrator
+  pipeline now closes — `test_substrate_level_inductive_theorem_proves_end_to_end`
+  passes (orchestrator solves the composite `forall x:Nat. Eq (add x Zero) x`
+  end-to-end), and the two Gap-E/F pinning tests
+  (`test_orchestrator_blocked_on_lemma_persistence_substrate_gap`
+  and `test_orchestrator_refusal_diagnostic_pins_substrate_seam`)
+  fail loudly as designed (their `assert solved is False` /
+  `assert outcome.integrated is False` trip with the
+  "substrate gap appears fixed — flip this test" message). The
+  §10.10 in-substrate composite is now provable through the real
+  orchestrator + integrator + lemma-library pipeline.
