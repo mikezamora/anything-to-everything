@@ -86,3 +86,41 @@ uv run pytest src/qft_pcn/tests/test_viz_manim.py -v --noconftest
 ```
 
 The Manim render tests skip automatically when Manim is not installed.
+
+## Presets and advanced parameters
+
+Curated starting conditions are exposed under `GET /presets`; per-layer
+JSON Schema is at `GET /params/schema`. The UI's preset dropdown and
+Advanced expander both consume these. See `presets.py` for the catalog.
+
+## Manim Community install
+
+For systems with `apt`, the prereqs + the `viz-manim` extra are installed by
+
+    ./scripts/install-manim.sh
+
+On other OSes, install Manim's system prereqs manually (Cairo, Pango,
+ffmpeg, a LaTeX distribution) then `uv sync --extra viz-manim`.
+
+## Deferred features
+
+Anything the viz could show but currently can't (because a substrate hook
+is missing) is registered in `EXTENSIONS.md`. No placeholders or fake data
+are committed in code.
+
+## Manual smoke matrix
+
+After substantial changes, walk these by hand against `./scripts/viz.sh`:
+
+|         | fixture | preset (first) | advanced (one param edited) |
+|---------|---------|-----------------|------------------------------|
+| manifold  | ✓ | ✓ | ✓ |
+| multifield| ✓ | ✓ | ✓ |
+| mps       | ✓ | ✓ | ✓ |
+| hamiltonian| ✓ | ✓ | ✓ |
+| qpcn      | ✓ | ✓ | ✓ |
+| mera      | ✓ | ✓ | ✓ |
+| vqc       | fixture only — see EXTENSIONS.md |||
+| logic     | fixture only — see EXTENSIONS.md |||
+
+Additionally: pause/resume/step, baseline compare, JSONL export, MP4 export.
