@@ -740,3 +740,29 @@ fix, not an algorithmic one — the underlying evolution is
 already perf-optimized through the M3 perf path
 (`9aa5b17 perf(qft/mera): share identity disentangler`,
 `b3986fd perf(logic/mera-*): cache inactive term-gate skips`).
+
+## Multi-cycle GNVW summation deferred (no current corpus uses it)
+
+- Where: `src/qft_pcn/composition/qca_classification.py::compute_qca_index`
+  — the multi-cycle / non-uniform-stride branch (after the single-cycle
+  uniform-shift check) returns `0` unconditionally as a placeholder for
+  the genuine multi-cycle GNVW index (signed total displacement summed
+  per cycle, with each cycle's contribution weighted by its stride
+  modulo length).
+- Need: when a circuit composes SWAP-like gates that induce a
+  permutation with multiple non-trivial cycles or non-uniform stride
+  within a single cycle, the GNVW index is the algebraic sum of
+  per-cycle displacements (Gross-Nesme-Vogts-Werner 2012, §3). The
+  placeholder returns 0 instead of computing the sum.
+- Workaround: every Trotter step in the present codebase is strict-
+  locality — `term_gates` emits only single-leaf and two-leaf non-SWAP
+  factored entanglers, so `_is_swap_like` is universally False and the
+  permutation built in `compute_qca_index` is the identity. The
+  multi-cycle branch is unreachable from any production path; the
+  single-cycle uniform-shift branch already returns the correct index
+  (0) for the strict-locality case via the empty-`cycles` early exit.
+- Unblocks: §12.17 acceptance on hypothetical future Hamiltonians that
+  intentionally compose SWAP gates to encode a non-trivial QCA shift
+  (e.g. a translation-symmetry probe). No present spec target requires
+  this; deferred per `memory/no-placeholders.md` with this entry as
+  the tracked gap.

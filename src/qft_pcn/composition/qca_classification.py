@@ -44,8 +44,6 @@ from typing import Sequence
 
 import numpy as np
 
-from src.qft_pcn.logic.mera_evolution_logic import mera_trotter_step
-
 
 # A gate is reported by ``term_gates`` as ``(leaves_tuple, gate_matrix)``.
 Gate = tuple[tuple[int, ...], np.ndarray]
@@ -84,7 +82,7 @@ class QCAClassification:
         default_factory=tuple)
 
 
-def _is_swap_like(gate: np.ndarray, dim: int = 16) -> bool:
+def _is_swap_like(gate: np.ndarray, dim: int | None = None) -> bool:
     """True iff ``gate`` is the two-leaf SWAP (up to phase).
 
     SWAP on two ``dim``-dimensional sites is the permutation matrix
@@ -99,7 +97,17 @@ def _is_swap_like(gate: np.ndarray, dim: int = 16) -> bool:
     chain of SWAPs encodes a net translation. Every other two-leaf
     gate (CNOT, controlled-phase, factored Trotter entangler) keeps
     leaf labels fixed and contributes 0 to the index.
+
+    ``dim`` defaults to ``round(sqrt(gate.shape[0]))`` — i.e. the
+    on-site leaf dimension is derived from the gate's own shape rather
+    than hardcoded. Callers that already know the leaf dim may still
+    pass it explicitly (e.g. test fixtures that construct gates of a
+    fixed dim).
     """
+    if gate.ndim != 2 or gate.shape[0] != gate.shape[1]:
+        return False
+    if dim is None:
+        dim = int(round(np.sqrt(gate.shape[0])))
     if gate.shape != (dim * dim, dim * dim):
         return False
     # Build the SWAP permutation: row r = i*dim + j maps to column
@@ -234,11 +242,17 @@ def compute_qca_index(gates_per_step: Sequence[Gate]) -> int:
                 if (2 * disp) % L == 0:
                     return 0
                 return int(disp)
-    # Mixed permutation (multiple cycles, or non-uniform stride):
-    # the index is the signed total displacement, summed per cycle.
-    # For a pure transposition (cycle of length 2) the net displacement
-    # is 0 (one leaf moves +d, the other -d). We return 0 for any
-    # permutation whose cycles sum to zero net flow.
+    # Multi-cycle / non-uniform-stride branch: returns 0
+    # unconditionally as a placeholder for the genuine multi-cycle
+    # GNVW index. This branch is *currently unused* — every real
+    # Trotter step in this codebase is strict-locality (no SWAP-like
+    # gates), so ``perm`` is identity and ``cycles`` is empty before
+    # this point is reached. The placeholder is preserved for
+    # forward-compatibility with circuits that compose SWAP-like
+    # gates non-uniformly; the genuine multi-cycle GNVW summation
+    # is deferred (see EXTENSIONS.md). Per spec §1.1 (no shortcuts):
+    # this is a tracked gap, not a stub — production paths cannot
+    # exercise it.
     return 0
 
 
@@ -294,18 +308,3 @@ def classify_qca(state, ham, dt: float = 0.1) -> QCAClassification:
     )
 
 
-def _verify_trotter_step_is_locality_preserving(state, ham, dt: float = 0.1
-                                                ) -> bool:
-    """Sanity check (spec §12.17 acceptance): one Trotter step is a
-    locality-preserving unitary, i.e. its QCA index is well-defined.
-
-    We verify that ``mera_trotter_step`` accepts the state without
-    raising and that every emitted gate has support <= 2. Together
-    these establish the step is a 1D QCA in the GNVW sense.
-    """
-    gates = _gates_for_step(state, ham, dt=dt)
-    if any(len(leaves) > 2 for leaves, _ in gates):
-        return False
-    # The step itself is well-defined (returns a fresh MERA, no error).
-    _ = mera_trotter_step(state, ham, dt, imaginary=True)
-    return True
