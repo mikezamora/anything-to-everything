@@ -58,12 +58,20 @@ def parent_state_meta():
     return state, meta
 
 
-def _node(parent_site=0, prop="P"):
+def _node(parent_leaves=(0,), prop="P"):
+    """Build a child node whose parent_leaves tuple is the explicit
+    host-leaf footprint the integrator will clamp into.
+
+    Callers that previously passed ``parent_site=i`` now pass the
+    explicit tuple. The fixture child (``encode_mera(r'\\x:Int. x')``)
+    has ``meta.n_leaves == 16`` -- callers that exercise the clamp path
+    must pass ``tuple(range(0, 16))`` to cover the full footprint.
+    """
     g = make_sub_goal({"g": prop}, goal_prop=prop, boundary={},
-                      parent_site=parent_site)
+                      parent_leaves=tuple(parent_leaves))
     n = Node(goal=g, status=Status.ACTIVE)
     n.parent = Node(goal=make_sub_goal({"g": "parent"}, goal_prop="Par",
-                                       boundary={}, parent_site=None),
+                                       boundary={}, parent_leaves=()),
                     status=Status.ACTIVE)
     return n
 
@@ -174,7 +182,9 @@ def test_ground_state_child_is_integrated_and_clamped(
 ):
     parent_state, parent_meta = parent_state_meta
     cstate, cmeta = child_state_meta
-    node = _node(parent_site=0)
+    # Full footprint: fixture child has n_leaves=16; pass the explicit
+    # tuple so the integrator clamps onto the contiguous [0, 16) window.
+    node = _node(parent_leaves=tuple(range(0, 16)))
     # Snapshot the parent's leaf-0 vector for comparison post-clamp.
     pre_leaf0 = np.asarray(parent_state.leaves[0]).copy()
     out = integrate_child(
@@ -199,7 +209,8 @@ def test_conjecture_band_integrates_with_reduced_strength(
 ):
     parent_state, parent_meta = parent_state_meta
     cstate, cmeta = child_state_meta
-    node = _node()
+    # Full footprint: fixture child has n_leaves=16.
+    node = _node(parent_leaves=tuple(range(0, 16)))
     mid = (RESIDUAL_GATE + CONJECTURE_CEILING) / 2.0
     out = integrate_child(
         parent_state, parent_meta, node,

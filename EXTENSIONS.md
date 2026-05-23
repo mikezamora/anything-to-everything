@@ -370,6 +370,7 @@ it unblocks.
   substrate (see new entry "List arithmetic in encoder substrate"
   below). The bridge test for the literal §10.10 list-induction
   theorem is `pytest.mark.skip`'d with a reference to that entry.
+  Commit: 1d8f942.
 
 ## Missing dependency: List arithmetic in encoder substrate (`length` / `reverse`)
 

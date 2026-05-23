@@ -225,7 +225,7 @@ class _SiblingDecomposer:
                 {"goal": "lemma_addzero_eqrefl",
                  "ast_id": "forall_x_eq_addzero_x"},
                 goal_prop="lemma_addzero_eqrefl",
-                boundary={}, parent_site=0,
+                boundary={}, parent_leaves=(0,),
             )]
         return []
 
@@ -343,7 +343,7 @@ def test_orchestrator_refusal_diagnostic_pins_substrate_seam(
     sub_goal = make_sub_goal(
         {"goal": "lemma_addzero_eqrefl"},
         goal_prop="lemma_addzero_eqrefl",
-        boundary={}, parent_site=0,
+        boundary={}, parent_leaves=(0,),
     )
     node = Node(goal=sub_goal, status=Status.PENDING)
 

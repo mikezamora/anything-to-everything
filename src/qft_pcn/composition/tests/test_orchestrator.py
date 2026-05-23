@@ -18,6 +18,7 @@ from src.qft_pcn.composition.dispatcher import ChildResult, ThreadPoolBackend
 from src.qft_pcn.composition.errors import RevisionExhausted
 from src.qft_pcn.composition.goal_graph import (
     Status,
+    make_contiguous_sub_goal,
     make_sub_goal,
 )
 from src.qft_pcn.composition.lemma_library import LemmaLibrary
@@ -28,6 +29,20 @@ from src.qft_pcn.composition.orchestrator import (
 )
 from src.qft_pcn.logic.ast import parse
 from src.qft_pcn.logic.mera_encoder import encode_mera
+
+
+# ---------------------------------------------------------------------------
+# Opt this file out of the conftest §9.7 dense-tensor ceiling: the real
+# encode_mera that backs every fixture allocates 4096-element pair matrices
+# by construction (same pattern as test_cross_level_acceptance.py and the
+# new test_orchestrator_parent_workspace.py). Anti-shortcut: we do NOT
+# raise the ceiling for the whole composition module.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _no_large_dense():  # shadows the conftest fixture for this file only
+    yield
 
 
 # ---------------------------------------------------------------------------
@@ -74,8 +89,13 @@ class StubDecomposer:
         for i, (spec, prop) in enumerate(
             self._table.get(node.goal.goal_prop, [])
         ):
-            out.append(make_sub_goal(
-                spec, goal_prop=prop, boundary={}, parent_site=i,
+            # Sibling lemmas in this stub share the same isomorphic
+            # 16-leaf window as the child fixture's encoding -- overlap
+            # is acceptable for the test (clamps are idempotent on
+            # identical child states).
+            out.append(make_contiguous_sub_goal(
+                spec, goal_prop=prop, boundary={},
+                base=0, n_leaves=16,
             ))
         return out
 
@@ -149,7 +169,9 @@ def test_solve_goal_graph_three_levels_with_stub_runner(
 # ---------------------------------------------------------------------------
 
 
-def test_solve_goal_graph_root_failure_returns_structured_report(lib):
+def test_solve_goal_graph_root_failure_returns_structured_report(
+    lib, parent_state_meta,
+):
     """A non-converging runner exhausts revisions -- the orchestrator must
     surface a structured failure_report (spec §6.5), not a fabricated proof
     tree."""
@@ -167,12 +189,14 @@ def test_solve_goal_graph_root_failure_returns_structured_report(lib):
             trotter_steps=0,
         )
 
+    pstate, pmeta = parent_state_meta
     result = solve_goal_graph(
         {"g": "root"}, root_prop="Leaf",
         decomposer=StubDecomposer({}),   # no decomposition -> leaf goal
         backend=ThreadPoolBackend(max_workers=1),
         lemma_library=lib,
         runner=failing_runner, timeout_s=2.0,
+        parent_state=pstate, parent_meta=pmeta,
     )
     assert isinstance(result, SolveResult)
     assert result.solved is False
@@ -195,7 +219,9 @@ def test_solve_goal_graph_root_failure_returns_structured_report(lib):
 # ---------------------------------------------------------------------------
 
 
-def test_root_failure_report_carries_revision_exhaustion_metadata(lib):
+def test_root_failure_report_carries_revision_exhaustion_metadata(
+    lib, parent_state_meta,
+):
     """The structured report exposes the typed-error fields so callers can
     branch on revision exhaustion specifically."""
     def failing_runner(sub_goal, timeout_s):
@@ -206,12 +232,14 @@ def test_root_failure_report_carries_revision_exhaustion_metadata(lib):
             meta=None, hamiltonian=None, trotter_steps=0,
         )
 
+    pstate, pmeta = parent_state_meta
     result = solve_goal_graph(
         {"g": "root"}, root_prop="Leaf",
         decomposer=StubDecomposer({}),
         backend=ThreadPoolBackend(max_workers=1),
         lemma_library=lib,
         runner=failing_runner, timeout_s=2.0,
+        parent_state=pstate, parent_meta=pmeta,
     )
     assert result.solved is False
     report = result.failure_report
@@ -232,9 +260,10 @@ def test_root_failure_report_carries_revision_exhaustion_metadata(lib):
 
 
 def test_subtree_revision_exhaustion_bubbles_into_root_failure_report(
-    lib, child_state_meta,
+    lib, child_state_meta, parent_state_meta,
 ):
     cstate, cmeta = child_state_meta
+    pstate, pmeta = parent_state_meta
 
     def failing_runner(sub_goal, timeout_s):
         # Every child diverges -- a sub-goal under the root will exhaust
@@ -254,6 +283,7 @@ def test_subtree_revision_exhaustion_bubbles_into_root_failure_report(
         backend=ThreadPoolBackend(max_workers=1),
         lemma_library=lib,
         runner=failing_runner, timeout_s=2.0,
+        parent_state=pstate, parent_meta=pmeta,
     )
     assert result.solved is False
     assert result.failure_report is not None

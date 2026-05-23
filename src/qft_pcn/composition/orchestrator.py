@@ -98,11 +98,11 @@ def solve_goal_graph(
     decomposer,
     backend,
     lemma_library,
+    parent_state,
+    parent_meta,
     runner=None,
     timeout_s: float,
     on_step=None,
-    parent_state=None,
-    parent_meta=None,
 ) -> SolveResult:
     """Drive the goal graph to a verified proof tree or a structured failure
     report. The schedule orders the frontier with a structural fan-out proxy
@@ -134,13 +134,15 @@ def solve_goal_graph(
         every integration step. Callers verify the §9.5 monotonicity
         invariant by inspecting the recorded values.
     parent_state, parent_meta:
-        The parent QPCN's MERA state + encoding meta. The integrator
-        clamps each converged child's lemma onto ``parent_state`` at the
-        host-leaf window resolved from ``node.goal.parent_site`` and
-        ``parent_meta.species_of_leaf`` (spec §5.2a). Both are required
-        for real (non-stub) lemma libraries because the K-5 result-
-        integrator pipeline calls ``Promoter.apply_init_clamp`` which
-        reads ``parent_meta.species_of_leaf``.
+        The parent QPCN's MERA state + encoding meta -- REQUIRED. The
+        integrator clamps each converged child's lemma onto
+        ``parent_state`` at the host-leaf window read directly from
+        ``node.goal.parent_leaves`` and ``parent_meta.species_of_leaf``
+        (spec §5.2a). The §1.1 architecture-soul binding IS this
+        entanglement clamp; the orchestrator must drive it, not skip it
+        -- a missing parent workspace raises ``TypeError`` rather than
+        silently degrading to lemma-registration-only (anti-shortcut:
+        no graceful skip; the clamp must fire).
 
     Returns
     -------
@@ -154,6 +156,18 @@ def solve_goal_graph(
     from .dispatcher import dispatch_siblings, run_child
     from .result_integrator import integrate_child
     from .revision import FailedDecompositionCache, HeuristicReviser, revise
+
+    # §1.1 binding = entanglement clamp. The orchestrator is a solver over
+    # an existing workspace; without a parent MERA the integrator cannot
+    # fire ``Promoter.apply_init_clamp`` and the lemma is only logically
+    # registered, not entanglement-clamped (a classical-lookup proof, not
+    # a §1.1 proof). Refuse the call rather than silently degrade.
+    if parent_state is None or parent_meta is None:
+        raise TypeError(
+            "solve_goal_graph requires a parent workspace: "
+            "parent_state and parent_meta must both be non-None "
+            "(§6.1 / §8.6 clamp is the orchestrator's load-bearing step)"
+        )
 
     runner = runner or run_child
     root = build_goal_graph(root_spec, root_prop, decomposer)

@@ -62,8 +62,12 @@ class HeuristicReviser:
         self._cursor[gid] = idx + 1
         spec = dict(node.goal.dsl_spec)
         spec["revision_strategy"] = strategy
+        # Revision proposes a single replacement sub-goal; inherit the
+        # parent's leaf footprint so the integrator clamps onto the same
+        # window the original decomposition targeted.
         return [make_sub_goal(spec, goal_prop=f"{node.goal.goal_prop}::{strategy}",
-                              boundary=node.goal.boundary, parent_site=0)]
+                              boundary=node.goal.boundary,
+                              parent_leaves=node.goal.parent_leaves)]
 
 
 def revise(node: Node, *, llm: LLMReviser | None = None,
@@ -84,8 +88,13 @@ def revise(node: Node, *, llm: LLMReviser | None = None,
     if llm is not None:
         suggestion = llm.suggest_decomposition(node.goal.goal_prop,
                                                node.goal.boundary)
+        # LLM revisions land on a single contiguous slot per sibling --
+        # the LLM does not yet publish an explicit footprint, so we fall
+        # back to a single-leaf placeholder per sibling index. A richer
+        # LLM contract is its own follow-on (decomposer J-Task).
         alt = [make_sub_goal(item["dsl_spec"], goal_prop=item["goal_prop"],
-                             boundary=node.goal.boundary, parent_site=i)
+                             boundary=node.goal.boundary,
+                             parent_leaves=(i,))
                for i, item in enumerate(suggestion)]
         if not cache.is_failed(node.goal.goal_id, alt):
             return alt

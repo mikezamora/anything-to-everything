@@ -28,12 +28,19 @@ def _content_hash(goal_prop: str, dsl_spec: dict) -> str:
 @dataclass(frozen=True)
 class SubGoal:
     """A DSL spec plus its expected proposition type -- the unit a child
-    QPCN run proves (spec §4.1)."""
+    QPCN run proves (spec §4.1).
+
+    ``parent_leaves`` is the explicit host-leaf footprint the child lemma
+    will occupy on its parent's MERA (spec §5.2a). It is a tuple of host
+    leaf indices, not a single int, so non-contiguous / species-permuted
+    layouts are first-class -- the integrator does not extend or guess
+    the window. An empty tuple is the root-goal sentinel (no parent).
+    """
     goal_id: str
     dsl_spec: dict
     goal_prop: str
     boundary: dict
-    parent_site: int | None
+    parent_leaves: tuple[int, ...] = ()
 
     # The dataclass is frozen but holds mutable (unhashable) dict fields, so
     # the auto-generated __hash__ would raise TypeError on use. goal_id IS
@@ -50,14 +57,34 @@ class SubGoal:
 
 
 def make_sub_goal(dsl_spec: dict, *, goal_prop: str, boundary: dict,
-                  parent_site: int | None) -> SubGoal:
-    """Construct a SubGoal with a content-addressed goal_id."""
+                  parent_leaves: tuple[int, ...] = ()) -> SubGoal:
+    """Construct a SubGoal with a content-addressed goal_id.
+
+    ``parent_leaves`` is the explicit host-leaf tuple the child lemma
+    occupies. Callers with only a contiguous base+count should use
+    :func:`make_contiguous_sub_goal`.
+    """
     return SubGoal(
         goal_id=_content_hash(goal_prop, dsl_spec),
         dsl_spec=dsl_spec,
         goal_prop=goal_prop,
         boundary=dict(boundary),
-        parent_site=parent_site,
+        parent_leaves=tuple(int(i) for i in parent_leaves),
+    )
+
+
+def make_contiguous_sub_goal(dsl_spec: dict, *, goal_prop: str, boundary: dict,
+                             base: int, n_leaves: int) -> SubGoal:
+    """Convenience constructor for the contiguous-window case.
+
+    Builds ``parent_leaves = (base, base+1, ..., base+n_leaves-1)``. This
+    is the principled isomorphic-decomposer shape; non-isomorphic or
+    species-permuted decomposers should call :func:`make_sub_goal`
+    directly with the explicit tuple.
+    """
+    return make_sub_goal(
+        dsl_spec, goal_prop=goal_prop, boundary=boundary,
+        parent_leaves=tuple(range(int(base), int(base) + int(n_leaves))),
     )
 
 
@@ -104,7 +131,7 @@ def build_goal_graph(root_spec: dict, root_prop: str, decomposer) -> Node:
     expand_fully -- the graph can be combinatorially large (spec §4.2).
     """
     root_goal = make_sub_goal(root_spec, goal_prop=root_prop,
-                              boundary={}, parent_site=None)
+                              boundary={}, parent_leaves=())
     root = Node(goal=root_goal, status=Status.PENDING)
     expand_node(root, decomposer)
     return root

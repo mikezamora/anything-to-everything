@@ -17,7 +17,7 @@ class StubDecomposer:
         from src.qft_pcn.composition.goal_graph import make_sub_goal
         out = []
         for i, (spec, prop) in enumerate(self._table.get(node.goal.goal_prop, [])):
-            out.append(make_sub_goal(spec, goal_prop=prop, boundary={}, parent_site=i))
+            out.append(make_sub_goal(spec, goal_prop=prop, boundary={}, parent_leaves=(i,)))
         return out
 
 
@@ -42,7 +42,7 @@ def test_build_goal_graph_three_levels():
 
 
 def test_detect_cycle_on_ancestor_goal_id():
-    g = make_sub_goal({"g": "a"}, goal_prop="A", boundary={}, parent_site=0)
+    g = make_sub_goal({"g": "a"}, goal_prop="A", boundary={}, parent_leaves=(0,))
     node = Node(goal=g, status=Status.PENDING)
     assert detect_cycle(node, frozenset({g.goal_id})) is True
     assert detect_cycle(node, frozenset()) is False
@@ -50,7 +50,7 @@ def test_detect_cycle_on_ancestor_goal_id():
 
 def test_shared_goal_id_in_independent_siblings_is_not_a_cycle():
     # the SAME goal_id under two independent sibling subtrees -- a shared lemma
-    g = make_sub_goal({"g": "shared"}, goal_prop="Shared", boundary={}, parent_site=0)
+    g = make_sub_goal({"g": "shared"}, goal_prop="Shared", boundary={}, parent_leaves=(0,))
     left = Node(goal=g, status=Status.PENDING)
     right = Node(goal=g, status=Status.PENDING)
     # left's path visited set does not contain right's path -> no cycle
@@ -58,7 +58,7 @@ def test_shared_goal_id_in_independent_siblings_is_not_a_cycle():
 
 
 def test_assert_acyclic_raises_on_back_edge():
-    g0 = make_sub_goal({"g": "a"}, goal_prop="A", boundary={}, parent_site=None)
+    g0 = make_sub_goal({"g": "a"}, goal_prop="A", boundary={}, parent_leaves=())
     n0 = Node(goal=g0, status=Status.PENDING)
     n0.children.append(n0)  # deliberate back-edge
     import pytest
@@ -67,8 +67,8 @@ def test_assert_acyclic_raises_on_back_edge():
 
 
 def test_compute_free_energy_sums_residuals():
-    g0 = make_sub_goal({"g": "r"}, goal_prop="R", boundary={}, parent_site=None)
-    g1 = make_sub_goal({"g": "c"}, goal_prop="C", boundary={}, parent_site=0)
+    g0 = make_sub_goal({"g": "r"}, goal_prop="R", boundary={}, parent_leaves=())
+    g1 = make_sub_goal({"g": "c"}, goal_prop="C", boundary={}, parent_leaves=(0,))
     root = Node(goal=g0, status=Status.SOLVED)
     child = Node(goal=g1, status=Status.SOLVED)
     root.add_child(child)
@@ -83,8 +83,8 @@ def test_compute_free_energy_sums_residuals():
 
 
 def test_extract_proof_tree_mirrors_solved_nodes():
-    g0 = make_sub_goal({"g": "r"}, goal_prop="R", boundary={}, parent_site=None)
-    g1 = make_sub_goal({"g": "c"}, goal_prop="C", boundary={}, parent_site=0)
+    g0 = make_sub_goal({"g": "r"}, goal_prop="R", boundary={}, parent_leaves=())
+    g1 = make_sub_goal({"g": "c"}, goal_prop="C", boundary={}, parent_leaves=(0,))
     root = Node(goal=g0, status=Status.SOLVED)
     child = Node(goal=g1, status=Status.SOLVED)
     root.add_child(child)
@@ -113,7 +113,7 @@ def test_status_has_the_six_members():
 
 
 def test_sub_goal_is_frozen():
-    g = make_sub_goal(_spec("a"), goal_prop="Nat", boundary={}, parent_site=0)
+    g = make_sub_goal(_spec("a"), goal_prop="Nat", boundary={}, parent_leaves=(0,))
     import dataclasses
     assert dataclasses.is_dataclass(g)
     try:
@@ -124,23 +124,23 @@ def test_sub_goal_is_frozen():
 
 
 def test_goal_id_is_content_addressed():
-    g1 = make_sub_goal(_spec("a"), goal_prop="Nat", boundary={}, parent_site=0)
-    g2 = make_sub_goal(_spec("a"), goal_prop="Nat", boundary={}, parent_site=7)
-    g3 = make_sub_goal(_spec("b"), goal_prop="Nat", boundary={}, parent_site=0)
-    # same (goal_prop, dsl_spec) -> same goal_id; parent_site does NOT affect it
+    g1 = make_sub_goal(_spec("a"), goal_prop="Nat", boundary={}, parent_leaves=(0,))
+    g2 = make_sub_goal(_spec("a"), goal_prop="Nat", boundary={}, parent_leaves=(7,))
+    g3 = make_sub_goal(_spec("b"), goal_prop="Nat", boundary={}, parent_leaves=(0,))
+    # same (goal_prop, dsl_spec) -> same goal_id; parent_leaves does NOT affect it
     assert g1.goal_id == g2.goal_id
     # different dsl_spec -> different goal_id
     assert g1.goal_id != g3.goal_id
 
 
 def test_goal_id_is_stable_across_dict_key_order():
-    a = make_sub_goal({"x": 1, "y": 2}, goal_prop="P", boundary={}, parent_site=0)
-    b = make_sub_goal({"y": 2, "x": 1}, goal_prop="P", boundary={}, parent_site=0)
+    a = make_sub_goal({"x": 1, "y": 2}, goal_prop="P", boundary={}, parent_leaves=(0,))
+    b = make_sub_goal({"y": 2, "x": 1}, goal_prop="P", boundary={}, parent_leaves=(0,))
     assert a.goal_id == b.goal_id
 
 
 def test_node_defaults():
-    g = make_sub_goal(_spec("a"), goal_prop="Nat", boundary={}, parent_site=0)
+    g = make_sub_goal(_spec("a"), goal_prop="Nat", boundary={}, parent_leaves=(0,))
     n = Node(goal=g, status=Status.PENDING)
     assert n.children == []
     assert n.result is None
@@ -149,8 +149,8 @@ def test_node_defaults():
 
 
 def test_node_add_child_sets_back_edge():
-    g0 = make_sub_goal(_spec("root"), goal_prop="P", boundary={}, parent_site=None)
-    g1 = make_sub_goal(_spec("child"), goal_prop="Q", boundary={}, parent_site=3)
+    g0 = make_sub_goal(_spec("root"), goal_prop="P", boundary={}, parent_leaves=())
+    g1 = make_sub_goal(_spec("child"), goal_prop="Q", boundary={}, parent_leaves=(3,))
     root = Node(goal=g0, status=Status.PENDING)
     child = Node(goal=g1, status=Status.PENDING)
     root.add_child(child)
@@ -163,12 +163,12 @@ def test_subgoal_is_hashable():
     raise TypeError. An explicit __hash__ keyed on goal_id (the content
     address of goal_prop+dsl_spec) makes SubGoal usable in sets / dicts
     for cycle detection and cross-sibling lemma sharing."""
-    g1 = make_sub_goal(_spec("a"), goal_prop="P", boundary={"x": 1}, parent_site=0)
+    g1 = make_sub_goal(_spec("a"), goal_prop="P", boundary={"x": 1}, parent_leaves=(0,))
     # hash() must not raise
     h1 = hash(g1)
     # two SubGoals with the same content (-> same goal_id) hash-equal and
-    # compare-equal regardless of parent_site / boundary aliasing.
-    g2 = make_sub_goal(_spec("a"), goal_prop="P", boundary={"x": 2}, parent_site=7)
+    # compare-equal regardless of parent_leaves / boundary aliasing.
+    g2 = make_sub_goal(_spec("a"), goal_prop="P", boundary={"x": 2}, parent_leaves=(7,))
     assert g1.goal_id == g2.goal_id
     assert hash(g1) == hash(g2) == h1
     assert g1 == g2
@@ -180,9 +180,9 @@ def test_subgoal_is_hashable():
 def test_add_child_rejects_reparent():
     """Silent reparenting is a graph bug: surfaces as GoalGraphError."""
     import pytest as _pytest
-    g_p1 = make_sub_goal(_spec("p1"), goal_prop="P", boundary={}, parent_site=None)
-    g_p2 = make_sub_goal(_spec("p2"), goal_prop="Q", boundary={}, parent_site=None)
-    g_c = make_sub_goal(_spec("c"), goal_prop="R", boundary={}, parent_site=0)
+    g_p1 = make_sub_goal(_spec("p1"), goal_prop="P", boundary={}, parent_leaves=())
+    g_p2 = make_sub_goal(_spec("p2"), goal_prop="Q", boundary={}, parent_leaves=())
+    g_c = make_sub_goal(_spec("c"), goal_prop="R", boundary={}, parent_leaves=(0,))
     parent1 = Node(goal=g_p1, status=Status.PENDING)
     parent2 = Node(goal=g_p2, status=Status.PENDING)
     child = Node(goal=g_c, status=Status.PENDING)

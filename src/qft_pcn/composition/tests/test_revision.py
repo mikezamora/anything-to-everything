@@ -7,7 +7,7 @@ from src.qft_pcn.composition.revision import (
 
 
 def _node(prop="IndCase"):
-    g = make_sub_goal({"g": prop}, goal_prop=prop, boundary={}, parent_site=0)
+    g = make_sub_goal({"g": prop}, goal_prop=prop, boundary={}, parent_leaves=(0,))
     return Node(goal=g, status=Status.PENDING_REVISION)
 
 

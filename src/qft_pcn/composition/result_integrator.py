@@ -59,20 +59,21 @@ def _spectral_gap(child_result) -> float:
 
 
 def _resolve_host_leaves(node: Node, child_meta) -> tuple[int, ...]:
-    """Map ``node.goal.parent_site`` to the host-leaf window the lemma
-    occupies (spec §5.2a).
+    """Return the explicit host-leaf footprint the lemma occupies on the
+    parent MERA (spec §5.2a).
 
-    ``parent_site`` in the current goal-graph is a single int -- the
-    starting host leaf. The lemma's footprint is ``meta.n_leaves`` (the
-    decoded leaf count). We extend ``parent_site`` to the contiguous
-    window ``[parent_site, parent_site + n_leaves)``. A future
-    parent-aware decomposer is free to publish an explicit leaf tuple
-    via a richer SubGoal field; until then this is the principled
-    one-shot expansion (EXTENSIONS.md records the gap).
+    ``SubGoal.parent_leaves`` is the canonical tuple form: it carries the
+    full host-leaf window directly, so non-contiguous or species-permuted
+    layouts are first-class. The integrator does not extend, guess, or
+    rebuild a window from a single base int -- the decomposer is
+    responsible for publishing the correct tuple. The contiguous case is
+    available via :func:`goal_graph.make_contiguous_sub_goal`.
+
+    ``child_meta`` is accepted for API compatibility (callers pass it),
+    but no longer participates in window resolution.
     """
-    start = int(node.goal.parent_site)
-    n = int(child_meta.n_leaves)
-    return tuple(range(start, start + n))
+    _ = child_meta  # see docstring; preserved for caller signature parity
+    return tuple(int(i) for i in node.goal.parent_leaves)
 
 
 def integrate_child(parent_state: Any, parent_meta: Any, node: Node,

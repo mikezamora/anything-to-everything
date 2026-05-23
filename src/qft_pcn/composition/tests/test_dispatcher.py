@@ -11,7 +11,7 @@ from src.qft_pcn.bridge.runtime.hamiltonian import BridgeHamiltonian
 
 
 def _sub(name, prop="P"):
-    return make_sub_goal({"g": name}, goal_prop=prop, boundary={}, parent_site=0)
+    return make_sub_goal({"g": name}, goal_prop=prop, boundary={}, parent_leaves=(0,))
 
 
 def test_child_result_shape():
@@ -165,7 +165,7 @@ def test_run_child_invokes_real_bridge_pipeline(_no_large_dense):
                    "dt": 0.05},
     }
     sub_goal = make_sub_goal(dsl_spec, goal_prop="X_pinned",
-                              boundary={}, parent_site=0)
+                              boundary={}, parent_leaves=(0,))
 
     result = run_child(sub_goal, timeout_s=60.0)
 
