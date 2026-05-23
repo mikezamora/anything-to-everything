@@ -377,4 +377,34 @@ export const EXPLAINERS: Record<string, ExplainerSpec> = {
     ],
     references: [{ label: 'Architecture §3.1', href: '../../QFT_PCN_ARCHITECTURE.md' }],
   },
+
+  'pcn-coupling': {
+    title: 'PCN ↔ QFT — Bidirectional Coupling',
+    oneLine: 'The bridge: PCN error sources QFT metric (T_μν → h_μν); QFT operator expectations feed PCN observation targets (⟨Ô⟩).',
+    what: [
+      'A QFT-PCN system is not two independent stacks: the PCN\'s prediction-error field sources a stress-energy tensor T_μν that perturbs the QFT-side metric (g_μν = η_μν + h_μν), and the QFT-side operator expectations ⟨Ô⟩ flow back as observation targets the PCN must explain.',
+      'This panel surfaces the live magnitudes on both arrows of that bridge — top arrow (PCN → QFT) widths track mean |T|; bottom arrow (QFT → PCN) widths track ⟨H⟩, a proxy for "how hard QFT is pulling the PCN\'s observation targets." κ_R is the coupling constant that gates how strongly error sources curvature.',
+    ],
+    elements: [
+      { name: 'PCN ↔ QFT bridge diagram', meaning: 'inline SVG with PCN and QFT boxes; the two arrows between them animate with live coupling magnitudes.' },
+      { name: 'PCN → QFT arrow (T_μν)', meaning: 'top arrow; stroke-width scales with mean |stress-energy|. The §3 source term for the metric perturbation.', code: 'snapshot_pcn_coupling:mean_abs_stress_energy' },
+      { name: 'QFT → PCN arrow (⟨Ô⟩)', meaning: 'bottom arrow; stroke-width scales with the QPCN variational energy — proxy for the operator-expectation feedback into PCN observation targets.', code: 'snapshot_pcn_coupling:qpcn_observable_energy' },
+      { name: 'κ_R readout', meaning: 'curvature-coupling constant gating how strongly PCN error sources the QFT-side curvature.', code: 'snapshot_pcn_coupling:kappa_R' },
+      { name: 'mean |T| readout', meaning: 'mean absolute stress-energy derived from the PCN error field; the source magnitude of the metric perturbation.', code: 'snapshot_pcn_coupling:mean_abs_stress_energy' },
+      { name: 'mean |R| readout', meaning: 'mean absolute Ricci scalar on the QFT-side metric — the geometric response to T_μν.', code: 'snapshot_pcn_coupling:mean_abs_ricci' },
+      { name: '⟨H⟩ readout', meaning: 'QPCN variational energy ⟨ψ|H|ψ⟩; stands in for ⟨Ô⟩ — the operator-expectation feedback that PCN tries to match.', code: 'snapshot_pcn_coupling:qpcn_observable_energy' },
+    ],
+    math: [
+      { tex: 'g_{\\mu\\nu}(x) = \\eta_{\\mu\\nu} + h_{\\mu\\nu}(x)', caption: 'QFT-side metric = flat background + perturbation sourced by PCN error.' },
+      { tex: 'h_{\\mu\\nu} \\propto \\kappa_R\\, T_{\\mu\\nu}[E_l]', caption: 'PCN → QFT: stress-energy of the prediction-error field sources the metric perturbation (κ_R gates the coupling).' },
+      { tex: 't_o = \\langle \\hat O \\rangle_{|\\psi\\rangle}', caption: 'QFT → PCN: operator expectations on the QPCN ground state become observation targets the PCN must explain (§3, bidirectional bridge).' },
+    ],
+    watch: [
+      { label: 'Top arrow widens as PCN error grows (large mean |T| ⇒ strong QFT source)', readout: 'mean_abs_stress_energy' },
+      { label: 'mean |R| should track mean |T| × κ_R — the geometric response to the source' },
+      { label: 'Bottom arrow widens as ⟨H⟩ grows: QFT is pulling harder on PCN observation targets' },
+      { label: 'Both arrows should shrink together as the joint system relaxes (error decays AND QPCN converges)' },
+    ],
+    references: [{ label: 'Architecture §3', href: '../../QFT_PCN_ARCHITECTURE.md' }],
+  },
 };

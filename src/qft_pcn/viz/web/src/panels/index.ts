@@ -18,6 +18,7 @@ import { MeraRelaxPanel } from './MeraRelaxPanel';
 import { BridgePanel } from './BridgePanel';
 import { PcnFieldsPanel } from './PcnFieldsPanel';
 import { PcnDynamicsPanel } from './PcnDynamicsPanel';
+import { PcnCouplingPanel } from './PcnCouplingPanel';
 
 export type PanelComponent = ComponentType<{ frame: Frame; baselineFrame?: Frame }>;
 
@@ -34,7 +35,8 @@ export const PANELS: Record<LayerKey, PanelComponent> = {
   bridge: BridgePanel,
   'pcn-fields': PcnFieldsPanel,
   'pcn-dynamics': PcnDynamicsPanel,
-} as Record<LayerKey, PanelComponent>;
+  'pcn-coupling': PcnCouplingPanel,
+};
 
 /** Look up a panel by layer name; `undefined` for an unknown layer. */
 export function panelFor(layer: string): PanelComponent | undefined {
