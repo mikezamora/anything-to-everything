@@ -8,6 +8,8 @@ import { Timeline } from './components/Timeline';
 import { RunControls } from './components/RunControls';
 import { CompareBar } from './components/CompareBar';
 import { ExplainerPane } from './components/ExplainerPane';
+import { RouteSwitcher } from './components/RouteSwitcher';
+import { DslRoute } from './routes/DslRoute';
 import { panelFor } from './panels';
 import { useVizStore } from './store';
 import './App.css';
@@ -35,18 +37,26 @@ function PanelArea() {
 
 export default function App() {
   const error = useVizStore((s) => s.error);
+  const route = useVizStore((s) => s.route);
   const selectedLayer = useVizStore((s) => s.selectedLayer);
   return (
     <div className="app">
-      <RunControls />
-      <CompareBar />
-      {error && <div className="error-bar" role="alert">{error}</div>}
-      <div className="body">
-        <LayerSelector />
-        <PanelArea />
-        <ExplainerPane layer={selectedLayer} />
-      </div>
-      <Timeline />
+      <RouteSwitcher />
+      {route === 'viz' ? (
+        <>
+          <RunControls />
+          <CompareBar />
+          {error && <div className="error-bar" role="alert">{error}</div>}
+          <div className="body">
+            <LayerSelector />
+            <PanelArea />
+            <ExplainerPane layer={selectedLayer} />
+          </div>
+          <Timeline />
+        </>
+      ) : (
+        <DslRoute />
+      )}
     </div>
   );
 }
