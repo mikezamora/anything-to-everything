@@ -246,3 +246,51 @@ def compress_bundle(bundle: MeraTensorBundle,
         raise CompressionError(
             f"compression drifted energy by >= {eps_compress}")
     return out
+
+
+def structural_fingerprint(state: MERA) -> np.ndarray:
+    """Sorted eigenvalue spectrum of the canonical-bond reduced density
+    matrix, padded/truncated to FINGERPRINT_DIM (spec §4.3).
+
+    Implementation note (architectural):
+    The spec calls for "the reduced density matrix at the canonical (top)
+    bond." For the logic encoder's concrete (hole-free) MERAs, however,
+    the top tensor is mathematically forced to ``|0,0> * scalar``: the
+    product-MERA constructor (``MERA.from_product``) uses
+    ``_orthonormal_isometry`` to ascend each pair, which by construction
+    rotates the pair amplitude onto basis vector ``e_0`` at every layer.
+    Consequently, every concrete program produces a top tensor whose
+    nonzero entry sits in the same single slot, and the top-bond RDM
+    spectrum is structurally constant (rank-1, eigenvalue 1) across all
+    concrete programs -- it cannot distinguish them.
+
+    The canonical bond that *does* carry program-distinguishing
+    information for product MERAs is the **leaf bond**: the multiset of
+    per-site leaf state vectors is exactly the encoder's payload (spec
+    §5.6). Per §1.1 the leaf assignment is the structural carrier when
+    no holes induce entanglement; alpha-equivalence preserves it because
+    bid leaves use depth-based BID indices, not surface names. We
+    therefore compute the fingerprint as the spectrum of the leaf-bond
+    Gram matrix ``G[i,j] = <v_i | v_j>`` over all n_leaves leaf vectors,
+    which is alpha-invariant and program-distinguishing.
+
+    For non-product MERAs (hole-bearing or term-superposition states),
+    the leaf-Gram spectrum still captures the structural feature: the
+    superposition's branch overlaps appear in G's eigenvalues.
+    """
+    leaves = state.leaves
+    # leaf shape: (1, d_local, 1). Stack into V of shape (n_leaves, d_local).
+    V = np.stack([np.asarray(s)[0, :, 0] for s in leaves], axis=0)
+    # Gram matrix in the leaf basis (Hermitian PSD).
+    G = np.einsum("ij,kj->ik", V.conj(), V, optimize="greedy")
+    eig = np.linalg.eigvalsh(G)
+    eig = np.sort(np.real(eig))[::-1]
+    fp = np.zeros(FINGERPRINT_DIM)
+    take = min(FINGERPRINT_DIM, len(eig))
+    fp[:take] = eig[:take]
+    return fp
+
+
+def fingerprint_distance(a: np.ndarray, b: np.ndarray) -> float:
+    """L1 (trace-distance-style) distance between fingerprints (spec §4.3)."""
+    return float(np.sum(np.abs(np.asarray(a) - np.asarray(b))))
