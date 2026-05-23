@@ -595,3 +595,114 @@ def snapshot_run_result(result: Any) -> dict:
         "solved_ast_text": solved_ast_text,
         "meta_n_leaves": meta_n_leaves,
     }
+
+
+# ---- PCN-side: hierarchical fields stack -----------------------------------
+
+def snapshot_pcn_fields(net: Any) -> dict:
+    """Snapshot the full PCN layer stack (Phi/E/Pi per layer)."""
+    layers_out = []
+    for layer in _safe(lambda: net.layers) or []:
+        layers_out.append({
+            "phi": _grid(_safe(lambda l=layer: l.phi.values)),
+            "E":   _grid(_safe(lambda l=layer: l.error.values)),
+            "Pi":  _grid(_safe(lambda l=layer: l.precision.pi)),
+            "channels": _safe(lambda l=layer: l.phi.channels),
+        })
+    return {
+        "layers": layers_out,
+        "step": _safe(lambda: int(net._step)),
+    }
+
+
+# ---- PCN-side: free-energy / learning dynamics -----------------------------
+
+def snapshot_pcn_dynamics(net: Any) -> dict:
+    """Snapshot PCN free-energy aggregates.
+
+    Reads the substrate's `QFTPCNLayer.free_energy(phi_below, kappa_R)`.
+    For the bottom layer phi_below is a zero observation array (matching
+    the run-time pattern); for higher layers it is the layer-below's phi.
+    """
+    layers = _safe(lambda: net.layers) or []
+    manifold = _safe(lambda: net.manifold)
+    kappa_R = _safe(lambda: float(net.cfg.kappa_R))
+
+    per_layer_F: list[float | None] = []
+    per_layer_e_norm: list[float | None] = []
+    per_layer_pi_mean: list[float | None] = []
+
+    if layers and manifold is not None and kappa_R is not None:
+        zero_obs = None
+        try:
+            c0 = layers[0].phi.channels
+            zero_obs = np.zeros((c0, manifold.nx, manifold.ny))
+        except (AttributeError, IndexError):
+            zero_obs = None
+        below = zero_obs
+        for layer in layers:
+            f = _safe(lambda l=layer, b=below:
+                      float(l.free_energy(b, kappa_R))) \
+                if below is not None else None
+            per_layer_F.append(f)
+            per_layer_e_norm.append(_safe(
+                lambda l=layer: float(np.linalg.norm(l.error.values))))
+            per_layer_pi_mean.append(_safe(
+                lambda l=layer: float(np.mean(l.precision.pi))))
+            below = _safe(lambda l=layer: l.phi.values)
+
+    total_F = None
+    if per_layer_F and all(v is not None for v in per_layer_F):
+        total_F = float(sum(per_layer_F))
+
+    return {
+        "total_free_energy": total_F,
+        "per_layer_free_energy": per_layer_F,
+        "per_layer_e_norm": per_layer_e_norm,
+        "per_layer_pi_mean": per_layer_pi_mean,
+        "n_layers": len(layers),
+        "step": _safe(lambda: int(net._step)),
+    }
+
+
+# ---- PCN-side: QFT <-> PCN coupling bridge ---------------------------------
+
+def snapshot_pcn_coupling(net: Any, qpcn: Any = None) -> dict:
+    """Snapshot the PCN <-> QFT coupling state.
+
+    PCN -> QFT: bottom-layer error field's stress-energy magnitude.
+    QFT -> PCN: mean curvature (the geometry the metric is currently in).
+    Optional qpcn argument lets the panel surface QFT operator expectations
+    feeding back into PCN observations; if absent the QFT->PCN arrow is
+    rendered with curvature only.
+    """
+    manifold = _safe(lambda: net.manifold)
+    layers = _safe(lambda: net.layers) or []
+    kappa_R = _safe(lambda: float(net.cfg.kappa_R))
+
+    mean_abs_stress = None
+    if manifold is not None and layers:
+        e0 = _safe(lambda: layers[0].error.values)
+        if e0 is not None:
+            ses = _safe(lambda: manifold.stress_energy(e0))
+            if ses is not None:
+                t_xx, t_xy, t_yy = ses
+                mean_abs_stress = float(np.mean(
+                    np.abs(t_xx) + np.abs(t_xy) + np.abs(t_yy)) / 3.0)
+
+    mean_abs_ricci = _safe(
+        lambda: float(np.abs(net.manifold.ricci_scalar()).mean())
+    )
+
+    qpcn_observable_energy = None
+    if qpcn is not None:
+        qpcn_observable_energy = _safe(
+            lambda: float(np.real(qpcn._last_energy)))
+
+    return {
+        "kappa_R": kappa_R,
+        "mean_abs_stress_energy": mean_abs_stress,
+        "mean_abs_ricci": mean_abs_ricci,
+        "qpcn_observable_energy": qpcn_observable_energy,
+        "step": _safe(lambda: int(net._step)),
+    }

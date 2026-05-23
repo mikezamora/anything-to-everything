@@ -26,6 +26,9 @@ LAYER_KEYS = (
     "logic",
     "mera_relax",
     "bridge",
+    "pcn-fields",
+    "pcn-dynamics",
+    "pcn-coupling",
 )
 
 
