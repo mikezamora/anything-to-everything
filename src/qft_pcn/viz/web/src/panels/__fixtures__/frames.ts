@@ -186,6 +186,7 @@ export const logicFrame: Frame = {
       lambda_beta: 1.0,
       lambda_arith: 0.5,
       lambda_if: 0.75,
+      bond_entropies: [0.05, 0.21, 0.34, 0.18, 0.09, 0.02],
     },
   },
 };

@@ -185,13 +185,19 @@ export const EXPLAINERS: Record<string, ExplainerSpec> = {
       'Imaginary-time relaxation drives a superposition state toward zero residual energy under all rules simultaneously.',
     ],
     elements: [
-      { name: 'Term list', meaning: 'per-rule (rule_id, site, arity) — coloured by residual' },
+      { name: 'Term nodes', meaning: 'per-rule (rule_id, site, arity); fill opacity tracks per-term residual energy so a relaxed (satisfied) term reads pale, a high-residual term reads saturated', code: 'snapshot_logic:terms / residuals' },
+      { name: 'Binder bond entropy chart', meaning: 'per-bond von Neumann entropy on the logic-encoded MPS — the load-bearing §1.1 "variable binding = entanglement" signal; a binder live on a bond contributes entropy across the use→declaration path', code: 'snapshot_logic:bond_entropies' },
+      { name: 'λ legend', meaning: 'global term-weight scalars (λ_β / λ_arith / λ_if). These describe relative term weights only, NOT binder geometry.' },
       { name: 'Total energy', meaning: 'sum of all residual term energies' },
     ],
     math: [
       { tex: 'H_\\text{eval} = \\sum_r \\lambda_r \\sum_i H_r^{(i)}', caption: 'Sum of per-rule terms with weights λ.' },
+      { tex: 'S(\\rho_A) = -\\mathrm{Tr}\\, \\rho_A \\log \\rho_A', caption: 'Bond entropy = real entanglement across the cut; non-zero where a binder is live.' },
     ],
-    watch: [{ label: 'Live relaxation is currently a fixture — see EXTENSIONS.md' }],
+    watch: [
+      { label: 'Term node opacity drops as residual energy decays (relaxation)' },
+      { label: 'Binder bond entropy spikes mark live binders — the §1.1 invariant' },
+    ],
     references: [{ label: 'Architecture: logic section', href: '../../QFT_PCN_ARCHITECTURE.md' }],
   },
 };

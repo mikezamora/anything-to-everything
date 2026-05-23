@@ -1,14 +1,24 @@
 /**
- * Logic panel — a D3 schematic of the logic encoder: the `n_sites` MPS site
- * chain along the bottom, the AST/rule terms drawn above it, and
- * binder-entanglement arcs joining sites whose opacity tracks the encoder's
- * lambda weights (beta / arith / if).
+ * Logic panel — honest rendering of the EvalHamiltonian (§8 / §10.1).
  *
- * When `snapshot_logic` supplies a real `terms` list (one `{rule_id, site,
- * arity}` per `EvalTerm`), each term is drawn as a node anchored at its
- * `site` along the chain, labelled by `rule_id`, with an arity-wide arc.
- * When `terms` is empty/absent the panel falls back to a schematic balanced
- * binary tree built from `term_count`.
+ * Layout:
+ *   - Site chain along the bottom.
+ *   - One node per EvalTerm anchored at its `site`, colour-coded by rule
+ *     family, and coloured *intensity* scaled by per-term residual energy
+ *     (relaxation progress). Arity is shown as a thin connector to the
+ *     reach site.
+ *   - The real "binder-entanglement" signal §1.1 demands is rendered as
+ *     a separate inline-SVG per-bond entropy curve (`bond_entropies`).
+ *     This reads from the logic-encoded MPS state directly, so it ACTUALLY
+ *     measures the variable-binding bonds the architecture's soul invariant
+ *     describes. The λ_β / λ_arith / λ_if scalars are kept as a small
+ *     legend badge (they describe term weights, not binder geometry).
+ *
+ * What was removed in deviation D-4:
+ *   The previous panel drew evenly spaced "binder-entanglement arcs" whose
+ *   opacity was a function of the three global λ weights. Those arcs had
+ *   no relationship to any binder pair, use→declaration path, or
+ *   entanglement entropy. They are gone.
  *
  * Reads `frame.layer_states.logic` (shape: `snapshot_logic`).
  */
@@ -34,6 +44,10 @@ interface LogicState {
   lambda_if?: number | null;
   residuals?: number[] | null;
   total_energy?: number | null;
+  /** Per-bond von Neumann entropy on the logic-encoded MPS state — the
+   * REAL binder-entanglement signal per §1.1 / §8 / §10.1. One float (or
+   * null) per internal bond. */
+  bond_entropies?: Array<number | null> | null;
 }
 
 // Stable colour per rule family, so the same rule reads the same everywhere.
@@ -62,63 +76,46 @@ function LogicDiagram({ st }: { st: LogicState }) {
     const xOf = (i: number) =>
       mx + (i / Math.max(1, nSites - 1)) * (width - 2 * mx);
 
-    // --- binder-entanglement arcs over the site chain --------------------
-    const lams = [
-      { name: 'β', v: st.lambda_beta ?? 0, color: '#5fd0c8' },
-      { name: 'arith', v: st.lambda_arith ?? 0, color: '#d0a05f' },
-      { name: 'if', v: st.lambda_if ?? 0, color: '#a05fd0' },
-    ];
-    const maxLam = Math.max(1e-6, ...lams.map((l) => Math.abs(l.v)));
-    lams.forEach((lam, k) => {
-      // span pairs of sites; opacity ~ relative lambda weight.
-      const span = k + 1;
-      for (let i = 0; i + span < nSites; i += span + 1) {
-        const x1 = xOf(i);
-        const x2 = xOf(i + span);
-        const lift = 20 + span * 18;
-        svg
-          .append('path')
-          .attr(
-            'd',
-            `M${x1},${siteY} Q${(x1 + x2) / 2},${siteY - lift} ${x2},${siteY}`,
-          )
-          .attr('fill', 'none')
-          .attr('stroke', lam.color)
-          .attr('stroke-width', 2)
-          .attr('opacity', 0.15 + 0.7 * (Math.abs(lam.v) / maxLam));
-      }
-    });
-
     const terms = (st.terms ?? []).filter(
       (t) => t && Number.isFinite(t.site) && t.site >= 0 && t.site < nSites,
     );
+    const residuals = st.residuals ?? null;
+    // Normalise residuals into [0, 1] for intensity colouring; 0 ⇒ pale,
+    // 1 ⇒ saturated, so a relaxed term reads as "satisfied" and a high-
+    // residual term reads as "still contributing energy".
+    let maxR = 0;
+    if (residuals) for (const r of residuals) if (Math.abs(r) > maxR) maxR = Math.abs(r);
+    const residualOf = (i: number): number => {
+      if (!residuals || residuals[i] == null || maxR === 0) return 0.5;
+      return Math.min(1, Math.abs(residuals[i]) / maxR);
+    };
+
     const topY = 24;
-    const astBottom = siteY - 90;
+    const astBottom = siteY - 60;
 
     if (terms.length > 0) {
-      // --- real AST/rule terms: one node per term, anchored at its site --
-      // Stack terms that share a site so labels do not collide.
       const perSite = new Map<number, number>();
-      terms.forEach((t) => {
+      terms.forEach((t, idx) => {
         const slot = perSite.get(t.site) ?? 0;
         perSite.set(t.site, slot + 1);
         const x = xOf(t.site);
         const y = astBottom - slot * 30;
         const color = ruleColor(t.rule_id);
+        const intensity = residualOf(idx);
 
-        // arity arc: spans `site .. site + arity - 1` along the chain.
+        // Arity reach indicator: a thin chord to `site + arity - 1`.
         const reach = Math.min(nSites - 1, t.site + Math.max(1, t.arity) - 1);
         const xr = xOf(reach);
         svg
           .append('path')
           .attr(
             'd',
-            `M${x},${y} Q${(x + xr) / 2},${y - 24} ${xr},${siteY}`,
+            `M${x},${y} Q${(x + xr) / 2},${y - 18} ${xr},${siteY}`,
           )
           .attr('fill', 'none')
           .attr('stroke', color)
-          .attr('stroke-width', 1.5)
-          .attr('opacity', 0.5);
+          .attr('stroke-width', 1)
+          .attr('opacity', 0.25);
         // connector down to the term's anchor site.
         svg
           .append('line')
@@ -130,15 +127,29 @@ function LogicDiagram({ st }: { st: LogicState }) {
           .attr('stroke-width', 1)
           .attr('opacity', 0.35);
 
+        // Outer ring = rule colour; inner fill intensity = residual energy.
         svg
           .append('circle')
           .attr('cx', x)
           .attr('cy', y)
-          .attr('r', 7)
+          .attr('r', 8)
+          .attr('fill', 'none')
+          .attr('stroke', color)
+          .attr('stroke-width', 1.5);
+        svg
+          .append('circle')
+          .attr('cx', x)
+          .attr('cy', y)
+          .attr('r', 6)
           .attr('fill', color)
-          .attr('stroke', '#0b0e14')
+          .attr('opacity', 0.2 + 0.8 * intensity)
           .append('title')
-          .text(`${t.rule_id} @ site ${t.site} (arity ${t.arity})`);
+          .text(
+            `${t.rule_id} @ site ${t.site} (arity ${t.arity})` +
+              (residuals && residuals[idx] != null
+                ? ` · residual ${residuals[idx].toExponential(2)}`
+                : ''),
+          );
         svg
           .append('text')
           .attr('x', x + 11)
@@ -208,7 +219,12 @@ function LogicDiagram({ st }: { st: LogicState }) {
         .text(i);
     }
 
-    // legend
+    // λ legend — small badge (term weights, NOT binder geometry).
+    const lams = [
+      { name: 'β', v: st.lambda_beta ?? 0, color: '#5fd0c8' },
+      { name: 'arith', v: st.lambda_arith ?? 0, color: '#d0a05f' },
+      { name: 'if', v: st.lambda_if ?? 0, color: '#a05fd0' },
+    ];
     lams.forEach((lam, k) => {
       svg
         .append('text')
@@ -228,6 +244,44 @@ function LogicDiagram({ st }: { st: LogicState }) {
   );
 }
 
+/** Real per-bond von Neumann entropy on the logic-encoded MPS state.
+ * §1.1 / §8: variable binding is realized as bond entanglement on the
+ * use→declaration path, so this chart is the panel's load-bearing display
+ * of the binder-as-entanglement invariant. */
+function BondEntropyChart({ entropies }: { entropies: Array<number | null> }) {
+  const vals = entropies.map((v) => (v == null ? 0 : v));
+  if (vals.length === 0) return null;
+  const W = 240;
+  const H = 60;
+  const pad = 6;
+  const maxV = Math.max(1e-9, ...vals);
+  const n = vals.length;
+  const xAt = (i: number) =>
+    pad + (n === 1 ? (W - 2 * pad) / 2 : (i / (n - 1)) * (W - 2 * pad));
+  const yAt = (v: number) => H - pad - (v / maxV) * (H - 2 * pad);
+  const d = vals
+    .map((v, i) =>
+      `${i === 0 ? 'M' : 'L'} ${xAt(i).toFixed(2)} ${yAt(v).toFixed(2)}`,
+    )
+    .join(' ');
+  return (
+    <svg
+      data-testid="logic-bond-entropy"
+      width={W}
+      height={H}
+      viewBox={`0 0 ${W} ${H}`}
+      role="img"
+      aria-label="binder bond entropy per cut"
+      style={{ display: 'block' }}
+    >
+      <path d={d} fill="none" stroke="#5fd0c8" strokeWidth={1.5} />
+      <text x={pad} y={10} fill="#7f8bb0" fontSize={9}>
+        binder bond S(cut) — real entanglement on logic MPS
+      </text>
+    </svg>
+  );
+}
+
 export function LogicPanel({
   frame,
   baselineFrame: _baselineFrame,
@@ -239,10 +293,11 @@ export function LogicPanel({
   const hasData = (st.n_sites ?? 0) > 0;
   const nTerms = st.terms?.length ?? 0;
   const energy = st.total_energy;
+  const bondEntropies = st.bond_entropies ?? null;
 
   return (
     <PanelShell
-      title="Logic — AST over site chain + binder arcs"
+      title="Logic — terms over site chain + binder bond entropy"
       step={frame.step}
       meta={
         hasData
@@ -258,7 +313,24 @@ export function LogicPanel({
       hasData={hasData}
       emptyMessage="No logic substrate active — start a run with the 'logic' layer."
     >
-      {hasData && <LogicDiagram st={st} />}
+      {hasData && (
+        <div
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            height: '100%',
+          }}
+        >
+          <div style={{ flex: '1 1 auto', minHeight: 0 }}>
+            <LogicDiagram st={st} />
+          </div>
+          {bondEntropies && bondEntropies.length > 0 && (
+            <div style={{ flex: '0 0 auto', padding: '4px 8px' }}>
+              <BondEntropyChart entropies={bondEntropies} />
+            </div>
+          )}
+        </div>
+      )}
     </PanelShell>
   );
 }

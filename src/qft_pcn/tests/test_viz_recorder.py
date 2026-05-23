@@ -315,9 +315,11 @@ def test_snapshot_logic_contents():
         assert isinstance(t["rule_id"], str) and t["rule_id"]
         assert isinstance(t["site"], int) and 0 <= t["site"] < snap["n_sites"]
         assert isinstance(t["arity"], int) and t["arity"] == 2
-    # When `state` is omitted, residuals / total_energy come back None.
+    # When `state` is omitted, residuals / total_energy / bond_entropies
+    # come back None.
     assert snap["residuals"] is None
     assert snap["total_energy"] is None
+    assert snap["bond_entropies"] is None
 
 
 def test_snapshot_logic_with_state_emits_residuals():
@@ -338,3 +340,11 @@ def test_snapshot_logic_with_state_emits_residuals():
     assert isinstance(snap["total_energy"], float)
     # total_energy should match sum of residuals.
     assert abs(snap["total_energy"] - sum(snap["residuals"])) < 1e-9
+    # bond_entropies: one float (or None) per internal bond on the logic
+    # MPS, surfaced so the panel can render the *real* binder-entanglement
+    # signal §1.1 demands instead of the prior decorative arcs.
+    assert snap["bond_entropies"] is not None
+    assert isinstance(snap["bond_entropies"], list)
+    assert len(snap["bond_entropies"]) == N - 1
+    for s in snap["bond_entropies"]:
+        assert s is None or isinstance(s, float)

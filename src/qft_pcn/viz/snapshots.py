@@ -374,6 +374,14 @@ def snapshot_logic(enc: Any, state: Any = None) -> dict:
 
     residuals: list[float] | None = None
     total_energy: float | None = None
+    # Per-bond entanglement entropy on the logic-encoded MPS state. This is
+    # the *real* binder-entanglement signal per §1.1 / §8 / §10.1: a binder's
+    # use→declaration path is realized as bond entropy along that path. The
+    # previous panel rendered evenly-spaced arcs whose opacity was a function
+    # of three global λ scalars; those arcs had no relationship to any
+    # binder pair (see deviation D-4). Bond entropies, by contrast, ARE the
+    # observable consequence of binding-as-entanglement.
+    bond_entropies: list[float | None] | None = None
     if state is not None:
         try:
             res = enc.residuals(state)
@@ -382,6 +390,13 @@ def snapshot_logic(enc: Any, state: Any = None) -> dict:
         except (AttributeError, KeyError, ValueError, TypeError):
             residuals = None
             total_energy = None
+        n_state = _safe(lambda: int(state.N))
+        if n_state:
+            bond_entropies = []
+            for c in range(n_state - 1):
+                bond_entropies.append(
+                    _safe(lambda c=c: float(state.entanglement_entropy(c)))
+                )
 
     return {
         "n_sites": _safe(lambda: int(enc.N)),
@@ -392,4 +407,5 @@ def snapshot_logic(enc: Any, state: Any = None) -> dict:
         "lambda_if": _safe(lambda: float(enc.lambda_if)),
         "residuals": residuals,
         "total_energy": total_energy,
+        "bond_entropies": bond_entropies,
     }

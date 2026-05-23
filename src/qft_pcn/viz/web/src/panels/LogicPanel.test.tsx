@@ -42,3 +42,45 @@ it('renders terms and total_energy when fed a live frame', () => {
   // header should show the ⟨H⟩ readout when total_energy is present.
   expect(screen.getByText(/⟨H⟩/)).toBeInTheDocument();
 });
+
+it('renders the real per-bond entropy chart when bond_entropies is supplied (D-4)', () => {
+  // bond_entropies is the load-bearing §1.1 readout: binder = entanglement.
+  // The chart MUST be rendered when this field is present so a viewer can
+  // verify the soul invariant rather than the previous decorative arcs.
+  const frame = {
+    step: 1,
+    layer_states: {
+      logic: {
+        n_sites: 4,
+        term_count: 6,
+        terms: [{ rule_id: 'R-Beta', site: 0, arity: 2 }],
+        bond_entropies: [0.1, 0.4, 0.2],
+        total_energy: 0.01,
+      },
+    },
+  } as any;
+  const { container } = render(<LogicPanel frame={frame} />);
+  expect(
+    container.querySelector('[data-testid="logic-bond-entropy"]'),
+  ).toBeTruthy();
+});
+
+it('does NOT render the bond-entropy chart when bond_entropies is absent (no state attached)', () => {
+  // The chart only makes sense when a real MPS state is available; in
+  // recordings without a state, the snapshot emits bond_entropies = null
+  // and the chart MUST be omitted (no faux data).
+  const frame = {
+    step: 1,
+    layer_states: {
+      logic: {
+        n_sites: 4,
+        term_count: 6,
+        terms: [{ rule_id: 'R-Beta', site: 0, arity: 2 }],
+      },
+    },
+  } as any;
+  const { container } = render(<LogicPanel frame={frame} />);
+  expect(
+    container.querySelector('[data-testid="logic-bond-entropy"]'),
+  ).toBeNull();
+});
