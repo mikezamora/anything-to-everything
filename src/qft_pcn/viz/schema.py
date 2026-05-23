@@ -24,6 +24,8 @@ LAYER_KEYS = (
     "mera",
     "vqc",
     "logic",
+    "mera_relax",
+    "bridge",
 )
 
 

@@ -177,6 +177,55 @@ def _build_logic(spec: RunSpec):
     return H, state, chi_max
 
 
+def _build_mera_relax(spec: RunSpec):
+    """Build a MERA-encoded AST + its evaluation Hamiltonian for §10.10 demo.
+
+    Honours `spec.params["mera_relax"]` keys: `expr`
+    (default `"forall x:Nat. Eq (x + Zero) x"`), `eps`, `dt`, `chi_layer`,
+    `n_nodes_max`. Returns ``(H, state, meta, chi_layer, dt)``.
+
+    The default `expr` is the canonical induction-theorem proposition; its
+    encoder-computed `meta.forall_protected_leaves` is the set held bitwise
+    stable by `mera_trotter_step(..., frozen_leaves=...)`, visualising the
+    §1.1 invariant directly.
+    """
+    from ..logic.ast import parse
+    from ..logic.mera_encoder import encode_mera
+    from ..logic.mera_evaluation_hamiltonian import MeraEvalHamiltonian
+    p = dict(spec.params.get("mera_relax") or {})
+    expr = str(p.get("expr", "forall x:Nat. Eq (x + Zero) x"))
+    dt = float(p.get("dt", 0.05))
+    chi_layer = int(p.get("chi_layer", 16))
+    n_nodes_max = int(p.get("n_nodes_max", 32))
+    state, meta = encode_mera(parse(expr), n_nodes_max=n_nodes_max,
+                              chi_layer=chi_layer)
+    H = MeraEvalHamiltonian(meta=meta)
+    return H, state, meta, chi_layer, dt
+
+
+def _build_bridge_problem(spec: RunSpec):
+    """Build a bridge `RunResult` from `spec.params["bridge"]["problem"]`.
+
+    The bridge runtime is a one-shot resolver (validate -> compile -> evolve
+    -> measure); per-frame stepping does not apply. We run the problem once
+    at build time and snapshot the same `RunResult` every frame so the layer
+    still streams content. If `problem` is missing a small canned example
+    (single-field, two sites, occupation observable) is used so the preset
+    works out of the box.
+    """
+    from ..bridge.runtime import run_problem
+    p = dict(spec.params.get("bridge") or {})
+    problem = p.get("problem") or {
+        "fields": [{"name": "x", "cutoff": 4}],
+        "sites": 2,
+        "constraints": [],
+        "boundary": {"0": {"x": 2}},
+        "observables": [{"site": 0, "field": "x", "op": "n"}],
+        "search": {"method": "imag_time", "steps": 20, "chi_max": 4},
+    }
+    return run_problem(problem)
+
+
 def _build_multifield(spec: RunSpec) -> MultiFieldNetwork:
     """Build a two-field `MultiFieldNetwork` on a shared manifold.
 
@@ -225,12 +274,14 @@ def run_simulation(
     want_mera = "mera" in requested
     want_logic = "logic" in requested
     want_vqc = "vqc" in requested
+    want_mera_relax = "mera_relax" in requested
+    want_bridge = "bridge" in requested
 
     # Fall back to the manifold substrate if nothing recognised was asked for,
     # so a stream always yields content rather than silently producing zero
     # frames.
     if not (want_network or want_multifield or want_qpcn or want_mera
-            or want_logic or want_vqc):
+            or want_logic or want_vqc or want_mera_relax or want_bridge):
         want_network = True
 
     net = _build_network(spec) if want_network else None
@@ -242,6 +293,13 @@ def run_simulation(
     if want_logic:
         logic_H, logic_state, logic_chi = _build_logic(spec)
     vqc = _build_vqc(spec) if want_vqc else None
+    mera_relax_H = mera_relax_state = mera_relax_meta = None
+    mera_relax_chi = 16
+    mera_relax_dt = 0.05
+    if want_mera_relax:
+        (mera_relax_H, mera_relax_state, mera_relax_meta,
+         mera_relax_chi, mera_relax_dt) = _build_mera_relax(spec)
+    bridge_result = _build_bridge_problem(spec) if want_bridge else None
     vqc_x = vqc_target = None
     vqc_lr = 0.2
     if vqc is not None:
@@ -344,5 +402,19 @@ def run_simulation(
                                   imaginary=True, chi_max=logic_chi)
             logic_state.normalize()
             snaps["logic"] = snapshots.snapshot_logic(logic_H, logic_state)
+
+        if mera_relax_H is not None and mera_relax_state is not None:
+            from ..logic.mera_evolution_logic import mera_trotter_step
+            mera_relax_state = mera_trotter_step(
+                mera_relax_state, mera_relax_H, mera_relax_dt,
+                imaginary=True, chi_layer=mera_relax_chi,
+                frozen_leaves=mera_relax_meta.forall_protected_leaves,
+            )
+            snaps["mera_relax"] = snapshots.snapshot_mera_relax(
+                mera_relax_H, mera_relax_state, mera_relax_meta,
+            )
+
+        if bridge_result is not None:
+            snaps["bridge"] = snapshots.snapshot_run_result(bridge_result)
 
         yield recorder.capture(**snaps)

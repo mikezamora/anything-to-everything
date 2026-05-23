@@ -172,6 +172,39 @@ PRESETS: list[Preset] = [
         spec_overrides={"steps": 30, "seed": 0,
                         "params": {"logic": {"N": 6, "chi_max": 8}}},
     ),
+    # ---- mera_relax (§10.10 induction-theorem demo) -----------------------
+    Preset(
+        id="mera_relax.forall-add-zero",
+        layer="mera_relax",
+        label="∀x:Nat. Eq (x + 0) x  — MERA imag-time relax",
+        description="The §10.10 induction-theorem demo. Forall-protected "
+                    "leaves stay bitwise stable; residuals on R-AddZero + "
+                    "R-Eq-Refl decay to zero.",
+        spec_overrides={"steps": 30, "seed": 0,
+                        "params": {"mera_relax": {
+                            "expr": "forall x:Nat. Eq (x + Zero) x",
+                            "eps": 1e-3, "dt": 0.05,
+                            "chi_layer": 16, "n_nodes_max": 32}}},
+    ),
+    # ---- bridge -----------------------------------------------------------
+    Preset(
+        id="bridge.physics-relax",
+        layer="bridge",
+        label="Bridge — site-0 occupation = 2 (physics DSL)",
+        description="Run a small physics-DSL problem through the bridge "
+                    "runtime; inspect the resolved MPS, Hamiltonian and "
+                    "convergence as a single RunResult.",
+        spec_overrides={"steps": 5, "seed": 0,
+                        "params": {"bridge": {"problem": {
+                            "fields": [{"name": "x", "cutoff": 4}],
+                            "sites": 2,
+                            "constraints": [],
+                            "boundary": {"0": {"x": 2}},
+                            "observables": [
+                                {"site": 0, "field": "x", "op": "n"}],
+                            "search": {"method": "imag_time",
+                                       "steps": 20, "chi_max": 4}}}}},
+    ),
     # ---- mera -------------------------------------------------------------
     Preset(
         id="mera.vacuum-small",
@@ -270,6 +303,44 @@ PARAM_SCHEMA: dict[str, dict] = {
             "chi_max": {"type": "integer", "default": 8,
                         "minimum": 1, "maximum": 16,
                         "description": "MPS bond-dimension cap for relaxation."},
+            "expr": {"type": "string",
+                     "default": "2 + 3",
+                     "description": "Lambda-source program to encode."},
+        },
+    },
+    "mera_relax": {
+        "type": "object",
+        "properties": {
+            "expr": {"type": "string",
+                     "default": "forall x:Nat. Eq (x + Zero) x",
+                     "description":
+                         "Lambda-source program to encode into the MERA."},
+            "eps": {"type": "number", "default": 1e-3,
+                    "minimum": 0.0, "maximum": 1.0,
+                    "description":
+                        "Residual threshold for relaxation convergence."},
+            "dt": {"type": "number", "default": 0.05,
+                   "minimum": 1e-4, "maximum": 1.0,
+                   "description": "Imag-time Trotter step size."},
+            "chi_layer": {"type": "integer", "default": 16,
+                          "minimum": 1, "maximum": 32,
+                          "description": "Per-layer MERA bond dimension."},
+            "n_nodes_max": {"type": "integer", "default": 32,
+                            "minimum": 4, "maximum": 128,
+                            "description":
+                                "Maximum encoded AST node budget."},
+        },
+    },
+    "bridge": {
+        "type": "object",
+        "properties": {
+            "problem": {
+                "type": "object",
+                "description":
+                    "A physics-DSL problem dict (fields/sites/boundary/"
+                    "observables/search). Defaults to a small canned "
+                    "single-field two-site occupation example.",
+            },
         },
     },
 }

@@ -14,6 +14,8 @@ import { QpcnPanel } from './QpcnPanel';
 import { MeraPanel } from './MeraPanel';
 import { VqcPanel } from './VqcPanel';
 import { LogicPanel } from './LogicPanel';
+import { MeraRelaxPanel } from './MeraRelaxPanel';
+import { BridgePanel } from './BridgePanel';
 
 export type PanelComponent = ComponentType<{ frame: Frame; baselineFrame?: Frame }>;
 
@@ -26,6 +28,8 @@ export const PANELS: Record<LayerKey, PanelComponent> = {
   mera: MeraPanel,
   vqc: VqcPanel,
   logic: LogicPanel,
+  mera_relax: MeraRelaxPanel,
+  bridge: BridgePanel,
 };
 
 /** Look up a panel by layer name; `undefined` for an unknown layer. */

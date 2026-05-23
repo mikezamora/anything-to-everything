@@ -7,7 +7,7 @@ export interface Frame {
 
 export const LAYER_KEYS = [
   'manifold', 'multifield', 'mps', 'hamiltonian',
-  'qpcn', 'mera', 'vqc', 'logic',
+  'qpcn', 'mera', 'vqc', 'logic', 'mera_relax', 'bridge',
 ] as const;
 export type LayerKey = (typeof LAYER_KEYS)[number];
 

@@ -180,6 +180,122 @@ export const EXPLAINERS: Record<string, ExplainerSpec> = {
     references: [{ label: 'Architecture §2.4', href: '../../QFT_PCN_ARCHITECTURE.md' }],
   },
 
+  mera_relax: {
+    title: 'MERA imag-time relax — §10.10 induction-theorem demo',
+    oneLine:
+      'Live ∀-protected MERA relaxation: residuals decay while bound leaves stay frozen.',
+    what: [
+      'Encode an extended-calculus AST (including Forall / Eq / Nat / Cons / Nil) into a MERA via `encode_mera`. The encoder annotates every leaf used as a bound-variable witness as ∀-protected — those leaves form `meta.forall_protected_leaves`.',
+      'Imaginary-time evolution under `MeraEvalHamiltonian` (`mera_trotter_step(..., frozen_leaves=meta.forall_protected_leaves)`) drops any gate whose target intersects the protected set, so the ∀-bound leaves stay bitwise stable across the whole anneal. Residuals on R-AddZero + R-Eq-Refl decay toward zero, witnessing the induction theorem ∀x:Nat. x + 0 = x.',
+    ],
+    elements: [
+      {
+        name: 'total energy',
+        meaning:
+          '⟨H_eval⟩ summed across all 360 R-rule terms; should decay monotonically under imag-time relaxation (the relaxation invariant).',
+        code: 'snapshot_mera_relax:total_energy',
+      },
+      {
+        name: 'per-term residuals',
+        meaning:
+          'one row per (rule_id, site) with the local residual energy; rows are sorted hot-to-cold so active rules float to the top.',
+        code: 'snapshot_mera_relax:residuals',
+      },
+      {
+        name: 'ast_text (round-trip)',
+        meaning:
+          'pretty-printed AST decoded from the live MERA leaves each step; for the default preset the text contains "forall" throughout the run since the ∀-protected leaves are clamped.',
+        code: 'mera_decoder.decode_mera',
+      },
+      {
+        name: '∀-protected leaves',
+        meaning:
+          'leaf indices held bitwise stable by the trotter step (`frozen_leaves=`); the load-bearing §1.1 / §10.10 invariant. Must stay non-empty for any `forall …` proposition.',
+        code: 'mera_encoder:forall_protected_leaves',
+      },
+    ],
+    math: [
+      {
+        tex: 'H_\\text{eval} = \\sum_r \\lambda_r \\sum_i H_r^{(i)}',
+        caption: 'Per-rule term sum, ground state = a well-typed program.',
+      },
+      {
+        tex: '|\\psi(\\tau+d\\tau)\\rangle = e^{-H\\,d\\tau}\\,|\\psi(\\tau)\\rangle\\,\\Big|_{\\text{leaves} \\notin \\text{frozen}}',
+        caption:
+          'Imag-time evolution restricted to non-frozen leaves: gates touching ∀-protected leaves are dropped at dispatch.',
+      },
+    ],
+    watch: [
+      {
+        label:
+          'Total energy decreases monotonically under imag-time (the relaxation invariant)',
+        readout: 'total_energy',
+      },
+      {
+        label:
+          'The ∀-protected leaf set stays non-empty and bitwise stable across the whole run',
+      },
+      {
+        label:
+          'AST text round-trips and continues to contain "forall" — the binder survives every Trotter step',
+      },
+    ],
+    references: [
+      { label: 'Architecture §10.10', href: '../../QFT_PCN_ARCHITECTURE.md' },
+    ],
+  },
+
+  bridge: {
+    title: 'Bridge — RunResult inspector',
+    oneLine:
+      'One-shot physics-DSL resolver; surfaces the resolved MPS, Hamiltonian and convergence.',
+    what: [
+      'The bridge runtime (`run_problem(dsl)`) validates a physics-DSL problem, compiles it into a Hamiltonian + initial MPS state, evolves it under imag-time with clamps, and measures observables — a one-shot resolver.',
+      'This panel snapshots the resulting `RunResult` every frame: trotter step count, final energy, convergence flag, the ground-state MPS bond profile, and the composed Hamiltonian summary. `solved_ast` stays None until a MERA-based runner populates it.',
+    ],
+    elements: [
+      {
+        name: 'trotter steps',
+        meaning: 'imag-time step count actually run by the resolver.',
+        code: 'snapshot_run_result:trotter_steps',
+      },
+      {
+        name: '⟨H⟩',
+        meaning:
+          'final variational energy under the composed Hamiltonian (after evolution).',
+        code: 'snapshot_run_result:energy',
+      },
+      {
+        name: 'ground-state MPS miniature',
+        meaning:
+          'compact view of `result.ground_state`: N, d_local, χ_max, and the per-bond χ profile.',
+        code: 'snapshot_mps(result.ground_state)',
+      },
+      {
+        name: 'Hamiltonian miniature',
+        meaning:
+          'compact view of `result.hamiltonian`: N, d_local, species list.',
+        code: 'snapshot_hamiltonian(result.hamiltonian)',
+      },
+    ],
+    math: [
+      {
+        tex: '|\\psi_\\infty\\rangle = \\lim_{\\tau\\to\\infty} \\frac{e^{-H\\tau}|\\psi_0\\rangle}{\\|e^{-H\\tau}|\\psi_0\\rangle\\|}',
+        caption: 'Imag-time relaxation toward the resolver\'s ground state.',
+      },
+    ],
+    watch: [
+      { label: 'converged = yes once the energy-per-step settles within tol' },
+      {
+        label:
+          'solved_ast is None on this MPS path — a MERA-based runner is required to populate it',
+      },
+    ],
+    references: [
+      { label: 'Bridge spec §5', href: '../../../bridge/' },
+    ],
+  },
+
   logic: {
     title: 'Logic — Evaluation Hamiltonian',
     oneLine: 'Rule terms encoded as Hamiltonian costs; relaxation = reduction.',

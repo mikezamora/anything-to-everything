@@ -409,3 +409,189 @@ def snapshot_logic(enc: Any, state: Any = None) -> dict:
         "total_energy": total_energy,
         "bond_entropies": bond_entropies,
     }
+
+
+# ---- MERA imag-time relaxation (§10.10 induction-theorem demo) ---------------
+
+
+def _pretty_extended_ty(ty: Any) -> str:
+    """Renderer for the extended type vocabulary (TNat / TList / TEq /
+    TProp) that ``logic.ast._pretty_ty`` does not yet handle."""
+    from ..logic import ast as _ast
+    if isinstance(ty, _ast.TInt):
+        return "Int"
+    if isinstance(ty, _ast.TBool):
+        return "Bool"
+    if isinstance(ty, _ast.TNat):
+        return "Nat"
+    if isinstance(ty, _ast.TArrow):
+        return f"{_pretty_extended_ty(ty.src)} -> {_pretty_extended_ty(ty.dst)}"
+    if isinstance(ty, _ast.TList):
+        return f"List ({_pretty_extended_ty(ty.elem)})"
+    if isinstance(ty, _ast.TEq):
+        return "Eq"
+    if isinstance(ty, _ast.TProp):
+        return "Prop"
+    return f"<{type(ty).__name__}>"
+
+
+def _pretty_extended_ast(node: Any) -> str:
+    """Renderer for the extended-calculus AST including the new nodes
+    (Forall / Eq / Nat / Zero / Succ / NatLit / Cons / Nil) that the
+    surface parser accepts but `logic.ast.pretty` does not yet handle.
+
+    Defensive: any unrecognised sub-node renders as ``<ClassName>`` rather
+    than raising, so a decode artefact never crashes the snapshot pipe.
+    """
+    from ..logic import ast as _ast
+    p = _pretty_extended_ast
+    if isinstance(node, _ast.Var):
+        return node.name
+    if isinstance(node, _ast.IntLit):
+        return str(node.val)
+    if isinstance(node, _ast.BoolLit):
+        return "true" if node.val else "false"
+    if isinstance(node, _ast.Zero):
+        return "Zero"
+    if isinstance(node, _ast.Succ):
+        return f"Succ ({p(node.arg)})"
+    if isinstance(node, _ast.NatLit):
+        return f"NatLit {node.val}"
+    if isinstance(node, _ast.Nil):
+        return "Nil"
+    if isinstance(node, _ast.Cons):
+        return f"Cons ({p(node.head)}) ({p(node.tail)})"
+    if isinstance(node, _ast.Eq):
+        return f"Eq ({p(node.lhs)}) ({p(node.rhs)})"
+    if isinstance(node, _ast.Forall):
+        return (f"forall {node.param}:{_pretty_extended_ty(node.param_ty)}. "
+                f"{p(node.body)}")
+    if isinstance(node, _ast.Lam):
+        return (f"\\{node.param}:{_pretty_extended_ty(node.param_ty)}. "
+                f"{p(node.body)}")
+    if isinstance(node, _ast.App):
+        return f"({p(node.fn)}) ({p(node.arg)})"
+    if isinstance(node, _ast.If):
+        return f"if {p(node.cond)} then {p(node.then_b)} else {p(node.else_b)}"
+    if isinstance(node, _ast.Bin):
+        return f"({p(node.lhs)}) {node.op} ({p(node.rhs)})"
+    if isinstance(node, _ast.Fix):
+        return (f"fix {node.param}:{_pretty_extended_ty(node.param_ty)}. "
+                f"{p(node.body)}")
+    return f"<{type(node).__name__}>"
+
+
+def snapshot_mera_relax(H: Any, state: Any, meta: Any) -> dict:
+    """Snapshot a MERA imag-time relaxation step (§10.10 induction-theorem).
+
+    Emits per-term residuals (keyed by ``rule_id`` and ``site`` where
+    ``site = term.node``), the scalar ``total_energy``, the per-layer bond
+    dimensions, the leaf count, the indices of the Forall-protected leaves
+    (kept frozen by ``mera_trotter_step`` to enforce ∀-quantification —
+    the load-bearing §1.1 / §10.10 invariant), and an AST text round-trip
+    decoded from the live MERA leaves.
+
+    Defensive: missing/optional attributes yield ``None`` rather than
+    raising.
+    """
+    terms_list = _safe(lambda: list(H.terms)) or []
+
+    residuals: list[dict] | None = None
+    total_energy: float | None = _safe(lambda: float(H.total_energy(state)))
+    try:
+        res = H.residuals(state)
+        residuals = []
+        for t in terms_list:
+            key = (t.rule_id, t.node)
+            residuals.append({
+                "rule_id": str(t.rule_id),
+                "site": int(t.node),
+                "value": float(res[key]),
+            })
+    except (AttributeError, KeyError, ValueError, TypeError):
+        residuals = None
+
+    n_leaves = _safe(lambda: int(state.N))
+    layer_bond_dims = _safe(lambda: list(state.layer_dims))
+
+    forall_protected_leaves: list[int] = []
+    try:
+        s = meta.forall_protected_leaves or set()
+        forall_protected_leaves = sorted(int(i) for i in s)
+    except (AttributeError, TypeError):
+        forall_protected_leaves = []
+
+    ast_text: str | None = None
+    try:
+        from ..logic.mera_decoder import decode_mera
+        decoded = decode_mera(state, meta)
+        ast_text = _pretty_extended_ast(decoded.ast)
+    except Exception:
+        # decode_mera can raise DecodeError after a relaxation step has
+        # transiently driven a leaf out of its node's expected basis; the
+        # snapshot must NOT crash the simulation loop. Surface as None.
+        ast_text = None
+
+    return {
+        "total_energy": total_energy,
+        "residuals": residuals,
+        "n_leaves": n_leaves,
+        "layer_bond_dims": layer_bond_dims,
+        "forall_protected_leaves": forall_protected_leaves,
+        "ast_text": ast_text,
+        "step": _safe(lambda: int(state._step)),
+    }
+
+
+# ---- bridge RunResult --------------------------------------------------------
+
+
+def snapshot_run_result(result: Any) -> dict:
+    """Snapshot a bridge `RunResult`: MPS + Hamiltonian miniatures + scalars.
+
+    Surfaces the M2 composition-layer additions (`meta`, `ground_state`,
+    `solved_ast`, `hamiltonian`, `trotter_steps`) for live inspection.
+    Per-field accessors are defensive — a `None` substrate field yields
+    `None` in the snapshot rather than raising.
+    """
+    mps_snap: dict | None = None
+    try:
+        gs = getattr(result, "ground_state", None)
+        if gs is not None:
+            mps_snap = snapshot_mps(gs)
+    except (AttributeError, KeyError, ValueError, TypeError):
+        mps_snap = None
+
+    ham_snap: dict | None = None
+    try:
+        H = getattr(result, "hamiltonian", None)
+        if H is not None:
+            ham_snap = snapshot_hamiltonian(H)
+    except (AttributeError, KeyError, ValueError, TypeError):
+        ham_snap = None
+
+    solved_ast_text: str | None = None
+    try:
+        ast = getattr(result, "solved_ast", None)
+        if ast is not None:
+            solved_ast_text = _pretty_extended_ast(ast)
+    except (AttributeError, KeyError, ValueError, TypeError):
+        solved_ast_text = None
+
+    meta_n_leaves: int | None = None
+    try:
+        meta = getattr(result, "meta", None)
+        if meta is not None:
+            meta_n_leaves = int(getattr(meta, "n_nodes", 0)) or None
+    except (AttributeError, TypeError, ValueError):
+        meta_n_leaves = None
+
+    return {
+        "mps": mps_snap,
+        "hamiltonian": ham_snap,
+        "trotter_steps": _safe(lambda: int(result.trotter_steps)),
+        "energy": _safe(lambda: float(result.energy)),
+        "converged": _safe(lambda: bool(result.converged)),
+        "solved_ast_text": solved_ast_text,
+        "meta_n_leaves": meta_n_leaves,
+    }

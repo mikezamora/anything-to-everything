@@ -191,6 +191,52 @@ export const logicFrame: Frame = {
   },
 };
 
+// --- mera_relax -> snapshot_mera_relax --------------------------------------
+export const meraRelaxFrame: Frame = {
+  step: 3,
+  layer_states: {
+    mera_relax: {
+      total_energy: 0.0421,
+      residuals: [
+        { rule_id: 'R-AddZero', site: 4, value: 0.018 },
+        { rule_id: 'R-Eq-Refl', site: 0, value: 0.012 },
+        { rule_id: 'R-Beta', site: 7, value: 0.005 },
+        { rule_id: 'R-Arith', site: 2, value: 0.001 },
+      ],
+      n_leaves: 80,
+      layer_bond_dims: [16, 16, 8, 4],
+      forall_protected_leaves: [0, 5, 17, 25, 33, 41],
+      ast_text: 'forall x:Nat. Eq ((x) + (Zero)) (x)',
+      step: 3,
+    },
+  },
+};
+
+// --- bridge -> snapshot_run_result ------------------------------------------
+export const bridgeFrame: Frame = {
+  step: 1,
+  layer_states: {
+    bridge: {
+      trotter_steps: 20,
+      energy: -0.873,
+      converged: true,
+      solved_ast_text: null,
+      meta_n_leaves: null,
+      mps: {
+        bond_dims: [1, 4, 1],
+        entropies: [0.0, 0.31],
+        n_sites: 2,
+        d_local: 4,
+      },
+      hamiltonian: {
+        n_sites: 2,
+        d_local: 4,
+        species: ['x'],
+      },
+    },
+  },
+};
+
 /** All fixtures keyed by layer name — handy for the registry test. */
 export const fixtureFrames: Record<string, Frame> = {
   manifold: manifoldFrame,
@@ -201,6 +247,8 @@ export const fixtureFrames: Record<string, Frame> = {
   mera: meraFrame,
   vqc: vqcFrame,
   logic: logicFrame,
+  mera_relax: meraRelaxFrame,
+  bridge: bridgeFrame,
 };
 
 /** A Frame whose layer states are all empty — exercises empty-state paths. */
@@ -215,5 +263,7 @@ export const emptyFrame: Frame = {
     mera: {},
     vqc: {},
     logic: {},
+    mera_relax: {},
+    bridge: {},
   },
 };
