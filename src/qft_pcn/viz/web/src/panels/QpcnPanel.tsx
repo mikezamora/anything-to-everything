@@ -37,7 +37,13 @@ interface QpcnState {
   params?: Record<string, number | null> | null;
   bond_dims?: number[] | null;
   entropies?: Array<number | null> | null;
-  occupations?: number[] | null;
+  /** Real per-species particle occupations ⟨n_k⟩ (snapshot field
+   * `occupations_n`), keyed by species name. The previously rendered
+   * `occupations` field was the Frobenius norm of the MPS site tensor
+   * (canonical-form gauge), not ⟨n_k⟩; see deviation D-1. */
+  occupations_n?: Record<string, number[]> | null;
+  /** Canonical-form sanity diagnostic: ‖A[k]‖_F per MPS site. */
+  tensor_norms?: number[] | null;
   step?: number | null;
 }
 
@@ -81,7 +87,8 @@ export function QpcnPanel({
   const baseErrors = (bst.pred_errors ?? {}) as Record<string, number>;
   const hasBaseline = !!baselineFrame;
   const params = (st.params ?? {}) as Record<string, number>;
-  const occ = st.occupations ?? [];
+  const occN = (st.occupations_n ?? {}) as Record<string, number[]>;
+  const occSpecies = Object.keys(occN);
   const hasData =
     st.energy != null ||
     Object.keys(errors).length > 0 ||
@@ -110,25 +117,33 @@ export function QpcnPanel({
     [],
   );
 
+  // One grouped bar series per species, x = site index, y = ⟨n_k⟩.
+  // Honest physical occupation per §3.3.4 (was the MPS tensor Frobenius
+  // norm before the D-1 fix).
+  const occColors = ['#5f8fd0', '#5fd0c8', '#d0a05f', '#a05fd0', '#d05f8f'];
   const occData = useMemo<PlotData[]>(
-    () => [
-      {
-        x: occ.map((_, i) => i),
-        y: occ,
-        type: 'bar',
-        marker: { color: '#5f8fd0' },
-      },
-    ],
+    () =>
+      occSpecies.map((sp, i) => ({
+        x: occN[sp].map((_, k) => k),
+        y: occN[sp],
+        type: 'bar' as const,
+        name: sp,
+        marker: { color: occColors[i % occColors.length] },
+      })),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [occ.join('|')],
+    [occSpecies.join('|'), occSpecies.map((s) => occN[s].join(',')).join('|')],
   );
   const occLayout = useMemo<Partial<PlotLayout>>(
     () => ({
-      title: { text: 'Tensor norms (occupation)', font: { size: 11 } },
+      title: { text: '⟨n_k⟩ per site (per species)', font: { size: 11 } },
       xaxis: { title: { text: 'site' }, gridcolor: '#1c2230' },
-      yaxis: { gridcolor: '#1c2230' },
+      yaxis: { title: { text: '⟨n⟩' }, gridcolor: '#1c2230' },
+      barmode: 'group',
+      showlegend: occSpecies.length > 1,
+      legend: { font: { size: 9 } },
     }),
-    [],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [occSpecies.length],
   );
 
   const energyText =

@@ -111,11 +111,33 @@ def snapshot_qpcn(q: Any) -> dict:
                 for c in range(n_cuts - 1)
             ]
 
-    occupations = None
+    # `tensor_norms` is the Frobenius norm of each MPS site tensor —
+    # a property of the canonical-form / gauge, NOT a particle observable.
+    # Kept as an honest canonical-form sanity diagnostic.
+    tensor_norms = None
     if state is not None:
-        occupations = _safe(
+        tensor_norms = _safe(
             lambda: [float(np.real(np.linalg.norm(t))) for t in state.tensors]
         )
+
+    # `occupations_n` is the real particle occupation ⟨n_k⟩ per species
+    # per site, computed via state.local_expectation(site, H.n(species)).
+    # Shape: { species_name: [⟨n_0⟩, ⟨n_1⟩, ...] }. None if state/H absent.
+    occupations_n: dict[str, list[float]] | None = None
+    H_obj = _safe(lambda: q.H)
+    if state is not None and H_obj is not None:
+        try:
+            n_sites = int(state.N)
+            species_names = [s.name for s in H_obj.species]
+            occupations_n = {}
+            for s in species_names:
+                op = H_obj.n(s)
+                occupations_n[s] = [
+                    float(np.real(state.local_expectation(k, op)))
+                    for k in range(n_sites)
+                ]
+        except (AttributeError, KeyError, ValueError, TypeError):
+            occupations_n = None
 
     # learnable_params is a list[str] of parameter names; map each to its
     # current value on the Hamiltonian. A missing param yields None rather
@@ -134,7 +156,8 @@ def snapshot_qpcn(q: Any) -> dict:
         "params": params,
         "bond_dims": bond_dims,
         "entropies": entropies,
-        "occupations": occupations,
+        "occupations_n": occupations_n,
+        "tensor_norms": tensor_norms,
         "step": _safe(lambda: int(q._step)),
     }
 

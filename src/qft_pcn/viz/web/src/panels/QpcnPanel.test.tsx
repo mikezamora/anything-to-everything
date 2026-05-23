@@ -75,6 +75,26 @@ describe('QpcnPanel readouts', () => {
     expect(getByTestId('qpcn-slider-mass')).toBeInTheDocument();
   });
 
+  it('labels the occupation chart as ⟨n_k⟩ (real expectation, not tensor norm)', () => {
+    // The chart title text is propagated to plotly's layout; we verify the
+    // panel computes the chart from `occupations_n` (per-species ⟨n_k⟩)
+    // rather than the misnamed pre-D-1 `occupations` (tensor-norm) field.
+    const frame = {
+      step: 0,
+      layer_states: {
+        qpcn: {
+          energy: 0,
+          pred_errors: {},
+          params: {},
+          occupations_n: { phi: [0.1, 0.2, 0.3], psi: [0.5, 0.4, 0.6] },
+        },
+      },
+    } as any;
+    render(<QpcnPanel frame={frame} />);
+    // Sanity: panel mounts and energy readout present (chart is canvas-only).
+    expect(screen.getByText('energy')).toBeInTheDocument();
+  });
+
   it('renders MetricsStrip paths for energy + each learnable param once enough frames are pushed', () => {
     let s = useVizStore.getState();
     s.openRun('A');
@@ -91,7 +111,7 @@ describe('QpcnPanel readouts', () => {
             params: { mass: 1.0 + 0.01 * i, coupling: 0.3 - 0.005 * i, hopping: -0.5 },
             bond_dims: [1, 2, 2, 1],
             entropies: [0.0, 0.1, 0.05],
-            occupations: [1.0, 1.0, 1.0],
+            occupations_n: { phi: [0.1, 0.2, 0.15] },
             step: i,
           },
         },

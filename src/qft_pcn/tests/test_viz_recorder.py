@@ -121,7 +121,7 @@ def test_snapshot_qpcn_contents():
                      learnable_params=["phi.mass"])
     q = QPCN(cfg)
     snap = snapshot_qpcn(q)
-    for key in ("bond_dims", "entropies", "occupations",
+    for key in ("bond_dims", "entropies", "occupations_n", "tensor_norms",
                 "energy", "pred_errors", "params"):
         assert key in snap
     # params must map the learnable param name to its real Hamiltonian value.
@@ -129,7 +129,18 @@ def test_snapshot_qpcn_contents():
     assert isinstance(snap["params"]["phi.mass"], float)
     assert isinstance(snap["bond_dims"], list)
     assert isinstance(snap["entropies"], list) and len(snap["entropies"]) == 2
-    assert isinstance(snap["occupations"], list) and len(snap["occupations"]) == 3
+    # `occupations_n` is the real per-species ⟨n_k⟩ map, one list per site.
+    assert isinstance(snap["occupations_n"], dict)
+    assert set(snap["occupations_n"].keys()) == {"phi"}
+    assert len(snap["occupations_n"]["phi"]) == 3
+    # Vacuum (or near-vacuum) state has ⟨n_k⟩ ≈ 0 — NOT 1 as the old
+    # tensor-norm field returned. This is the load-bearing correctness
+    # distinction §3.3.4 requires.
+    for v in snap["occupations_n"]["phi"]:
+        assert isinstance(v, float)
+        assert abs(v) < 0.5  # small-noise initialization
+    # `tensor_norms` is the canonical-form sanity diagnostic (separate field).
+    assert isinstance(snap["tensor_norms"], list) and len(snap["tensor_norms"]) == 3
 
 
 def test_snapshot_qpcn_after_observe():

@@ -122,6 +122,7 @@ export const EXPLAINERS: Record<string, ExplainerSpec> = {
       { name: 'Energy', meaning: '⟨ψ|H|ψ⟩, the variational energy' },
       { name: 'Pred-errors table', meaning: 'per-observable (target, current, Δ)', code: 'qpcn.py:_last_errors' },
       { name: 'Learnable params', meaning: 'mass / kinetic / coupling values that descend' },
+      { name: '⟨n_k⟩ per site', meaning: 'real particle occupation per species per site (state.local_expectation(k, H.n(s)))', code: 'snapshot_qpcn:occupations_n' },
     ],
     math: [
       { tex: '|\\psi(\\tau+d\\tau)\\rangle = e^{-H\\, d\\tau} |\\psi(\\tau)\\rangle', caption: 'Imaginary-time relaxation.' },
