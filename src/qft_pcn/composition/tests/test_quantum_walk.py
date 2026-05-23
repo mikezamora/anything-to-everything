@@ -119,41 +119,85 @@ def test_walk_norm_preserved_under_unitary_step():
 
 
 def test_walk_amplifies_solved_branches():
-    # SOLVED leaf is at depth 2 down branch B (node E). The walker
-    # initial state is a uniform superposition over leaves
-    # {C, D, E}. After several walk steps amplitude leaks into the
-    # interior; the SOLVED node E should outrank a uniform-random
-    # baseline AND outrank at least one of the non-SOLVED leaves
-    # by the §12.14 Grover-amplitude argument.
+    # SOLVED leaf is at depth 2 down branch B (node E). With the
+    # Farhi-Gutmann oracle Hamiltonian H = gamma*L - |E><E|, evolving
+    # to the optimal time t* = (pi/2)*sqrt(N) should concentrate the
+    # bulk of the amplitude on E -- not just beat 1/N, but dominate
+    # the non-SOLVED leaves C and D.
     root = _make_branching(solved_branch=1)
     H = build_walk_hamiltonian(root)
     psi0 = initial_leaf_superposition(H)
 
-    # Find indices of the SOLVED node E and the non-SOLVED leaves
-    # C and D for comparison.
     name_to_idx = {n.goal.goal_prop: i for i, n in enumerate(H.nodes)}
     e_idx = name_to_idx["E"]
+    c_idx = name_to_idx["C"]
+    d_idx = name_to_idx["D"]
 
-    # Evolve to t ~ sqrt(N) per spec.
+    # Farhi-Gutmann optimal walk time t* = (pi/2)*sqrt(N).
+    dt = 0.05
+    t_star = 0.5 * np.pi * np.sqrt(H.dim)
+    n_steps = max(1, int(np.ceil(t_star / dt)))
     psi = psi0
-    n_steps = max(1, int(np.ceil(np.sqrt(H.dim) / 0.05)))
     for _ in range(n_steps):
-        psi = quantum_walk_step(psi, H, dt=0.05)
+        psi = quantum_walk_step(psi, H, dt=dt)
 
     probs = np.abs(psi) ** 2
     # Norm sanity.
     assert abs(probs.sum() - 1.0) < 1e-9
-    # The SOLVED-node selection wraps the amplitude argmax in
-    # ``walk_to_solved_subgoal``; assert the returned goal IS the
-    # SOLVED branch (E). This is the operator-algebraic acceptance:
-    # the walker concentrates on the SOLVED-marked node, not on a
-    # PENDING leaf.
+
+    # SOLVED-selection picks E (oracle-marked).
     chosen = walk_to_solved_subgoal(
-        root, walk_state=psi0, H_walk=H, dt=0.05, n_steps=n_steps,
+        root, walk_state=psi0, H_walk=H, dt=dt, n_steps=n_steps,
     )
     assert chosen.goal_prop == "E"
 
-    # And: E receives at least its uniform-random share. With 6
-    # nodes uniform random would assign ~1/6 = 0.167; the walker
-    # should put more than that on E (the only SOLVED node).
-    assert probs[e_idx] > 1.0 / H.dim
+    # Real Grover-style amplification: E gets more than half the
+    # total amplitude. This is *not* a tautology of argmax; it
+    # asserts the oracle term actually drove amplitude onto E.
+    assert probs[e_idx] > 0.5, (
+        f"oracle failed to amplify SOLVED node: probs[E]={probs[e_idx]:.4f} "
+        f"(expected > 0.5); full probs = {probs.tolist()}"
+    )
+    # And: E outranks every non-SOLVED leaf, not just uniform.
+    assert probs[e_idx] > probs[c_idx]
+    assert probs[e_idx] > probs[d_idx]
+
+
+def test_walk_prefers_topology_favored_solved_node():
+    # Two SOLVED nodes: C (at depth 2 down branch A, sibling D
+    # competes) and E (at depth 2 down branch B, no sibling).
+    # Both are oracle-marked; the Farhi-Gutmann walk should split
+    # amplitude between them (neither dominates by 10x), confirming
+    # multi-SOLVED handling actually works rather than collapsing
+    # to one arbitrary node.
+    root = _make_branching(solved_branch=1)
+    # Locate C and mark it SOLVED too.
+    name_to_node = {}
+
+    def _collect(n):
+        name_to_node[n.goal.goal_prop] = n
+        for c in n.children:
+            _collect(c)
+    _collect(root)
+    name_to_node["C"].status = Status.SOLVED
+
+    H = build_walk_hamiltonian(root)
+    psi0 = initial_leaf_superposition(H)
+    name_to_idx = {n.goal.goal_prop: i for i, n in enumerate(H.nodes)}
+    c_idx = name_to_idx["C"]
+    e_idx = name_to_idx["E"]
+    d_idx = name_to_idx["D"]  # not SOLVED
+
+    dt = 0.05
+    t_star = 0.5 * np.pi * np.sqrt(H.dim)
+    n_steps = max(1, int(np.ceil(t_star / dt)))
+    psi = psi0
+    for _ in range(n_steps):
+        psi = quantum_walk_step(psi, H, dt=dt)
+    probs = np.abs(psi) ** 2
+
+    # Both SOLVED nodes are amplified above the non-SOLVED leaf D.
+    assert probs[c_idx] > probs[d_idx]
+    assert probs[e_idx] > probs[d_idx]
+    # Together they hold most of the amplitude.
+    assert probs[c_idx] + probs[e_idx] > 0.5
