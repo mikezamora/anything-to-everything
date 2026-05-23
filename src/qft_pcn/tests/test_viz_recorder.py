@@ -221,15 +221,35 @@ def test_snapshot_multifield_contents():
 
 
 def test_snapshot_hamiltonian_contents():
-    cfg = HamiltonianConfig(species=[FieldSpecies(name="phi", cutoff=2)])
+    cfg = HamiltonianConfig(
+        species=[
+            FieldSpecies(name="phi", cutoff=2, bare_mass=1.5, kinetic=0.4,
+                         quartic=0.1, source=0.05),
+            FieldSpecies(name="psi", cutoff=2, bare_mass=2.0, kinetic=0.3),
+        ],
+        density_couplings={("phi", "psi"): 0.2},
+        yukawa_couplings={("phi", "psi"): -0.1},
+        curvature_xi=0.7,
+    )
     H = Hamiltonian(cfg, N=3)
     snap = snapshot_hamiltonian(H)
     assert snap["n_sites"] == 3
-    assert snap["d_local"] == 2
-    assert snap["species_dims"] == [2]
-    assert snap["species"] == ["phi"]
+    assert snap["d_local"] == 4  # 2 * 2
+    assert snap["species_dims"] == [2, 2]
+    assert snap["species"] == ["phi", "psi"]
+    # 1D per-site curvature R(x_k), shape (N,) — NOT a 2D matrix.
     assert snap["curvature"] is not None
     assert len(snap["curvature"]) == 3
+    assert all(isinstance(v, float) for v in snap["curvature"])
+    # per-species coefficients surfaced for the panel.
+    assert snap["per_species"] == {
+        "phi": {"bare_mass": 1.5, "kinetic": 0.4, "quartic": 0.1, "source": 0.05},
+        "psi": {"bare_mass": 2.0, "kinetic": 0.3, "quartic": 0.0, "source": 0.0},
+    }
+    # density / yukawa coupling dicts (stringified pair keys).
+    assert snap["density_couplings"] == {"phi|psi": 0.2}
+    assert snap["yukawa_couplings"] == {"phi|psi": -0.1}
+    assert snap["curvature_xi"] == 0.7
 
 
 def test_snapshot_mera_contents():

@@ -1,223 +1,231 @@
 /**
- * Hamiltonian panel — a D3 term-coupling heatmap. The `curvature` matrix is a
- * site-by-site coupling map; each cell is coloured by its (curvature-weighted)
- * per-term energy contribution. Axes are labelled by site index. `species` is
- * the Hamiltonian's *field-species* list (one entry per species, NOT per
- * site), shown as a separate legend.
- *
- * Uplift: PanelReadouts (N, d_local, species count), a KaTeX-rendered
- * canonical-form block `H = sum h_i + sum h_{ij}`, and a small 64x64
- * curvature mini-map painted via the `diverging()` ramp.
+ * Hamiltonian panel — surfaces the QPCN's generative model per §3.3.4:
+ *   - a per-species table of one-site coefficients
+ *     (bare_mass ω, kinetic t, quartic μ, source J)
+ *   - a species×species coupling matrix for g_{ab} (density-density)
+ *     and λ_{ab} (Yukawa-like field coupling), with a toolbar toggle
+ *   - a 1D curvature strip R(x_k) along the MPS site axis (the substrate
+ *     exposes H.curvature as 1D per §3.3.4, not as a 2D matrix; the
+ *     previous panel mistakenly treated it as the latter and rendered
+ *     nothing real, see D-2)
+ *   - a KaTeX block with the canonical-form decomposition.
  *
  * Reads `frame.layer_states.hamiltonian` (shape: `snapshot_hamiltonian`).
  */
 
-import { useEffect, useRef } from 'react';
-import * as d3 from 'd3';
+import { useEffect, useRef, useState } from 'react';
 import type { Frame } from '../lib/types';
 import { PanelShell } from './PanelShell';
 import { PanelReadouts } from './PanelReadouts';
-import { useSize, tex, diverging } from './common';
+import { PanelToolbar, type ToolbarItem } from './PanelToolbar';
+import { tex, diverging } from './common';
 
 interface HamiltonianState {
   n_sites?: number | null;
   d_local?: number | null;
   species_dims?: number[] | null;
   species?: string[] | null;
-  curvature?: number[][] | number | null;
+  per_species?: Record<
+    string,
+    { bare_mass?: number; kinetic?: number; quartic?: number; source?: number }
+  > | null;
+  density_couplings?: Record<string, number> | null;
+  yukawa_couplings?: Record<string, number> | null;
+  curvature_xi?: number | null;
+  /** 1D per-site R(x_k); may legacy-render as 2D if older recordings exist. */
+  curvature?: number[] | number[][] | number | null;
 }
 
-function Heatmap({
-  matrix,
-  species,
-}: {
-  matrix: number[][];
-  species: string[];
-}) {
-  const [ref, size] = useSize<HTMLDivElement>();
-  const svgRef = useRef<SVGSVGElement>(null);
-
-  useEffect(() => {
-    const svg = d3.select(svgRef.current);
-    svg.selectAll('*').remove();
-    const n = matrix.length;
-    if (n === 0) return;
-    const { width, height } = size;
-    const margin = { top: 28, right: 16, bottom: 16, left: 56 };
-    const cell = Math.max(
-      8,
-      Math.min(
-        (width - margin.left - margin.right) / n,
-        (height - margin.top - margin.bottom) / n,
-      ),
-    );
-
-    const flat = matrix.flat();
-    const extent = d3.max(flat.map(Math.abs)) ?? 1;
-    const color = d3
-      .scaleSequential(d3.interpolateInferno)
-      .domain([0, extent || 1]);
-
-    const g = svg
-      .append('g')
-      .attr('transform', `translate(${margin.left},${margin.top})`);
-
-    for (let i = 0; i < n; i++) {
-      for (let j = 0; j < n; j++) {
-        const v = matrix[i][j] ?? 0;
-        g.append('rect')
-          .attr('x', j * cell)
-          .attr('y', i * cell)
-          .attr('width', cell - 1)
-          .attr('height', cell - 1)
-          .attr('fill', color(Math.abs(v)))
-          .append('title')
-          .text(`(${i},${j}) energy ${v.toFixed(4)}`);
-        if (cell > 26) {
-          g.append('text')
-            .attr('x', j * cell + cell / 2)
-            .attr('y', i * cell + cell / 2)
-            .attr('fill', Math.abs(v) / (extent || 1) > 0.5 ? '#000' : '#9aa6c8')
-            .attr('font-size', 9)
-            .attr('text-anchor', 'middle')
-            .attr('dy', 3)
-            .text(v.toFixed(2));
-        }
-      }
-    }
-
-    // axis labels — site index only (rows + columns are sites).
-    for (let i = 0; i < n; i++) {
-      g.append('text')
-        .attr('x', -6)
-        .attr('y', i * cell + cell / 2)
-        .attr('fill', '#7f8bb0')
-        .attr('font-size', 9)
-        .attr('text-anchor', 'end')
-        .attr('dy', 3)
-        .text(i);
-      g.append('text')
-        .attr('x', i * cell + cell / 2)
-        .attr('y', -8)
-        .attr('fill', '#7f8bb0')
-        .attr('font-size', 9)
-        .attr('text-anchor', 'middle')
-        .text(i);
-    }
-
-    // species legend — the field-species list (one entry per species).
-    if (species.length > 0) {
-      svg
-        .append('text')
-        .attr('x', width - 8)
-        .attr('y', 14)
-        .attr('fill', '#7f8bb0')
-        .attr('font-size', 9)
-        .attr('text-anchor', 'end')
-        .text(`species: ${species.join(', ')}`);
-    }
-  }, [matrix, species, size]);
-
-  return (
-    <div ref={ref} style={{ width: '100%', height: '100%' }}>
-      <svg ref={svgRef} width={size.width} height={size.height} />
-    </div>
-  );
-}
-
-/**
- * 64x64 curvature mini-map. Each canvas pixel block is filled by the
- * `diverging()` ramp applied to the matrix entry nearest to it (nearest-
- * neighbour upscaling for small N, downsampling otherwise).
- */
-function CurvatureMiniMap({ matrix }: { matrix: number[][] }) {
+/** 1D strip painting one cell per site, coloured by R(x_k) on the
+ * diverging ramp. Aligned to the MPS site axis so the user can
+ * visually register it against the MPS / Logic site chain panels below. */
+function CurvatureStrip({ values }: { values: number[] }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const SIZE = 64;
+  const H = 18;
+  const W = Math.max(64, values.length * 18);
 
   useEffect(() => {
     const cnv = canvasRef.current;
     if (!cnv) return;
     const ctx = cnv.getContext('2d');
     if (!ctx) return;
-    const n = matrix.length;
+    const n = values.length;
     if (n === 0) {
-      ctx.clearRect(0, 0, SIZE, SIZE);
+      ctx.clearRect(0, 0, W, H);
       return;
     }
-    // Normalize by peak absolute value -> [-1, 1].
     let peak = 0;
-    for (const row of matrix) {
-      for (const v of row) {
-        const a = Math.abs(v);
-        if (Number.isFinite(a) && a > peak) peak = a;
-      }
+    for (const v of values) {
+      const a = Math.abs(v);
+      if (Number.isFinite(a) && a > peak) peak = a;
     }
     const scale = peak > 0 ? peak : 1;
-    const cell = SIZE / n;
+    const cellW = W / n;
     for (let i = 0; i < n; i++) {
-      for (let j = 0; j < n; j++) {
-        const v = matrix[i]?.[j] ?? 0;
-        ctx.fillStyle = diverging(v / scale);
-        ctx.fillRect(
-          Math.floor(j * cell),
-          Math.floor(i * cell),
-          Math.ceil(cell),
-          Math.ceil(cell),
-        );
-      }
+      ctx.fillStyle = diverging(values[i] / scale);
+      ctx.fillRect(Math.floor(i * cellW), 0, Math.ceil(cellW), H);
     }
-  }, [matrix]);
+  }, [values, W]);
 
   return (
-    <canvas
-      ref={canvasRef}
-      width={SIZE}
-      height={SIZE}
-      aria-label="curvature mini-map"
+    <div data-testid="hamiltonian-curvature-strip">
+      <canvas
+        ref={canvasRef}
+        width={W}
+        height={H}
+        aria-label="curvature strip R(x_k)"
+        style={{
+          width: '100%',
+          height: H,
+          imageRendering: 'pixelated',
+          border: '1px solid #2f3a55',
+        }}
+      />
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          color: '#7f8bb0',
+          fontSize: 9,
+          marginTop: 2,
+        }}
+      >
+        <span>site 0</span>
+        <span>R(x_k) · diverging ramp</span>
+        <span>site {values.length - 1}</span>
+      </div>
+    </div>
+  );
+}
+
+/** Species×species coupling matrix. Rendered as a small HTML table so
+ * jsdom-based tests can assert cell values without a canvas surface. */
+function CouplingMatrix({
+  species,
+  couplings,
+  label,
+}: {
+  species: string[];
+  couplings: Record<string, number>;
+  label: string;
+}) {
+  if (species.length === 0) return null;
+  // pair-key parser matches snapshot_hamiltonian: "a|b"
+  const get = (a: string, b: string): number => {
+    const k1 = `${a}|${b}`;
+    const k2 = `${b}|${a}`;
+    return couplings[k1] ?? couplings[k2] ?? 0;
+  };
+  let peak = 0;
+  for (const v of Object.values(couplings)) {
+    const a = Math.abs(v);
+    if (Number.isFinite(a) && a > peak) peak = a;
+  }
+  const scale = peak > 0 ? peak : 1;
+  return (
+    <table
+      data-testid={`coupling-matrix-${label}`}
       style={{
-        width: SIZE,
-        height: SIZE,
-        imageRendering: 'pixelated',
-        border: '1px solid #2f3a55',
+        fontSize: 10,
+        borderCollapse: 'collapse',
+        color: '#9aa6c8',
       }}
-    />
+    >
+      <thead>
+        <tr>
+          <th
+            style={{ padding: '2px 6px', color: '#7f8bb0', textAlign: 'left' }}
+          >
+            {label}
+          </th>
+          {species.map((s) => (
+            <th
+              key={s}
+              style={{ padding: '2px 6px', color: '#7f8bb0' }}
+            >
+              {s}
+            </th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        {species.map((a) => (
+          <tr key={a}>
+            <td style={{ padding: '2px 6px', color: '#7f8bb0' }}>{a}</td>
+            {species.map((b) => {
+              const v = get(a, b);
+              return (
+                <td
+                  key={b}
+                  style={{
+                    padding: '2px 6px',
+                    textAlign: 'right',
+                    background: diverging(v / scale),
+                    color: Math.abs(v) / scale > 0.5 ? '#0b0e14' : '#9aa6c8',
+                    minWidth: 36,
+                  }}
+                  title={`${a}↔${b}: ${v.toFixed(4)}`}
+                >
+                  {v === 0 ? '·' : v.toFixed(2)}
+                </td>
+              );
+            })}
+          </tr>
+        ))}
+      </tbody>
+    </table>
   );
 }
 
 export function HamiltonianPanel({
   frame,
-  baselineFrame,
 }: {
   frame: Frame;
   baselineFrame?: Frame;
 }) {
   const st = (frame.layer_states.hamiltonian ?? {}) as HamiltonianState;
-  const bst = (baselineFrame?.layer_states.hamiltonian ?? {}) as HamiltonianState;
+  const speciesNames = st.species ?? [];
+  const perSpecies = st.per_species ?? {};
+  const density = st.density_couplings ?? {};
+  const yukawa = st.yukawa_couplings ?? {};
+
+  // The 1D curvature path. Defensively unwrap a legacy 2D array by taking
+  // the diagonal (so older recordings still render something honest).
+  let curvature1D: number[] = [];
   const curv = st.curvature;
-  const matrix = Array.isArray(curv) && Array.isArray(curv[0])
-    ? (curv as number[][])
-    : null;
-  const baseCurv = bst.curvature;
-  const baseMatrix = Array.isArray(baseCurv) && Array.isArray(baseCurv[0])
-    ? (baseCurv as number[][])
-    : null;
-  // Mini-map matrix: when baseline shares the same shape, render the diff;
-  // otherwise fall back silently to the current matrix.
-  const miniMatrix: number[][] | null = (() => {
-    if (!matrix) return null;
-    if (
-      !baseMatrix ||
-      baseMatrix.length !== matrix.length ||
-      baseMatrix[0]?.length !== matrix[0]?.length
-    ) {
-      return matrix;
+  if (Array.isArray(curv)) {
+    if (curv.length > 0 && Array.isArray(curv[0])) {
+      const m = curv as number[][];
+      curvature1D = m.map((row, i) => row[i] ?? 0);
+    } else {
+      curvature1D = (curv as number[]).filter((v) => typeof v === 'number');
     }
-    return matrix.map((row, i) =>
-      row.map((v, j) => v - (baseMatrix[i]?.[j] ?? 0)),
-    );
-  })();
-  const hasData = !!matrix && matrix.length > 0;
-  const speciesNames = (st.species as string[] | null) ?? [];
+  }
+
+  const hasData =
+    speciesNames.length > 0 ||
+    curvature1D.length > 0 ||
+    Object.keys(density).length > 0 ||
+    Object.keys(yukawa).length > 0;
+
+  const [couplingView, setCouplingView] = useState<'density' | 'yukawa'>(
+    'density',
+  );
+
+  const toolbarItems: ToolbarItem[] = [
+    {
+      key: 'density',
+      label: 'g_{ab} (density)',
+      active: couplingView === 'density',
+      onToggle: () => setCouplingView('density'),
+    },
+    {
+      key: 'yukawa',
+      label: 'λ_{ab} (Yukawa)',
+      active: couplingView === 'yukawa',
+      onToggle: () => setCouplingView('yukawa'),
+    },
+  ];
 
   const readouts = (
     <PanelReadouts
@@ -225,13 +233,18 @@ export function HamiltonianPanel({
         { label: 'N', value: st.n_sites ?? '—' },
         { label: 'd_local', value: st.d_local ?? '—' },
         { label: 'species', value: speciesNames.length },
+        {
+          label: 'ξ (curv. coup.)',
+          value:
+            st.curvature_xi != null ? st.curvature_xi.toFixed(3) : '—',
+        },
       ]}
     />
   );
 
   return (
     <PanelShell
-      title="Hamiltonian — term-energy heatmap"
+      title="Hamiltonian — generative-model coefficients (§3.3.4)"
       step={frame.step}
       meta={
         st.n_sites != null
@@ -239,58 +252,110 @@ export function HamiltonianPanel({
           : undefined
       }
       hasData={hasData}
-      emptyMessage="No curvature / term matrix for this Hamiltonian."
+      emptyMessage="No Hamiltonian active in this frame."
       readouts={readouts}
+      toolbar={toolbarItems.length > 0 ? <PanelToolbar items={toolbarItems} /> : undefined}
     >
       <div
-        style={{ display: 'flex', flexDirection: 'column', height: '100%' }}
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          height: '100%',
+          gap: 8,
+          padding: 4,
+          overflow: 'auto',
+        }}
       >
-        <div style={{ flex: '1 1 auto', minHeight: 0 }}>
-          {hasData && <Heatmap matrix={matrix!} species={speciesNames} />}
-        </div>
-        <div
-          style={{
-            flex: '0 0 auto',
-            display: 'flex',
-            gap: 12,
-            alignItems: 'center',
-            padding: '8px 4px 0',
-            borderTop: '1px solid #1c2230',
-            marginTop: 6,
-          }}
-        >
-          {hasData && <CurvatureMiniMap matrix={miniMatrix!} />}
-          <div style={{ flex: 1, minWidth: 0 }}>
-            {speciesNames.length > 0 && (
-              <table
-                style={{
-                  fontSize: 10,
-                  color: '#9aa6c8',
-                  borderCollapse: 'collapse',
-                  marginBottom: 6,
-                }}
-              >
-                <tbody>
-                  {speciesNames.map((s, i) => (
-                    <tr key={s}>
-                      <td style={{ paddingRight: 8, color: '#7f8bb0' }}>{s}</td>
-                      <td>d={st.species_dims?.[i] ?? '?'}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+        {/* Per-species coefficient table */}
+        {speciesNames.length > 0 && (
+          <table
+            data-testid="hamiltonian-per-species"
+            style={{
+              fontSize: 11,
+              borderCollapse: 'collapse',
+              color: '#9aa6c8',
+            }}
+          >
+            <thead>
+              <tr style={{ color: '#7f8bb0' }}>
+                <th style={{ textAlign: 'left', padding: '2px 8px' }}>
+                  species
+                </th>
+                <th style={{ textAlign: 'right', padding: '2px 8px' }}>d</th>
+                <th style={{ textAlign: 'right', padding: '2px 8px' }}>
+                  ω (mass)
+                </th>
+                <th style={{ textAlign: 'right', padding: '2px 8px' }}>
+                  t (kinetic)
+                </th>
+                <th style={{ textAlign: 'right', padding: '2px 8px' }}>
+                  μ (quartic)
+                </th>
+                <th style={{ textAlign: 'right', padding: '2px 8px' }}>
+                  J (source)
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {speciesNames.map((s, i) => {
+                const ps = perSpecies[s] ?? {};
+                return (
+                  <tr key={s}>
+                    <td style={{ padding: '2px 8px' }}>{s}</td>
+                    <td style={{ textAlign: 'right', padding: '2px 8px' }}>
+                      {st.species_dims?.[i] ?? '?'}
+                    </td>
+                    <td style={{ textAlign: 'right', padding: '2px 8px' }}>
+                      {ps.bare_mass != null ? ps.bare_mass.toFixed(3) : '—'}
+                    </td>
+                    <td style={{ textAlign: 'right', padding: '2px 8px' }}>
+                      {ps.kinetic != null ? ps.kinetic.toFixed(3) : '—'}
+                    </td>
+                    <td style={{ textAlign: 'right', padding: '2px 8px' }}>
+                      {ps.quartic != null ? ps.quartic.toFixed(3) : '—'}
+                    </td>
+                    <td style={{ textAlign: 'right', padding: '2px 8px' }}>
+                      {ps.source != null ? ps.source.toFixed(3) : '—'}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+
+        {/* Coupling matrix (toggle between density g_ab and Yukawa λ_ab) */}
+        {speciesNames.length > 0 && (
+          <div>
+            {couplingView === 'density' ? (
+              <CouplingMatrix
+                species={speciesNames}
+                couplings={density}
+                label="g_ab"
+              />
+            ) : (
+              <CouplingMatrix
+                species={speciesNames}
+                couplings={yukawa}
+                label="λ_ab"
+              />
             )}
-            <div
-              data-testid="hamiltonian-katex"
-              style={{ color: '#c8d0e0', fontSize: 12 }}
-              dangerouslySetInnerHTML={{
-                __html: tex(
-                  'H = \\sum_i h_i + \\sum_{\\langle i,j \\rangle} h_{ij}',
-                ),
-              }}
-            />
           </div>
-        </div>
+        )}
+
+        {/* 1D per-site curvature strip aligned to the site axis */}
+        {curvature1D.length > 0 && <CurvatureStrip values={curvature1D} />}
+
+        {/* Canonical-form decomposition */}
+        <div
+          data-testid="hamiltonian-katex"
+          style={{ color: '#c8d0e0', fontSize: 12, marginTop: 4 }}
+          dangerouslySetInnerHTML={{
+            __html: tex(
+              'H = \\sum_i \\left[ \\omega_i n_i + J_i \\phi_i + \\mu_i n_i^2 + \\sum_{a<b} g_{ab} n_a n_b + \\sum_{a<b} \\lambda_{ab} \\phi_a \\phi_b \\right] - \\sum_{\\langle i,j \\rangle} t (a_i^\\dagger a_j + \\text{h.c.})',
+            ),
+          }}
+        />
       </div>
     </PanelShell>
   );

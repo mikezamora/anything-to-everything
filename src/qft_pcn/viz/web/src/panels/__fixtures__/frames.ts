@@ -96,15 +96,18 @@ export const hamiltonianFrame: Frame = {
   layer_states: {
     hamiltonian: {
       n_sites: 4,
-      d_local: 2,
+      d_local: 4,
       species_dims: [2, 2],
       species: ['scalar', 'gauge'],
-      curvature: [
-        [0.0, 0.2, -0.1, 0.05],
-        [0.2, 0.0, 0.3, -0.2],
-        [-0.1, 0.3, 0.0, 0.1],
-        [0.05, -0.2, 0.1, 0.0],
-      ],
+      per_species: {
+        scalar: { bare_mass: 1.2, kinetic: 0.5, quartic: 0.1, source: 0.05 },
+        gauge: { bare_mass: 0.8, kinetic: 0.3, quartic: 0.0, source: 0.0 },
+      },
+      density_couplings: { 'gauge|scalar': 0.15 },
+      yukawa_couplings: { 'gauge|scalar': -0.07 },
+      curvature_xi: 0.4,
+      // 1D per-site R(x_k) — NOT a 2D matrix per §3.3.4.
+      curvature: [0.0, 0.2, -0.1, 0.05],
     },
   },
 };

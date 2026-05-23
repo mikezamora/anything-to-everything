@@ -221,12 +221,55 @@ def snapshot_multifield(mf: Any) -> dict:
 # ---- hamiltonian -------------------------------------------------------------
 
 def snapshot_hamiltonian(H: Any) -> dict:
-    """Snapshot a `Hamiltonian`: site count, local dim, curvature."""
+    """Snapshot a `Hamiltonian`: real generative-model coefficients per §3.3.4.
+
+    Surfaces the per-species one-site coefficients (`bare_mass`, `kinetic`,
+    `quartic`, `source`), the cross-species `density_couplings` g_{ab} and
+    `yukawa_couplings` λ_{ab} dicts, the scalar `curvature_xi`, and the
+    1D per-site `curvature` field R(x_k) (NOT a 2D matrix; the prior name
+    misled the panel into treating it as a coupling map).
+    """
+    species_names = _safe(lambda: [s.name for s in H.species]) or []
+
+    per_species: dict[str, dict[str, float]] | None = None
+    cfg = _safe(lambda: H.cfg)
+    if cfg is not None and species_names:
+        per_species = {}
+        for s in cfg.species:
+            per_species[s.name] = {
+                "bare_mass": float(s.bare_mass),
+                "kinetic": float(s.kinetic),
+                "quartic": float(s.quartic),
+                "source": float(s.source),
+            }
+
+    def _pair_dict(d: Any) -> dict[str, float] | None:
+        if d is None:
+            return None
+        out: dict[str, float] = {}
+        for key, val in dict(d).items():
+            if isinstance(key, tuple) and len(key) == 2:
+                a, b = key
+                out[f"{a}|{b}"] = float(val)
+            else:
+                out[str(key)] = float(val)
+        return out
+
+    density_couplings = _safe(lambda: _pair_dict(cfg.density_couplings))
+    yukawa_couplings = _safe(lambda: _pair_dict(cfg.yukawa_couplings))
+    curvature_xi = _safe(lambda: float(cfg.curvature_xi))
+
     return {
         "n_sites": _safe(lambda: int(H.N)),
         "d_local": _safe(lambda: int(H.d_local)),
         "species_dims": _safe(lambda: list(H.species_dims)),
-        "species": _safe(lambda: [s.name for s in H.species]),
+        "species": species_names,
+        "per_species": per_species,
+        "density_couplings": density_couplings,
+        "yukawa_couplings": yukawa_couplings,
+        "curvature_xi": curvature_xi,
+        # 1D per-site R(x_k), shape (N,). Honest representation: a strip,
+        # not a 2D coupling matrix.
         "curvature": _safe(lambda: np.asarray(H.curvature).tolist()),
     }
 
