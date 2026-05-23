@@ -7,6 +7,7 @@
 import { useState } from 'react';
 import { translate, runDsl, verbalize } from '../../lib/dsl';
 import { useVizStore } from '../../store';
+import { attachWs } from '../../lib/ws';
 
 export function SteppedFlowBar() {
   const dslText = useVizStore((s) => s.dslText);
@@ -32,10 +33,11 @@ export function SteppedFlowBar() {
     try {
       const dsl = JSON.parse(dslText);
       const { run_id } = await runDsl(dsl);
-      appendChat({ role: 'assistant', text: `Run started: ${run_id}` });
-      // Open WS via the existing connectRun path? For stepped mode we
-      // just register the run and let the user switch back to Viz route
-      // to watch it stream. Document this in the chat.
+      // Register run + open the WebSocket so streamed frames land in the
+      // store. Without this, step 3 (Verbalize) would read nothing.
+      attachWs(run_id);
+      appendChat({ role: 'assistant',
+                   text: `Run started: ${run_id} (streaming…)` });
     } catch (e) { setError(String(e)); }
   };
 

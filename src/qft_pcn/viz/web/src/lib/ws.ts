@@ -48,6 +48,28 @@ function handleMessage(runId: string, raw: string): void {
 }
 
 /**
+ * Attach a WebSocket to an existing run id (produced out-of-band, e.g. by
+ * `POST /dsl/run`). Registers the run in the store and routes streamed
+ * frames into it, matching the side-effects of `connectRun`.
+ */
+export function attachWs(runId: string): RunHandle {
+  const store = useVizStore.getState();
+  store.openRun(runId);
+  store.setActiveRun(runId);
+
+  const socket = new WebSocket(wsUrl(runId));
+  socket.onmessage = (ev: MessageEvent) => handleMessage(runId, String(ev.data));
+  socket.onerror = () => {
+    useVizStore.getState().setError('WebSocket error');
+  };
+  socket.onclose = () => {
+    useVizStore.getState().setLive(runId, false);
+  };
+
+  return { runId, close: () => socket.close() };
+}
+
+/**
  * Start a run and stream its frames into the store.
  *
  * Registers the run via `POST /run`, opens it in the store, then opens the
@@ -63,24 +85,5 @@ export async function connectRun(spec: RunSpec): Promise<RunHandle> {
     throw new Error(`/run: ${res.status}`);
   }
   const { run_id: runId } = (await res.json()) as { run_id: string };
-
-  const store = useVizStore.getState();
-  store.openRun(runId);
-  store.setActiveRun(runId);
-
-  const socket = new WebSocket(wsUrl(runId));
-  socket.onmessage = (ev: MessageEvent) => handleMessage(runId, String(ev.data));
-  socket.onerror = () => {
-    useVizStore.getState().setError('WebSocket error');
-  };
-  socket.onclose = () => {
-    // If the backend drops the connection without the {done:true}
-    // sentinel, ensure this run does not stay live forever.
-    useVizStore.getState().setLive(runId, false);
-  };
-
-  return {
-    runId,
-    close: () => socket.close(),
-  };
+  return attachWs(runId);
 }
