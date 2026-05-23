@@ -1,43 +1,51 @@
 # Visualizer — Deviations from QFT_PCN_ARCHITECTURE.md
 
-## D-1: QPCN "occupation" chart shows tensor Frobenius norm, not particle occupation ⟨n_k⟩
-- **Architecture:** §3.3.1 defines `n = a† a` and `⟨n⟩` as the per-site particle occupation. §3.3.4 makes occupations the central one-site observable (mass term `ω(x_k) n_k`, source-driven `⟨n⟩` shift, etc.); §4.7.5 lists `predict() -> ⟨Ψ|O|Ψ⟩` as the observable mechanism.
-- **Viz code:** `src/qft_pcn/viz/snapshots.py` line 117 (`occupations = [float(np.real(np.linalg.norm(t))) for t in state.tensors]`) and `src/qft_pcn/viz/web/src/panels/QpcnPanel.tsx` lines 113-132 (chart titled "Tensor norms (occupation)").
-- **Deviation:** The "occupations" field is the Frobenius norm of each rank-3 MPS site tensor `A[k]`. That is a property of the *MPS gauge representation* (typically ≈1 in left-canonical form, arbitrary in mixed-canonical form), not the physical occupation `⟨n_k⟩ = ⟨Ψ|a†_k a_k|Ψ⟩`. The two are unrelated; in particular, a vacuum state has `⟨n_k⟩ = 0` everywhere but `‖A[k]‖ = 1`.
-- **Consequence:** A user who reads the chart as "particle density per site" (which is what `occupation` means in QFT and what the architecture exclusively uses the word to mean) will draw wrong conclusions about whether the QPCN's state has condensed a coherent occupation, whether the source `J` is doing work, or whether kinetic hopping has spread density. Worse, the value will look *constant* during real-time evolution (because canonical norms are preserved), suggesting nothing is happening.
-- **Proposed fix:** Replace the snapshot's `occupations` extractor with `state.local_expectation(k, n_op)` for each site (using `fock.number(d_local)`); rename the panel chart to "⟨n_k⟩ per site"; keep the existing tensor-norm if useful as a separate "canonical-form sanity" diagnostic under an unambiguous label.
+None found. Audit clean on 2026-05-23.
 
-## D-2: Hamiltonian panel renders nothing real and labels itself as a "site-by-site coupling map"
-- **Architecture:** §3.3.4 enumerates the Hamiltonian's one-site terms (mass `ω n`, source `J φ`, quartic `μ n²`, curvature coupling `ξR`, density-density `g_{ab} n_a n_b`, Yukawa `λ_{ab} φ_a φ_b`) and the two-site kinetic hopping `-t(a†_k a_{k+1} + h.c.)`. The explainer references this in `EXPLAINERS.hamiltonian.math`.
-- **Viz code:** `src/qft_pcn/viz/snapshots.py` line 207 emits `"curvature": np.asarray(H.curvature).tolist()` — a 1D array of shape `(N,)`. `src/qft_pcn/viz/web/src/panels/HamiltonianPanel.tsx` lines 196-219 expects `Array.isArray(curv[0])` (a 2D matrix); the test fails on 1D, so `hasData = false` and the panel always shows its empty state. The header text + JSDoc (lines 1-13) describe it as "site-by-site coupling map", "per-term energy contribution", "curvature mini-map".
-- **Deviation:** (a) The 1D `H.curvature` field (per-site `R(x_k)` modulating `ω`) is misrepresented in the JSDoc as a site×site coupling/term-energy matrix; (b) consequently the panel surfaces no real Hamiltonian content — none of the one-site coefficients (`bare_mass`, `kinetic`, `quartic`, `source`, `curvature_xi`), no density couplings `g_{ab}`, no Yukawa `λ_{ab}`, no hopping `t`. The KaTeX `H = Σ h_i + Σ h_{ij}` is the only thing the user actually sees.
-- **Consequence:** The user has no visibility into the *generative model* of the QPCN — the most important learnable object in the architecture (§3.4 maps it directly to the PCN's `g_l`). "Live" runs that change `mass`/`kinetic` via the QPCN sliders show no echo in the Hamiltonian panel.
-- **Proposed fix:** Extend `snapshot_hamiltonian` to emit `bare_mass`, `kinetic`, `quartic`, `source` per species, plus `density_couplings` and `yukawa_couplings` dicts, plus the 1D `curvature` (rename). Rewrite the panel to show: a per-species coefficients table, a 2D species×species coupling matrix for `g_{ab}` / `λ_{ab}`, and the curvature as a 1D strip aligned to the MPS site axis (so it visually registers against the MPS panel below).
+## Audit history
 
-## D-3: Manifold panel's height = `h_xx` ignores the load-bearing transverse component `h_xy`
-- **Architecture:** §3.2 defines the metric perturbation `h_μν` as a *tensor* with components `h_xx`, `h_xy`, `h_yy`; the linearized Ricci scalar `R ≈ 2 ∂_x ∂_y h_xy − ∂_y² h_xx − ∂_x² h_yy` explicitly weights all three. The `h_xy` channel is what carries shear / off-diagonal curvature.
-- **Viz code:** `src/qft_pcn/viz/snapshots.py` lines 66-70 capture all three; `src/qft_pcn/viz/web/src/panels/ManifoldPanel.tsx` line 102 uses only `h_xx` for surface height, never touches `h_xy` or `h_yy`; `EXPLAINERS.manifold.elements` line 29 explicitly says "Surface height: h_xx component of the metric perturbation" — codifying the omission as a feature.
-- **Deviation:** Using only one diagonal component to depict the metric hides the rank-2-tensor nature of `h_μν`. A pure-shear deformation (`h_xy ≠ 0`, `h_xx = h_yy = 0`) would render as a flat sheet despite having nonzero curvature.
-- **Consequence:** The user is misled into thinking the manifold is described by a single scalar height; the architecture's "metric is a 2×2 symmetric tensor sourced by the stress-energy tensor" is invisible. A test like §5.1.4 ("curvature concentrates near input features") could pass with deformations the panel cannot show.
-- **Proposed fix:** Either (a) blend all three components into surface displacement via `h_xx + h_yy` (mean curvature proxy) for height and Ricci for color, plus a small auxiliary overlay (arrow glyphs or a second wireframe) for the shear component `h_xy`; or (b) add a panel toolbar toggle to switch the height channel between `h_xx`, `h_yy`, `h_xy`, and `tr(h)`. Update the explainer text to match.
+- 2026-05-23 (initial): six deviations recorded (D-1 … D-6) in commit
+  `1a54564`. See git history for the original entries and per-fix
+  commits (`fix(viz): D-N …`).
+- 2026-05-23 (post-fix): all six fixed. Re-audit found no new
+  deviations.
 
-## D-4: Logic panel's "binder-entanglement arcs" are a decorative function of global `λ` weights, not actual binder bonds
-- **Architecture:** §1.1 (load-bearing soul) and §8.1 ("Variable binding *is* entanglement") establish that binding is realized as bond entanglement along the path from use site to binding site. §10.1 makes this concrete: a `var` reference's binder is encoded in the bond dimension along the use→binder path; it is NOT encoded in a separate field.
-- **Viz code:** `src/qft_pcn/viz/web/src/panels/LogicPanel.tsx` lines 66-90: `lams = [{β}, {arith}, {if}]`; arcs are drawn with `for (let i = 0; i + span < nSites; i += span + 1)` — i.e., evenly spaced arcs whose span = 1, 2, 3 and whose opacity = relative `λ` weight. No actual binder-site relationship is consulted.
-- **Deviation:** The arcs are *labelled* "binder-entanglement arcs over the site chain" (line 65 comment) but their geometry and presence have nothing to do with binders, entanglement entropy, or any use→binder relationship. They are a stylized rendering of three global scalar λ weights.
-- **Consequence:** The single most load-bearing architectural claim of §8 ("binding = entanglement, never classical lookup") is silently violated in its dedicated panel: a viewer is shown what looks like binder bonds and told they are, when in fact they are decorative. A user examining the panel to verify the §1.1 invariant cannot.
-- **Proposed fix:** Extend `snapshot_logic` to emit a list of `(use_site, binder_site)` pairs from the encoder's binder table, and (when an MPS state is bound to the logic snapshot) the per-cut entanglement entropy along the path. Draw one arc per real binder pair, with thickness proportional to the *minimum cut entropy* along that path. Keep the λ legend as a separate small badge, not as arcs.
+## Methodology (this pass)
 
-## D-5: Multifield panel surfaces only mean |g|; the architecturally critical structure is the per-pair sign and trajectory
-- **Architecture:** §2.2 / §4.5 / §3 of the multifield discussion is explicit: "Correlated fields grow their coupling; uncorrelated fields don't." The *direction* and *per-pair* evolution of `g_{ij}` is the diagnostic — `mean(|g|)` collapses that structure to a scalar that cannot distinguish "two correlated pairs and three uncorrelated" from "five medium pairs."
-- **Viz code:** `src/qft_pcn/viz/snapshots.py` lines 177-188 emits both `couplings` (per-pair dict) and `mean_abs_coupling` (scalar). `EXPLAINERS.multifield.watch` (explainer.ts:62-65) and the MetricsStrip wiring only highlight `mean_abs_coupling`. The architecture's correlated-vs-uncorrelated story is not directly observable.
-- **Deviation:** The aggregate hides the architectural signal. A test like `test_correlated_inputs_grow_coupling` is exactly testing per-pair `|g_{ij}| > 0.05`; the viz can't show whether the system is *doing* that for the right pairs.
-- **Consequence:** The panel shows a number going up but cannot tell the user "the (shape, motion) pair is coupling but (shape, color) is not" — which is the whole point of multifield learning.
-- **Proposed fix:** This is a soft deviation (data is present, surface isn't) — add a small per-pair time-series strip (one trace per `(a,b)` key in `couplings`) alongside the existing surfaces, and use a signed color ramp so users see whether couplings are converging to positive, negative, or zero. Promote at least one per-pair series to a `MetricsStrip` metric.
+- Re-read snapshot extractors in `src/qft_pcn/viz/snapshots.py` and
+  cross-checked against the architecture sections each panel maps to:
+  §2.x / §3.2 / §3.3.4 / §8 / §10.1 / §11.4.
+- Read every panel in `src/qft_pcn/viz/web/src/panels/`
+  (Manifold, Multifield, MPS, Hamiltonian, QPCN, MERA, VQC, Logic).
+- Verified each panel's rendered elements either (a) trace to a real
+  snapshot field with semantics matching the architecture, or (b) are
+  explicitly explainer-labelled as illustrative/structural with no
+  claim of measurement.
+- Verified the deviation-fix commits did not silently break adjacent
+  panels via the full vitest + python viz test suite.
 
-## D-6: MERA panel's alternating-by-layer "isometry / disentangler" mislabels MERA tensor types
-- **Architecture:** Standard MERA (Vidal 2008, cited §11.4) and the explainer's own formula `|ψ⟩ = U_1 W_1 U_2 W_2 ...` state that *each* coarse-graining layer contains both disentanglers `U` (acting on neighboring pairs) and isometries `W` (mapping fine pairs to coarse single sites). They co-exist within one RG step, not in alternating layers.
-- **Viz code:** `src/qft_pcn/viz/web/src/panels/MeraPanel.tsx` lines 121-123: `const kind: MNode['kind'] = layer % 2 === 0 ? 'isometry' : 'disentangler';` — each layer's nodes are all-isometry or all-disentangler depending on layer parity.
-- **Deviation:** A user reading the diagram learns an incorrect MERA topology. The actual `snapshot_mera` data carries only `isometries` (no separate disentanglers field), so the panel is inventing a structure not present in the substrate.
-- **Consequence:** Misrepresents the canonical tensor-network diagram the architecture's §11.4 (AdS/MERA correspondence) is built on. Anyone using this panel to teach or audit the MERA implementation will absorb the wrong picture.
-- **Proposed fix:** Either (a) label all coarse nodes uniformly as "isometry" (matching what the substrate actually exposes), and drop the disentangler glyph until disentanglers are exposed by the substrate; or (b) extend the MERA implementation to expose both `isometries` and `disentanglers` per layer, then render them as two adjacent glyph rows within each layer ring.
+## Fixes landed in this pass
+
+| ID | Panel / file | Fix | Commit |
+| --- | --- | --- | --- |
+| D-1 | QPCN — `snapshots.py` + `QpcnPanel.tsx` | Replace MPS tensor Frobenius norm (labelled "occupations") with real per-species ⟨n_k⟩ via `state.local_expectation(k, H.n(s))`. Keep tensor norm as `tensor_norms` sanity diag. | `a2c055a` |
+| D-2 | Hamiltonian — `snapshots.py` + `HamiltonianPanel.tsx` | Surface real §3.3.4 coefficients (`per_species`, `density_couplings`, `yukawa_couplings`, `curvature_xi`); render 1D `curvature` as a strip aligned to the site axis; coupling matrix toggles g_ab / λ_ab. | `315e87a` |
+| D-3 | Manifold — `ManifoldPanel.tsx` | Add height-channel toggle (h_xx default, h_xy, h_yy, tr(h)) so the rank-2 tensor structure of h_μν is visible. | `d03f322` |
+| D-4 | Logic — `snapshots.py` + `LogicPanel.tsx` | Remove decorative λ-driven "binder-entanglement arcs"; colour terms by residual energy; add real per-bond `bond_entropies` chart from the logic MPS state — the load-bearing §1.1 binder-as-entanglement signal. | `8052d3c` |
+| D-5 | Multifield — `MultifieldPanel.tsx` | Add per-pair signed `g[(a,b)]` readout cells + one MetricsStrip trace per coupling pair, so per-pair convergence is observable instead of being collapsed into mean \|g\|. | `193b459` |
+| D-6 | MERA — `MeraPanel.tsx` | Drop the `kind = layer % 2 ? 'disentangler' : 'isometry'` scheme (no basis in the substrate). Every coarse node is now an isometry, matching what `snapshot_mera.isometries` actually exposes; explainer math updated to the real W_ℓ ∘ U_ℓ within-layer decomposition. | `e5313ed` |
+
+## Notes for future audits
+
+- Substrate is owned by parallel agents. Viz fixes here only touch
+  `src/qft_pcn/viz/**`; if a future deviation requires substrate
+  extension, add an `EXTENSIONS.md` entry instead of editing
+  substrate.
+- When a panel renders an element with a physics name (`occupation`,
+  `binder`, `isometry`, `disentangler`), the rendered quantity MUST
+  match the physics-name's meaning under the architecture. The §1.1
+  invariant (binding = entanglement) is the load-bearing example.
+- The `_safe(...)` defensive idiom in `snapshots.py` swallows
+  `AttributeError | KeyError | TypeError` (optional attributes); it
+  intentionally lets `ValueError`/`IndexError` propagate as real bugs.
+  Don't widen the catch list when adding new fields.
