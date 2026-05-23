@@ -58,6 +58,7 @@ function Chart({
 
 export function QpcnPanel({
   frame,
+  baselineFrame: _baselineFrame,
 }: {
   frame: Frame;
   baselineFrame?: Frame;
@@ -153,28 +154,28 @@ export function QpcnPanel({
     </div>
   );
 
-  const metricsStrip = (
-    <MetricsStrip
-      layer="qpcn"
-      metrics={[
-        {
-          key: 'E',
-          label: 'energy',
-          color: '#fbc66a',
-          select: (ls) => ls.energy as number,
-        },
-        ...Object.keys(
-          (st.params as Record<string, number>) ?? {},
-        ).map((p, i) => ({
-          key: `p:${p}`,
-          label: p,
-          color: ['#6cd0ff', '#9aedc1', '#d291ff'][i % 3],
-          select: (ls) =>
-            (ls.params as Record<string, number> | undefined)?.[p] as number,
-        })),
-      ]}
-    />
+  const metrics = useMemo(
+    () => [
+      {
+        key: 'E',
+        label: 'energy',
+        color: '#fbc66a',
+        select: (ls: Record<string, unknown>) =>
+          ls.energy as number | null | undefined,
+      },
+      ...paramKeys.map((p, i) => ({
+        key: `p:${p}`,
+        label: p,
+        color: ['#6cd0ff', '#9aedc1', '#d291ff'][i % 3],
+        select: (ls: Record<string, unknown>) =>
+          (ls.params as Record<string, number> | undefined)?.[p],
+      })),
+    ],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [paramKeys.join('|')],
   );
+
+  const metricsStrip = <MetricsStrip layer="qpcn" metrics={metrics} />;
 
   return (
     <PanelShell
