@@ -7,7 +7,9 @@ export interface Frame {
 
 export const LAYER_KEYS = [
   'manifold', 'multifield', 'mps', 'hamiltonian',
-  'qpcn', 'mera', 'vqc', 'logic', 'mera_relax', 'bridge',
+  'qpcn', 'mera', 'vqc', 'logic',
+  'pcn-fields', 'pcn-dynamics', 'pcn-coupling',
+  'mera_relax', 'bridge',
 ] as const;
 export type LayerKey = (typeof LAYER_KEYS)[number];
 
@@ -41,3 +43,28 @@ export type ParamSchema = Record<string, {
     items?: { type: string };
   }>;
 }>;
+
+export type Route = 'viz' | 'dsl';
+
+export interface LlmModel {
+  name: string;
+  size?: number;
+  modified_at?: string;
+}
+
+export interface ChatTurn {
+  role: 'user' | 'assistant';
+  text: string;
+  /** Optional artifact attached to an assistant turn (e.g. emitted DSL). */
+  artifact?: { kind: 'dsl' | 'run' | 'verbalize'; payload: unknown };
+}
+
+export interface DslSpec {
+  fields: Array<{ name: string; cutoff: number;
+                  bare_mass?: number; kinetic?: number }>;
+  hamiltonian: { terms: Array<{ kind: string; species?: string;
+                                 site?: number; coefficient?: number }> };
+  observables: Array<{ operator: string; site?: number;
+                       species?: string; target?: number | null }>;
+  run?: { steps?: number; chi_max?: number; seed?: number | null };
+}

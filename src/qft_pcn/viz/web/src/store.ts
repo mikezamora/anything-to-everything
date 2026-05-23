@@ -9,7 +9,7 @@
  */
 
 import { create } from 'zustand';
-import type { Frame } from './lib/types';
+import type { ChatTurn, Frame, Route } from './lib/types';
 
 export const MAX_FRAMES = 2000;
 
@@ -27,6 +27,11 @@ interface VizState {
   paused: boolean;
   playbackSpeed: number;
   error: string | null;
+  route: Route;
+  chat: ChatTurn[];
+  dslText: string;
+  llmModel: string | null;
+  steppedMode: boolean;
 
   openRun: (id: string) => void;
   setActiveRun: (id: string) => void;
@@ -41,6 +46,12 @@ interface VizState {
   setPaused: (paused: boolean) => void;
   setPlaybackSpeed: (speed: number) => void;
   setError: (err: string | null) => void;
+
+  setRoute: (r: Route) => void;
+  appendChat: (turn: ChatTurn) => void;
+  setDslText: (t: string) => void;
+  setLlmModel: (m: string | null) => void;
+  setSteppedMode: (v: boolean) => void;
 
   currentFrame: (runId?: string | null) => Frame | undefined;
   baselineFrame: () => Frame | undefined;
@@ -57,6 +68,11 @@ export const useVizStore = create<VizState>((set, get) => ({
   paused: false,
   playbackSpeed: 1,
   error: null,
+  route: 'viz',
+  chat: [],
+  dslText: '',
+  llmModel: null,
+  steppedMode: false,
 
   openRun: (id) => set((s) => {
     if (s.runs.has(id)) return {};
@@ -110,6 +126,12 @@ export const useVizStore = create<VizState>((set, get) => ({
   setPlaybackSpeed: (speed) => set({ playbackSpeed: Math.max(0.25, speed) }),
   setError: (error) => set({ error }),
 
+  setRoute: (route) => set({ route }),
+  appendChat: (turn) => set((s) => ({ chat: [...s.chat, turn] })),
+  setDslText: (dslText) => set({ dslText }),
+  setLlmModel: (llmModel) => set({ llmModel }),
+  setSteppedMode: (steppedMode) => set({ steppedMode }),
+
   currentFrame: (runId) => {
     const id = runId ?? get().activeRunId;
     if (!id) return undefined;
@@ -131,5 +153,9 @@ export const useVizStore = create<VizState>((set, get) => ({
     paused: false,
     playbackSpeed: 1,
     error: null,
+    route: 'viz',
+    chat: [],
+    dslText: '',
+    // llmModel and steppedMode are user preferences — preserved across resets.
   }),
 }));
