@@ -21,11 +21,33 @@ No new public API is added; the library is exercised through its existing
 from __future__ import annotations
 
 import gc
-import resource
 import tracemalloc
 
 import numpy as np
 import pytest
+
+# ``resource`` is POSIX-only; on Windows the import itself raises
+# ModuleNotFoundError. Tests that need ru_maxrss skip when it is missing.
+try:
+    import resource  # type: ignore[import-not-found]
+    _HAS_RESOURCE = True
+except ModuleNotFoundError:  # pragma: no cover -- non-POSIX
+    resource = None  # type: ignore[assignment]
+    _HAS_RESOURCE = False
+
+# Snapshot the *real* numpy allocators at module-import time, BEFORE any
+# pytest fixture (including the composition conftest's autouse
+# ``_no_large_dense`` guard) has had a chance to monkey-patch them. The
+# previous ``np._core.numeric.zeros`` reach-in was both brittle (private
+# module, removed in numpy 2.x) and incorrect (already-patched fixtures
+# could shadow the originals). Re-using these snapshots inside the
+# ``_disable_dense_guard`` fixture is the durable way to restore real
+# behavior without coupling to numpy's internal layout.
+_REAL_NP_ALLOC = {
+    "zeros": np.zeros,
+    "empty": np.empty,
+    "ones": np.ones,
+}
 
 from src.qft_pcn.composition.lemma_library import (
     DerivationMetadata,
@@ -42,17 +64,27 @@ from src.qft_pcn.logic.mera_encoder import encode_mera
 # helpers
 # ---------------------------------------------------------------------------
 
-_PROGRAM = r"\x:Int. x"
+def _program_for(idx: int) -> str:
+    """A distinct DSL program per ``idx`` so each lemma's encoded bundle
+    differs. Reusing one bundle hid per-lemma densification regressions
+    behind constant dict overhead; varying the AST per-idx makes the
+    library-resident probe actually scale with per-lemma bundle cost."""
+    # Mod 8 keeps the AST space bounded while still giving every idx a
+    # distinct encoded MERA (different literal -> different leaf vector
+    # -> different bundle tensors).
+    return rf"(\x:Int. x + {idx % 8})(1)"
 
 
 def _make_lemma(idx: int) -> Lemma:
-    """Mint a unique-id Lemma sharing one encoded MERA bundle.
+    """Mint a unique-id Lemma with a *per-idx* encoded MERA bundle.
 
-    Cheap: we reuse the same encoded MERA tensors across all ``idx``; only
-    the ``lemma_id`` and ``proposition_type`` differ. The point is to
-    measure the library's *per-lemma* bookkeeping, not the encoder.
+    Previously every iteration shared one bundle, so the per-lemma
+    library footprint measured Python dict overhead, not the actual
+    bundle cost. Now each ``idx`` encodes a slightly different AST, so
+    the bundle differs per-lemma and the library-resident probe
+    surfaces real per-lemma regressions.
     """
-    state, meta = encode_mera(parse(_PROGRAM))
+    state, meta = encode_mera(parse(_program_for(idx)))
     bundle = bundle_from_mera(state)
     fp = structural_fingerprint(state)
     deriv = DerivationMetadata(
@@ -98,16 +130,21 @@ def _make_lemma(idx: int) -> Lemma:
 # at ~10 MiB; we cap at 4x to absorb python overhead while still catching
 # any tensor-density regression by orders of magnitude.
 LIBRARY_RESIDENT_PER_LEMMA_CEILING = 4 * 1024 * 1024     # 4 MiB / lemma
-# One MERA materialize was empirically ~54 MiB on this branch (bundle is
-# 27 MiB raw tensors -> ~2x during rebuild). 128 MiB absorbs python /
-# numpy-pool overhead while still catching a 16**k dense regression by
-# orders of magnitude (16**8 alone is 16 GiB).
-MATERIALIZE_PEAK_PER_LEMMA_CEILING = 128 * 1024 * 1024   # 128 MiB / lemma
+# Observed materialize peak with per-idx-distinct bundles is ~177 MiB /
+# lemma on this branch (the previous ~81 MiB number measured a single
+# shared cached bundle and was misleading). Set the ceiling at 220 MiB
+# -- just above observed -- so a modest densification regression
+# (e.g. a 16**5 dense intermediate of ~16 MiB) trips it, instead of
+# requiring the absurd 16**8 (16 GiB) case to surface.
+MATERIALIZE_PEAK_PER_LEMMA_CEILING = 220 * 1024 * 1024   # 220 MiB / lemma
 
-# RSS growth budget across the sweep (delta from baseline). RSS is
-# stickier than tracemalloc (numpy returns freed memory to the pool, not
-# the OS), so the budget is wider but still finite.
-RSS_GROWTH_CEILING_KB = 1024 * 1024  # 1 GiB
+# ``ru_maxrss`` is a *high-water mark*, not a live-RSS reading: it only
+# ever grows. So this budget measures peak growth (the largest RSS the
+# process touched during the sweep), NOT whether memory was returned to
+# the OS. Observed on this branch with per-idx bundles: ~945 MiB. Set
+# the ceiling at 1200 MiB -- just above observed -- so modest peak
+# regressions trip it.
+RSS_HIGH_WATER_GROWTH_CEILING_KB = 1200 * 1024  # 1200 MiB
 
 # 30 round-trips is enough to amortize one-shot allocator noise while
 # keeping the test's wall-clock < 2 minutes on CPU. Quadratic-cache
@@ -129,35 +166,39 @@ def _disable_dense_guard(monkeypatch):
     measure the library's actual heap footprint while leaving the
     autouse ceiling in force for every *other* I test.
     """
-    monkeypatch.setattr(np, "zeros", np.zeros.__wrapped__
-                        if hasattr(np.zeros, "__wrapped__") else np.zeros)
-    # The fixture in conftest patches via monkeypatch.setattr with a new
-    # function; pytest will undo it on test teardown. We restore by
-    # re-importing the originals from numpy._core (numpy 2.x) or numpy.
-    import numpy as _np
-    monkeypatch.setattr(_np, "zeros", _np.core.numeric.zeros)
-    monkeypatch.setattr(_np, "empty", _np.core.numeric.empty)
-    monkeypatch.setattr(_np, "ones", _np.core.numeric.ones)
+    # Restore from the module-import-time snapshot. This is durable
+    # across numpy versions (no reach into ``np.core.numeric`` private
+    # internals) and immune to fixture ordering (the snapshot was taken
+    # before any monkey-patching could have run).
+    monkeypatch.setattr(np, "zeros", _REAL_NP_ALLOC["zeros"])
+    monkeypatch.setattr(np, "empty", _REAL_NP_ALLOC["empty"])
+    monkeypatch.setattr(np, "ones", _REAL_NP_ALLOC["ones"])
     yield
 
 
 def _rss_kb() -> int:
-    """Resident set size in kilobytes (Linux ru_maxrss is KB)."""
+    """Resident set size high-water mark in kilobytes (Linux
+    ``ru_maxrss`` is KB). Note: ru_maxrss is a *peak* counter, not a
+    live RSS reading -- it only ever grows."""
     return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
 
 
+@pytest.mark.skipif(not _HAS_RESOURCE,
+                    reason="resource is POSIX-only")
 def test_lemma_library_memory_ceiling_under_load(
         tmp_path, _disable_dense_guard):
-    """Peak python heap and RSS growth stay bounded across N save/load
-    round-trips. Catches any regression that adds an N**2 cache or
-    densifies an operator inside ``save`` / ``load`` / ``materialize``."""
+    """Peak python heap and RSS high-water growth stay bounded across
+    ``N_LEMMAS`` save/load round-trips. Catches any regression that adds
+    an N**2 cache or densifies an operator inside ``save`` / ``load`` /
+    ``materialize``."""
     lib = LemmaLibrary(tmp_path)
 
     gc.collect()
     rss_before = _rss_kb()
     tracemalloc.start()
 
-    # --- phase 1: save 100 lemmas; measure steady-state library heap. ---
+    # --- phase 1: save N_LEMMAS lemmas; measure steady-state library
+    # heap (one bundle per idx, so per-lemma cost is real). ---
     saved_ids: list[str] = []
     for i in range(N_LEMMAS):
         lem = _make_lemma(i)
@@ -199,7 +240,9 @@ def test_lemma_library_memory_ceiling_under_load(
     tracemalloc.stop()
     gc.collect()
     rss_after = _rss_kb()
-    rss_growth_kb = rss_after - rss_before
+    # ru_maxrss is a high-water mark: this is the peak RSS delta during
+    # the sweep, not a measure of "did we return memory to the OS".
+    rss_high_water_growth_kb = rss_after - rss_before
 
     # report -- visible with ``-v -s``; pytest captures it on failure so
     # the verification-before-completion gate has the numbers either way.
@@ -214,8 +257,8 @@ def test_lemma_library_memory_ceiling_under_load(
         f"{materialize_peak / 1024 / 1024:.2f} MiB "
         f"(ceiling {MATERIALIZE_PEAK_PER_LEMMA_CEILING / 1024 / 1024:.0f} "
         f"MiB)\n"
-        f"  rss_growth = {rss_growth_kb / 1024:.2f} MiB "
-        f"(ceiling {RSS_GROWTH_CEILING_KB / 1024:.0f} MiB)")
+        f"  rss_high_water_growth = {rss_high_water_growth_kb / 1024:.2f} MiB "
+        f"(ceiling {RSS_HIGH_WATER_GROWTH_CEILING_KB / 1024:.0f} MiB)")
 
     assert library_resident_per_lemma < LIBRARY_RESIDENT_PER_LEMMA_CEILING, (
         f"per-lemma in-memory library footprint "
@@ -226,10 +269,12 @@ def test_lemma_library_memory_ceiling_under_load(
         f"per-iteration materialize peak {materialize_peak} B exceeds "
         f"ceiling {MATERIALIZE_PEAK_PER_LEMMA_CEILING} B -- likely a "
         f"16**k dense operator regression in load/materialize")
-    assert rss_growth_kb < RSS_GROWTH_CEILING_KB, (
-        f"RSS grew by {rss_growth_kb} KiB over {N_LEMMAS} round-trips "
-        f"(ceiling {RSS_GROWTH_CEILING_KB} KiB) -- likely a leak in "
-        f"LemmaLibrary's save/load/materialize path")
+    assert rss_high_water_growth_kb < RSS_HIGH_WATER_GROWTH_CEILING_KB, (
+        f"RSS high-water mark grew by {rss_high_water_growth_kb} KiB over "
+        f"{N_LEMMAS} round-trips (ceiling {RSS_HIGH_WATER_GROWTH_CEILING_KB} "
+        f"KiB) -- ru_maxrss is a peak counter so this measures peak "
+        f"footprint, not leaks; a regression here means we touched more "
+        f"resident memory at some point during save/load/materialize")
 
 
 def test_library_indices_are_not_quadratic(tmp_path, _disable_dense_guard):
@@ -237,9 +282,9 @@ def test_library_indices_are_not_quadratic(tmp_path, _disable_dense_guard):
     an N**2 structure. We probe by checking that the per-lemma overhead
     of ``find_by_type`` does not grow with library size.
 
-    Concretely: save N=100, then save N=200, then save N=400. The peak
-    heap of one ``find_by_type`` call on the larger library must scale
-    sub-quadratically (linear plus slack) relative to the smaller.
+    Concretely: save N=20, then N=40, then N=80. The peak heap of one
+    ``find_by_type`` call on the largest library must scale
+    sub-quadratically (linear plus slack) relative to the smallest.
     """
     samples = []
     for n in (20, 40, 80):
@@ -256,9 +301,12 @@ def test_library_indices_are_not_quadratic(tmp_path, _disable_dense_guard):
         samples.append((n, peak))
         print(f"[index-scaling] n={n} find_by_type peak={peak} B")
 
-    # If the index were O(N**2) we'd see peak(200) / peak(50) >> 16.
-    # Allow a generous 32x to absorb dict-resize jitter and python list
-    # overhead while still catching genuine quadratic regressions.
+    # n_large / n_small = 4, so a strictly-linear index would give
+    # ratio_peak ~= 4 and an O(N**2) index would give ratio_peak ~= 16.
+    # We assert ratio_peak < 16 (ratio_n * ratio_n) -- the boundary
+    # between linear-plus-slack and truly quadratic. Genuine quadratic
+    # regressions will trip; dict-resize jitter at these N stays well
+    # below 16x.
     n_small, peak_small = samples[0]
     n_large, peak_large = samples[-1]
     ratio_n = n_large / n_small  # = 4

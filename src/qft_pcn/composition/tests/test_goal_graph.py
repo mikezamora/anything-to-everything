@@ -156,3 +156,40 @@ def test_node_add_child_sets_back_edge():
     root.add_child(child)
     assert root.children == [child]
     assert child.parent is root
+
+
+def test_subgoal_is_hashable():
+    """SubGoal is frozen but contains dict fields -- the auto __hash__ would
+    raise TypeError. An explicit __hash__ keyed on goal_id (the content
+    address of goal_prop+dsl_spec) makes SubGoal usable in sets / dicts
+    for cycle detection and cross-sibling lemma sharing."""
+    g1 = make_sub_goal(_spec("a"), goal_prop="P", boundary={"x": 1}, parent_site=0)
+    # hash() must not raise
+    h1 = hash(g1)
+    # two SubGoals with the same content (-> same goal_id) hash-equal and
+    # compare-equal regardless of parent_site / boundary aliasing.
+    g2 = make_sub_goal(_spec("a"), goal_prop="P", boundary={"x": 2}, parent_site=7)
+    assert g1.goal_id == g2.goal_id
+    assert hash(g1) == hash(g2) == h1
+    assert g1 == g2
+    # set / dict admission
+    s = {g1, g2}
+    assert len(s) == 1
+
+
+def test_add_child_rejects_reparent():
+    """Silent reparenting is a graph bug: surfaces as GoalGraphError."""
+    import pytest as _pytest
+    g_p1 = make_sub_goal(_spec("p1"), goal_prop="P", boundary={}, parent_site=None)
+    g_p2 = make_sub_goal(_spec("p2"), goal_prop="Q", boundary={}, parent_site=None)
+    g_c = make_sub_goal(_spec("c"), goal_prop="R", boundary={}, parent_site=0)
+    parent1 = Node(goal=g_p1, status=Status.PENDING)
+    parent2 = Node(goal=g_p2, status=Status.PENDING)
+    child = Node(goal=g_c, status=Status.PENDING)
+    parent1.add_child(child)
+    assert child.parent is parent1
+    with _pytest.raises(GoalGraphError):
+        parent2.add_child(child)
+    # child still belongs to parent1; parent2 did not pick it up
+    assert child.parent is parent1
+    assert child not in parent2.children

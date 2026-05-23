@@ -7,12 +7,13 @@ cross-sibling lemma sharing real.
 """
 from __future__ import annotations
 
-import dataclasses
 import enum
 import hashlib
 import json
 from dataclasses import dataclass, field
 from typing import Any
+
+from .errors import GoalGraphError
 
 
 def _content_hash(goal_prop: str, dsl_spec: dict) -> str:
@@ -33,6 +34,19 @@ class SubGoal:
     goal_prop: str
     boundary: dict
     parent_site: int | None
+
+    # The dataclass is frozen but holds mutable (unhashable) dict fields, so
+    # the auto-generated __hash__ would raise TypeError on use. goal_id IS
+    # the content address of (goal_prop, dsl_spec), so equality and hashing
+    # on goal_id alone are sound -- and downstream cycle detection / lemma
+    # sharing needs SubGoal to live in sets and dicts.
+    def __hash__(self) -> int:
+        return hash(self.goal_id)
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, SubGoal):
+            return NotImplemented
+        return self.goal_id == other.goal_id
 
 
 def make_sub_goal(dsl_spec: dict, *, goal_prop: str, boundary: dict,
@@ -67,13 +81,18 @@ class Node:
     quarantined: bool = False               # spec §6.6
 
     def add_child(self, child: "Node") -> None:
+        # Silent reparenting is a graph bug: a node should be added once,
+        # to one parent. Surface the violation via GoalGraphError so it
+        # cannot be lost in a stack trace.
+        if child.parent is not None and child.parent is not self:
+            raise GoalGraphError(
+                f"reparent of node {child.goal.goal_id!r} attempted"
+            )
         child.parent = self
         self.children.append(child)
 
 
 # --- construction (spec §4.2) ----------------------------------------------
-
-from .errors import GoalGraphError  # noqa: E402
 
 COMPLEXITY_WEIGHT = 1e-9   # complexity term coefficient in F_hierarchy (spec §7)
 
