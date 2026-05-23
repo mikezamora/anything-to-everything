@@ -773,3 +773,20 @@ already perf-optimized through the M3 perf path
   (e.g. a translation-symmetry probe). No present spec target requires
   this; deferred per `memory/no-placeholders.md` with this entry as
   the tracked gap.
+
+## Missing dependency: §12.16 bond-entanglement action term + §10.10 orchestrator integration
+
+- Where: `src/qft_pcn/composition/worldline_pi.py::compute_action` at
+  commit ae6aec4 uses S = sum(residual) + alpha*complexity + beta*depth.
+  Spec §12.16 also calls for a bond-entanglement contribution (path's
+  total entanglement is a fitness signal).
+- Need:
+  - `ProofTreeNode.bond_entanglement: float` populated by
+    `extract_proof_tree` from substrate state's Schmidt spectrum.
+  - `bayesian_rank_proofs` wired into §10.10 orchestrator's top-k output.
+  - Spec §12.16 acceptance test: correlation >= 0.7 between bayesian
+    ranking and mathematician-preferred proofs on a corpus.
+- Workaround: unit-test landing at commit ae6aec4 covers the action-
+  functional + softmax surface; integration with orchestrator + corpus
+  test deferred.
+- Unblocks: §12.16 production acceptance.

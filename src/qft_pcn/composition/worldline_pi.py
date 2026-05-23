@@ -83,6 +83,13 @@ def compute_action(
       weighted by ``beta``. A deeper hierarchy traverses more state-space
       transitions and so accumulates more action.
 
+    The action is exactly ``residual + alpha*complexity + beta*depth`` --
+    *node count (complexity) and tree depth and residual energy only*.
+    Spec §12.16 also envisions a bond-entanglement contribution; that
+    term is deferred (see ``EXTENSIONS.md``: "§12.16 bond-entanglement
+    action term + §10.10 orchestrator integration"). The current
+    implementation makes no bond-entanglement claim.
+
     Parameters
     ----------
     tree
