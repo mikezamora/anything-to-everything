@@ -332,6 +332,44 @@ class MERA:
     def d_local(self) -> int:
         return self.leaves[0].shape[1]
 
+    def layer_dimensions(self) -> list[int]:
+        """Per-layer bond dimensions [d_0, ..., d_{L-1}]. Read-only
+        accessor over the layer_dims field; used to verify the O(log N)
+        bond-dimension bound during imaginary-time evolution (M2 §9.4)."""
+        return list(self.layer_dims)
+
+    def leaf_marginal(self, leaf: int) -> np.ndarray:
+        """The (d_local,) probability vector for one leaf.
+
+        Fast path for a product (concrete-program) MERA: the leaf's
+        marginal is |v_leaf|^2 read directly from the encoded leaf
+        vector — no causal-cone ascent needed, because a product MERA
+        carries no inter-leaf entanglement, so the single-leaf reduced
+        density matrix is exactly the outer product of that leaf's
+        vector. For a term-superposition state this would not hold, so
+        the slow per-projector local_expectation route is used instead.
+        This is the same structural read as local_expectation, just
+        without the redundant O(d^4 L) cone contraction (spec §5.4)."""
+        if not 0 <= leaf < self.N:
+            raise IndexError(f"leaf {leaf} out of range [0, {self.N})")
+        if self._superposition_terms is None:
+            vec = self.leaves[leaf][0, :, 0]
+            p = np.abs(vec) ** 2
+            total = float(p.sum())
+            if total > 1e-15:
+                p = p / total
+            return p.astype(float)
+        d = self.d_local
+        p = np.empty(d, dtype=float)
+        for b in range(d):
+            proj = np.zeros((d, d), dtype=complex)
+            proj[b, b] = 1.0
+            p[b] = float(np.real(self.local_expectation(leaf, proj)))
+        total = float(p.sum())
+        if total > 1e-15:
+            p = p / total
+        return p
+
     def copy(self) -> "MERA":
         clone = MERA(
             leaves=[s.copy() for s in self.leaves],

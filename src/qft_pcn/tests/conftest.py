@@ -28,6 +28,31 @@ from __future__ import annotations
 import os
 import resource
 
+import pytest
+
+
+def pytest_addoption(parser):
+    """Add --runslow to opt into Bundle-scale acceptance tests.
+
+    Standard pytest pattern (see pytest docs §"Control skipping of tests").
+    Without --runslow, tests marked `@pytest.mark.slow` are skipped so the
+    default no-regression sweep stays fast. Full P1-P8 verification runs
+    via `uv run pytest ... --runslow`.
+    """
+    parser.addoption(
+        "--runslow", action="store_true", default=False,
+        help="run slow Bundle-scale acceptance tests",
+    )
+
+
+def pytest_collection_modifyitems(config, items):
+    if config.getoption("--runslow"):
+        return
+    skip_slow = pytest.mark.skip(reason="need --runslow option to run")
+    for item in items:
+        if "slow" in item.keywords:
+            item.add_marker(skip_slow)
+
 _GPU_ACTIVE = os.environ.get("QPCN_BACKEND", "auto").strip().lower() in (
     "gpu", "auto")
 
