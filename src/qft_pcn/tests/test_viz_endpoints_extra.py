@@ -34,3 +34,10 @@ def test_params_schema_endpoint_returns_per_layer_schema(client):
     for layer in PARAM_SCHEMA:
         assert layer in body
         assert body[layer]["type"] == "object"
+
+
+def test_pause_resume_step_404_when_not_streaming(client):
+    """Lifecycle endpoints require an active WS connection for the run."""
+    for verb in ("pause", "resume", "step"):
+        res = client.post(f"/runs/nonexistent/{verb}")
+        assert res.status_code == 404

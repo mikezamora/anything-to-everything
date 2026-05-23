@@ -22,6 +22,7 @@ from fastapi import (BackgroundTasks, FastAPI, HTTPException, WebSocket,
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
+from .controller import RunController
 from .presets import PARAM_SCHEMA, PRESETS
 from .runs import RunSpec, RunRegistry, run_simulation
 
@@ -30,6 +31,7 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"],
                    allow_methods=["*"], allow_headers=["*"])
 
 _registry = RunRegistry()
+_controllers: dict[str, RunController] = {}
 # job_id -> {"job_id", "run_id", "layer", "status", ...}. In-memory: a render
 # job transitions queued -> running -> done|error, gaining an "output" path on
 # success or an "error" message on failure. Bounded to the most recent
@@ -78,8 +80,12 @@ async def stream(ws: WebSocket, run_id: str):
     if spec is None:
         await ws.close(code=4004)
         return
+    # Pass the module-level `run_simulation` so tests that monkeypatch
+    # `server.run_simulation` continue to intercept the WS stream.
+    ctrl = RunController(spec, runner=run_simulation)
+    _controllers[run_id] = ctrl
     try:
-        for frame in run_simulation(spec):
+        async for frame in ctrl.frames():
             await ws.send_text(frame.to_json())
         await ws.send_text('{"done": true}')
     except WebSocketDisconnect:
@@ -89,6 +95,36 @@ async def stream(ws: WebSocket, run_id: str):
         # no application-level signal; send a terminal error frame first.
         await ws.send_text(json.dumps({"error": str(exc)}))
         await ws.close(code=1011)
+    finally:
+        _controllers.pop(run_id, None)
+
+
+def _get_controller_or_404(run_id: str) -> RunController:
+    ctrl = _controllers.get(run_id)
+    if ctrl is None:
+        raise HTTPException(status_code=404, detail="run not streaming")
+    return ctrl
+
+
+@app.post("/runs/{run_id}/pause")
+def run_pause(run_id: str):
+    """Pause the live stream for `run_id`."""
+    _get_controller_or_404(run_id).pause()
+    return {"run_id": run_id, "state": "paused"}
+
+
+@app.post("/runs/{run_id}/resume")
+def run_resume(run_id: str):
+    """Resume a paused stream for `run_id`."""
+    _get_controller_or_404(run_id).resume()
+    return {"run_id": run_id, "state": "running"}
+
+
+@app.post("/runs/{run_id}/step")
+def run_step(run_id: str):
+    """Advance the paused stream for `run_id` by exactly one frame."""
+    _get_controller_or_404(run_id).step()
+    return {"run_id": run_id, "state": "stepped"}
 
 
 def _run_export(job_id: str, spec: RunSpec, layer: str) -> None:

@@ -42,6 +42,7 @@ viz-manim = ["manim>=0.18"]
 # plugin is load-bearing — runaway MERA evolutions must be killable).
 dev = [
     "pytest>=8",
+    "pytest-asyncio>=1.3.0",
     "pytest-timeout>=2",
 ]
 
