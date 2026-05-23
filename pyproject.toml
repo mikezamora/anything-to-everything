@@ -52,3 +52,8 @@ members = [
 
 [tool.uv.sources]
 indextts = { workspace = true }
+
+[tool.pytest.ini_options]
+markers = [
+    "slow: Bundle-scale acceptance (opt-in via --runslow)",
+]
