@@ -21,6 +21,9 @@ AST, never by energy alone.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
 import numpy as np
 
 from .problem import (
@@ -33,6 +36,12 @@ from .hamiltonian import (
 )
 from .ranking import dedupe_by_alpha_eq, classify_failure_mode
 from .._validate_synth import validate_problem
+
+if TYPE_CHECKING:
+    from ..ast import Node
+    from ..mera_encoder import MeraEncodingMeta
+    from src.qft_pcn.qft.mera import MERA
+    from src.qft_pcn.composition.lemma_library import LemmaLibrary
 
 
 def synthesize(problem: SynthesisProblem,
@@ -148,13 +157,172 @@ def _anneal(state, meta, H, problem, weights):
         weighted_sub_hams=[(h_typing, weights.w_T), (h_eval, weights.w_E)],
         extra_terms=[])
 
+    # I-Task-10 blocker #5: Forall-protected leaves are frozen across all
+    # three phases — universal quantification is genuine tensor-network
+    # inertia, never classical iteration (§1.1 binding-as-entanglement).
+    # The set is empty for encodings without any Forall, preserving prior
+    # behavior bitwise (frozen_leaves default at the evolution layer).
+    frozen = set(getattr(meta, "forall_protected_leaves", set()) or set())
+    frozen_arg = frozen if frozen else None
+
     _, state = mera_imaginary_evolve_state(
         state, H_partial, dt=0.1, steps=warm_steps,
-        chi_layer=problem.chi_layer)
+        chi_layer=problem.chi_layer, frozen_leaves=frozen_arg)
     _, state = mera_imaginary_evolve_state(
         state, H, dt=problem.anneal_dt, steps=main_steps,
-        chi_layer=problem.chi_layer)
+        chi_layer=problem.chi_layer, frozen_leaves=frozen_arg)
     _, state = mera_imaginary_evolve_state(
         state, H, dt=0.01, steps=fine_steps,
-        chi_layer=problem.chi_layer)
+        chi_layer=problem.chi_layer, frozen_leaves=frozen_arg)
     return state
+
+
+# ---------------------------------------------------------------------------
+# I-Task-10 blocker #1 — relax_program driver (spec §8.12, arch §10.8)
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class RelaxResult:
+    """Result record of `relax_program` (I Task 10, spec §8.12).
+
+    Fields:
+      state          -- the relaxed MERA after imag-time evolution.
+      meta           -- the encoding meta for `state` (the §1.2 addressing
+                        data).
+      hamiltonian    -- the composed H whose ground state is being
+                        approached (a `ComposedMeraSynthesisHamiltonian`).
+      residual       -- final `H.total_energy(state)`; the §8.12 acceptance
+                        gate is `residual < eps`.
+      trotter_steps  -- number of Trotter steps actually applied. May be
+                        less than `max_trotter_steps` when early
+                        termination on the residual gate fires.
+      converged      -- True iff `residual < eps` at the time of return.
+    """
+    state: "MERA"
+    meta: "MeraEncodingMeta"
+    hamiltonian: ComposedMeraSynthesisHamiltonian
+    residual: float
+    trotter_steps: int
+    converged: bool
+
+
+def relax_program(
+    ast_src,
+    *,
+    constraints=(),
+    eps: float = 1e-3,
+    dt: float = 0.05,
+    max_trotter_steps: int = 200,
+    chi_layer: int = 16,
+    n_nodes_max: int = 32,
+    frozen_leaves: set[int] | None = None,
+    lemma_library: "LemmaLibrary | None" = None,
+) -> RelaxResult:
+    """Encode `ast_src`, compose H = H_typing + H_eval (+ promoted lemma
+    constraints), and run imag-time evolution to residual < eps or until
+    `max_trotter_steps` is consumed (spec §8.12, arch §10.8).
+
+    Distinct from `synthesize(SynthesisProblem)`: no sketch holes, no
+    witness augmentation, no completion ranking — this is the
+    program-relaxation driver used by I Task 10's two-stage acceptance
+    demo.
+
+    Parameters
+    ----------
+    ast_src:
+        Either an `ast.Node` (used directly) or a `str` (parsed via
+        `logic.ast.parse`).
+    constraints:
+        Iterable of DSL constraint dicts. Presently only
+        `{"kind": "use_lemma", ...}` is honored. Each is compiled via the
+        Promoter (mode='init_clamp'), and the union of clamped leaves is
+        added to `frozen_leaves`. `lemma_library` is required when
+        `constraints` is non-empty.
+    eps:
+        Residual gate. Evolution stops as soon as `H.total_energy(state)`
+        drops below `eps`. Use `eps=0.0` to force full-budget consumption.
+    dt, max_trotter_steps, chi_layer, n_nodes_max:
+        Imag-time evolution + encoder hyperparameters.
+    frozen_leaves:
+        Optional caller-supplied set of host leaf indices to freeze for
+        the full duration of evolution. Merged with the union of
+        leaves clamped by `use_lemma` constraints (§1.5 operator-algebraic
+        promotion). When non-empty (and the Forall-protected set on the
+        meta is also non-empty), both are unioned in.
+    """
+    # Local imports mirror `synthesize`'s rationale: mera_encoder imports
+    # mera_synthesis.encode_ext at module load, so the substrate is loaded
+    # at call time to break the cycle.
+    from ..ast import Node as _Node, parse as _parse
+    from ..mera_encoder import encode_mera
+    from ..mera_typing_hamiltonian import MeraTypingHamiltonian
+    from ..mera_evaluation_hamiltonian import MeraEvalHamiltonian
+    from ..mera_evolution_logic import mera_imaginary_evolve_state
+
+    ast = _parse(ast_src) if isinstance(ast_src, str) else ast_src
+    if not isinstance(ast, _Node):
+        raise TypeError(
+            "relax_program expected an ast.Node or str source; got "
+            f"{type(ast).__name__}")
+
+    state, meta = encode_mera(ast, n_nodes_max=n_nodes_max,
+                              chi_layer=chi_layer)
+
+    # Compose H_typing + H_eval with unit weights — relaxation is judged
+    # by residual, not by ranking against alternatives.
+    h_typing = MeraTypingHamiltonian(meta)
+    h_eval = MeraEvalHamiltonian(meta)
+    H = ComposedMeraSynthesisHamiltonian(
+        weighted_sub_hams=[(h_typing, 1.0), (h_eval, 1.0)],
+        extra_terms=[])
+
+    # Build the frozen set:
+    #   * caller's `frozen_leaves` (e.g. arbitrary external clamp);
+    #   * leaves clamped by `use_lemma` constraints (§1.5 promotion);
+    #   * meta.forall_protected_leaves (§1.1 universal-binder protection,
+    #     blocker #5; defaults to the empty set on encodings without any
+    #     Forall, so prior behavior is preserved bitwise).
+    frozen: set[int] = set(frozen_leaves or ())
+    frozen |= set(
+        getattr(meta, "forall_protected_leaves", set()) or set())
+
+    constraints_list = list(constraints) if constraints else []
+    if constraints_list:
+        if lemma_library is None:
+            raise ValueError(
+                "constraints non-empty but lemma_library is None")
+        from src.qft_pcn.composition.promoter import Promoter
+        promoter = Promoter(lemma_library, mode="init_clamp")
+        for c in constraints_list:
+            kind = c.get("kind")
+            if kind != "use_lemma":
+                raise NotImplementedError(
+                    f"unsupported constraint kind: {kind!r}")
+            promoted = promoter.compile_constraint(c)
+            clamped = promoter.apply_init_clamp(
+                state, meta, promoted, strength=1.0)
+            frozen |= clamped
+
+    frozen_arg = frozen if frozen else None
+
+    # Imag-time evolution with chunked early termination. Chunking is a
+    # pure control-flow wrapper around `mera_imaginary_evolve_state`; the
+    # inner driver owns the physics (§7.5). Between chunks we check the
+    # residual gate and return as soon as it is below eps.
+    chunk = max(1, min(10, max_trotter_steps))
+    steps_taken = 0
+    residual = float(H.total_energy(state))
+    while steps_taken < max_trotter_steps and residual > eps:
+        remaining = max_trotter_steps - steps_taken
+        this_chunk = min(chunk, remaining)
+        _, state = mera_imaginary_evolve_state(
+            state, H, dt=dt, steps=this_chunk, chi_layer=chi_layer,
+            frozen_leaves=frozen_arg)
+        steps_taken += this_chunk
+        residual = float(H.total_energy(state))
+
+    converged = bool(residual < eps)
+    return RelaxResult(
+        state=state, meta=meta, hamiltonian=H,
+        residual=residual, trotter_steps=steps_taken,
+        converged=converged)

@@ -12,7 +12,7 @@ import numpy as np
 
 from .ast import (
     Node, HoleVar, Var, Lam, App, If, Bin, IntLit, Forall, Fix,
-    Succ, Cons, Eq,
+    Succ, Cons, Eq, Ty, TypeHole,
 )
 from ._serialize import serialize_preorder, NodeOccupancy, count_nodes
 from ._types import compute_site_types
@@ -48,6 +48,8 @@ class MeraEncodingMeta:
     n_nodes_max: int = 0      # encoder node budget (R-Fix unfold guard)
     hole_regions: list = field(default_factory=list)   # M3 structural-hole layout
     witness_node_ranges: list = field(default_factory=list)  # M3 synthesis: per-example witness node-index ranges (tuple of ints)
+    forall_protected_leaves: set[int] = field(default_factory=set)  # I-Task-10 blocker #5: leaves frozen during evolution to preserve universal quantification (Forall's own bid leaf + all 5 species leaves of every bound Var use)
+    typehole_regions: list = field(default_factory=list)   # M3 P5: per-TypeHole entries: dict(lam_node, candidate_tags, affected_leaves)
 
 
 def _binder_kinds() -> set[int]:
@@ -174,6 +176,131 @@ def _substitute_structural_holes(ast: Node) -> Node:
     return ast
 
 
+def _has_type_hole(ast: Node) -> bool:
+    """True if any Lam/Forall/Fix.param_ty (or nested TArrow) is a TypeHole."""
+
+    def _ty_has_hole(ty) -> bool:
+        if isinstance(ty, TypeHole):
+            return True
+        from .ast import TArrow
+        if isinstance(ty, TArrow):
+            return _ty_has_hole(ty.src) or _ty_has_hole(ty.dst)
+        return False
+
+    found = [False]
+
+    def _walk(n: Node) -> None:
+        if found[0]:
+            return
+        if isinstance(n, (Lam, Forall, Fix)):
+            if _ty_has_hole(n.param_ty):
+                found[0] = True
+                return
+        for attr in ("body", "fn", "arg", "lhs", "rhs", "cond",
+                     "then_b", "else_b", "head", "tail"):
+            child = getattr(n, attr, None)
+            if isinstance(child, Node):
+                _walk(child)
+    _walk(ast)
+    return found[0]
+
+
+def _substitute_one_typehole(ty, replacement: Ty):
+    """Replace the FIRST TypeHole found in ty (DFS) with ``replacement``.
+
+    Returns ``(new_ty, replaced)``. ``replaced`` is True iff a hole was
+    found and substituted. Used to enumerate per-Lam typehole candidates
+    one binder at a time.
+    """
+    from .ast import TArrow
+    if isinstance(ty, TypeHole):
+        return replacement, True
+    if isinstance(ty, TArrow):
+        new_src, ok = _substitute_one_typehole(ty.src, replacement)
+        if ok:
+            return TArrow(src=new_src, dst=ty.dst), True
+        new_dst, ok = _substitute_one_typehole(ty.dst, replacement)
+        if ok:
+            return TArrow(src=ty.src, dst=new_dst), True
+    return ty, False
+
+
+def _substitute_typehole_at(ast: Node, target_id: int,
+                             candidate: Ty) -> Node:
+    """Return a copy of ``ast`` in which the Lam/Forall/Fix whose
+    ``id() == target_id`` has its first TypeHole replaced by
+    ``candidate``. Non-target binders are left untouched.
+    """
+    def go(n: Node) -> Node:
+        if isinstance(n, Lam):
+            new_ty = n.param_ty
+            if id(n) == target_id:
+                new_ty, _ = _substitute_one_typehole(new_ty, candidate)
+            return Lam(param=n.param, param_ty=new_ty, body=go(n.body))
+        if isinstance(n, Forall):
+            new_ty = n.param_ty
+            if id(n) == target_id:
+                new_ty, _ = _substitute_one_typehole(new_ty, candidate)
+            return Forall(param=n.param, param_ty=new_ty, body=go(n.body))
+        if isinstance(n, Fix):
+            new_ty = n.param_ty
+            if id(n) == target_id:
+                new_ty, _ = _substitute_one_typehole(new_ty, candidate)
+            return Fix(param=n.param, param_ty=new_ty, body=go(n.body))
+        if isinstance(n, App):
+            return App(fn=go(n.fn), arg=go(n.arg))
+        if isinstance(n, If):
+            return If(cond=go(n.cond), then_b=go(n.then_b),
+                      else_b=go(n.else_b))
+        if isinstance(n, Bin):
+            return Bin(op=n.op, lhs=go(n.lhs), rhs=go(n.rhs))
+        if isinstance(n, Succ):
+            return Succ(arg=go(n.arg))
+        if isinstance(n, Cons):
+            return Cons(head=go(n.head), tail=go(n.tail))
+        if isinstance(n, Eq):
+            return Eq(lhs=go(n.lhs), rhs=go(n.rhs))
+        return n
+    return go(ast)
+
+
+def _collect_type_hole_binders(ast: Node) -> list[tuple[int, TypeHole]]:
+    """Pre-order walk; return one (id(binder_node), TypeHole) entry for
+    each Lam/Forall/Fix whose param_ty contains a TypeHole.
+
+    Only the OUTER TypeHole is returned per binder; nested TypeHoles
+    inside the same param_ty are handled by per-candidate recursion
+    when the encoder substitutes them.
+    """
+    from .ast import TArrow
+    out: list[tuple[int, TypeHole]] = []
+
+    def first_hole(ty) -> "TypeHole | None":
+        if isinstance(ty, TypeHole):
+            return ty
+        if isinstance(ty, TArrow):
+            h = first_hole(ty.src)
+            if h is not None:
+                return h
+            return first_hole(ty.dst)
+        return None
+
+    def go(n: Node) -> None:
+        if isinstance(n, (Lam, Forall, Fix)):
+            h = first_hole(n.param_ty)
+            if h is not None:
+                out.append((id(n), h))
+            go(n.body)
+            return
+        for attr in ("fn", "arg", "lhs", "rhs", "cond",
+                     "then_b", "else_b", "head", "tail"):
+            child = getattr(n, attr, None)
+            if isinstance(child, Node):
+                go(child)
+    go(ast)
+    return out
+
+
 def _hole_nodes(sites: list[NodeOccupancy]) -> list[int]:
     """Indices of nodes whose var_ref carries HoleVar candidates."""
     out: list[int] = []
@@ -211,6 +338,17 @@ def encode_mera(ast: Node, n_nodes_max: int = 32,
     # candidate sub-trees into one MERA state via from_term_superposition.
     if _has_structural_hole(ast):
         return _encode_with_structural_holes(
+            ast, n_nodes_max=n_nodes_max, chi_layer=chi_layer)
+
+    # TypeHole path (M3 P5, spec §5.3): if any Lam/Forall/Fix.param_ty
+    # carries a TypeHole, lift the affected type leaves to a genuine
+    # equal-amplitude superposition over the candidate type tags via
+    # MERA.from_term_superposition. Per §1.1, the candidates are real
+    # tensor-network amplitudes on the type leaves, not a classical
+    # iteration. (Composition with structural HoleVar is a follow-up;
+    # P5 has TypeHole only, so this branch is correct for it.)
+    if _has_type_hole(ast):
+        return _encode_with_type_holes(
             ast, n_nodes_max=n_nodes_max, chi_layer=chi_layer)
 
     # Front-half: reuse the MPS encoder pipeline.
@@ -297,6 +435,16 @@ def encode_mera(ast: Node, n_nodes_max: int = 32,
     for node_idx in children_of_node:
         children_of_node[node_idx].sort()
 
+    # Forall-protected leaves (I-Task-10 blocker #5): universal quantification
+    # in the tensor-network substrate is genuine inertia, not classical
+    # iteration. Each Forall binder's own bid leaf and every bound Var use's
+    # 5 species leaves are flagged here; the synthesis driver forwards this
+    # set as frozen_leaves= to imaginary-time evolution (spec §5.2a / §8.6
+    # operator-algebraic restriction). Reductions like R-AddZero may read the
+    # bound Var's leaf indices for promotion targets, but never write them.
+    forall_protected_leaves = _collect_forall_protected_leaves(
+        sites, n_nodes, layout)
+
     meta = MeraEncodingMeta(
         n_nodes=n_nodes, n_leaves=layout.n_leaves, L=layout.L,
         leaf_dim=MERA_LEAF_DIM,
@@ -310,8 +458,268 @@ def encode_mera(ast: Node, n_nodes_max: int = 32,
         layout=layout,
         children_of_node=children_of_node,
         n_nodes_max=n_nodes_max,
+        forall_protected_leaves=forall_protected_leaves,
     )
     return state, meta
+
+
+def _collect_forall_protected_leaves(
+        sites: list, n_nodes: int, layout: MeraLayout) -> set[int]:
+    """Collect leaves that must remain bitwise unchanged through evolution
+    so universal quantification is genuine tensor-network inertia
+    (I-Task-10 blocker #5, §1.1 binding-as-entanglement).
+
+    For each Forall binder site:
+      - Add the Forall's own bid leaf.
+      - For every Var site whose ``var_ref.binder_site`` points to that
+        Forall, add all 5 species leaves (kind, type, bid, value, tobl).
+
+    Encodings without any Forall return an empty set, preserving prior
+    behavior bitwise (default frozen_leaves=None at the evolution layer).
+    """
+    protected: set[int] = set()
+    forall_sites: set[int] = {
+        i for i in range(n_nodes) if sites[i].kind == KIND_FORALL
+    }
+    if not forall_sites:
+        return protected
+    # Forall binder's own bid leaf.
+    for fs in forall_sites:
+        protected.add(layout.leaf_of(fs, "bid"))
+    # All 5 species leaves of every bound Var use.
+    for i in range(n_nodes):
+        occ = sites[i]
+        if occ.var_ref is None:
+            continue
+        if occ.var_ref.binder_site in forall_sites:
+            for species in ("kind", "type", "bid", "value", "tobl"):
+                protected.add(layout.leaf_of(i, species))
+    return protected
+
+
+# --------------------------------------------------------------------------
+# M3 P5: TypeHole encoding (spec §5.3)
+# --------------------------------------------------------------------------
+
+
+def _concrete_leaves_and_sites(
+        ast: Node, n_nodes_max: int
+) -> tuple[list[np.ndarray], list, list[int], int, MeraLayout]:
+    """Run the concrete pipeline (serialize, types, tobl, leaves) on a
+    TypeHole-free AST and return ``(leaf_vectors, sites, type_tags,
+    n_nodes, layout)``. Layout is sized to ``n_nodes`` (TypeHole branches
+    share the SAME layout since the AST structure is identical across
+    candidate substitutions).
+    """
+    sites = serialize_preorder(ast, N=n_nodes_max)
+    type_tags = compute_site_types(ast, sites)
+    compute_tobl_tags(ast, sites)
+    n_nodes = sum(1 for occ in sites if occ.kind != _ENC_KIND_PAD)
+    layout = compute_layout(n_nodes)
+    leaf_vectors: list[np.ndarray] = []
+    for node_idx in range(n_nodes):
+        five = node_leaf_vectors(sites[node_idx], type_tags[node_idx])
+        leaf_vectors.extend(five)
+    while len(leaf_vectors) < layout.n_leaves:
+        leaf_vectors.append(_pad_leaf_vector())
+    return leaf_vectors, sites, type_tags, n_nodes, layout
+
+
+def _encode_with_type_holes(ast: Node, n_nodes_max: int,
+                             chi_layer: int) -> tuple[MERA, MeraEncodingMeta]:
+    """Encode an AST whose Lam/Forall/Fix.param_ty contains TypeHoles
+    via an equal-amplitude superposition over the Cartesian product of
+    per-binder candidate substitutions.
+
+    For each combined candidate choice the AST is concretely substituted
+    and run through the M1 pipeline; the resulting per-leaf vector lists
+    are handed to ``MERA.from_term_superposition`` so the affected type
+    leaves carry a genuine multi-tag superposition (spec §1.1, §5.3).
+    """
+    holes = _collect_type_hole_binders(ast)
+    if not holes:
+        # Shouldn't happen given the caller's guard, but be defensive.
+        return encode_mera(ast, n_nodes_max=n_nodes_max,
+                           chi_layer=chi_layer)
+
+    # Cartesian product over per-binder candidates.
+    candidate_lists: list[list[Ty]] = [list(h.candidates) for _, h in holes]
+    # Rank-K guard: each TypeHole has <=4 flat candidates, so the
+    # product is bounded in practice (P5: K=2). Respect the structural
+    # encoder's chi_layer cap analogously.
+    total_k = 1
+    for cands in candidate_lists:
+        total_k *= max(1, len(cands))
+    if total_k > max(chi_layer, 4):
+        raise EncodingTooLarge(n_nodes=0, N=n_nodes_max)
+
+    # Enumerate combined choices (one index per binder).
+    choices: list[list[int]] = [[]]
+    for cands in candidate_lists:
+        choices = [c + [j] for c in choices for j in range(len(cands))]
+
+    # For each combined choice, substitute candidates into the AST and
+    # run the concrete pipeline.
+    base_leaves_per_choice: list[list[np.ndarray]] = []
+    layout_ref: MeraLayout | None = None
+    sites_ref: list | None = None
+    type_tags_ref: list[int] | None = None
+    n_nodes_ref: int | None = None
+    for choice in choices:
+        concretized = ast
+        for hi, ((binder_id, _h), j) in enumerate(zip(holes, choice)):
+            concretized = _substitute_typehole_at(
+                concretized, binder_id, candidate_lists[hi][j])
+        leaves, sites, type_tags, n_nodes, layout = (
+            _concrete_leaves_and_sites(concretized, n_nodes_max))
+        if layout_ref is None:
+            layout_ref = layout
+            sites_ref = sites
+            type_tags_ref = type_tags
+            n_nodes_ref = n_nodes
+        else:
+            if n_nodes != n_nodes_ref:
+                raise RuntimeError(
+                    "TypeHole substitution changed AST node count "
+                    f"({n_nodes} vs {n_nodes_ref}); structural invariance "
+                    "violated")
+        base_leaves_per_choice.append(leaves)
+
+    layout = layout_ref
+    sites = sites_ref
+    type_tags = type_tags_ref
+    n_nodes = n_nodes_ref
+
+    K = len(choices)
+    amp = 1.0 / np.sqrt(K)
+    terms: list[tuple[complex, list[np.ndarray]]] = [
+        (complex(amp), leaves) for leaves in base_leaves_per_choice
+    ]
+    state = MERA.from_term_superposition(terms, chi_layer=chi_layer)
+    state.normalize()
+
+    # Meta bookkeeping using the FIRST candidate's sites (canonical).
+    binder_kinds = _binder_kinds()
+    binder_leaves: dict[int, int] = {}
+    use_to_binder: dict[int, int] = {}
+    for node_idx in range(n_nodes):
+        occ = sites[node_idx]
+        if occ.kind in binder_kinds:
+            binder_leaves[node_idx] = layout.leaf_of(node_idx, "bid")
+        if occ.var_ref is not None:
+            use_leaf = layout.leaf_of(node_idx, "bid")
+            binder_node = occ.var_ref.binder_site
+            use_to_binder[use_leaf] = layout.leaf_of(binder_node, "bid")
+
+    nested_type_index: dict[int, object] = {}
+    for node_idx in range(n_nodes):
+        if (type_tags[node_idx] == TYPE_ARR_NESTED
+                and sites[node_idx].ty is not None):
+            nested_type_index[node_idx] = sites[node_idx].ty
+
+    children_of_node: dict[int, list[int]] = {i: [] for i in range(n_nodes)}
+    path_to_node: dict[tuple, int] = {}
+    for node_idx in range(n_nodes):
+        path_to_node[sites[node_idx].ast_path] = node_idx
+    for node_idx in range(n_nodes):
+        path = sites[node_idx].ast_path
+        if len(path) >= 1:
+            parent = path_to_node.get(path[:-1])
+            if parent is not None and parent != node_idx:
+                children_of_node[parent].append(node_idx)
+    for k in children_of_node:
+        children_of_node[k].sort()
+
+    forall_protected_leaves = _collect_forall_protected_leaves(
+        sites, n_nodes, layout)
+
+    # typehole_regions: per-binder record with the binder's site index in
+    # the canonical pre-order, the candidate tags, and the type leaf the
+    # superposition primarily lives on (the Lam's `type` leaf — which
+    # carries TArrow(candidate, body_ty) and varies across candidates).
+    typehole_regions: list[dict] = []
+    # Map id(binder_node) -> site index using the canonical (first-choice)
+    # sites' binder_ref.
+    id_to_site: dict[int, int] = {}
+    for node_idx in range(n_nodes):
+        br = sites[node_idx].binder_ref
+        if br is not None:
+            id_to_site[id(br.lam_node)] = node_idx
+    # Note: id_to_site uses concretized-AST binder identities (per choice
+    # 0). The ORIGINAL TypeHole-bearing AST has DIFFERENT id()s, so we
+    # use the canonical preorder position via the index of each hole in
+    # the binder-walk: the canonical AST's binders appear in the same
+    # order (substitution preserves structure).
+    canonical_binder_sites = [
+        node_idx for node_idx in range(n_nodes)
+        if sites[node_idx].binder_ref is not None
+    ]
+    # The original AST's binders appear in the same pre-order; find
+    # which of them have TypeHoles to align with ``holes``.
+    original_binder_id_order = _binder_id_preorder(ast)
+    original_with_holes = [bid for bid, _h in holes]
+    hole_canonical_sites: list[int] = []
+    cursor_holes = 0
+    for bid in original_binder_id_order:
+        if cursor_holes >= len(original_with_holes):
+            break
+        if bid == original_with_holes[cursor_holes]:
+            # This binder has a TypeHole; the matching canonical site is
+            # the SAME-ordered binder in the substituted AST.
+            # Position in original_binder_id_order = position in
+            # canonical_binder_sites.
+            position = original_binder_id_order.index(bid)
+            hole_canonical_sites.append(canonical_binder_sites[position])
+            cursor_holes += 1
+
+    for (binder_id, hole), site_idx in zip(holes, hole_canonical_sites):
+        cand_tags: list[int] = []
+        for c in hole.candidates:
+            from ._types import ty_to_tag as _t2t
+            tag, _ = _t2t(c)
+            cand_tags.append(tag)
+        typehole_regions.append({
+            "binder_node": site_idx,
+            "type_leaf": layout.leaf_of(site_idx, "type"),
+            "value_leaf": layout.leaf_of(site_idx, "value"),
+            "candidate_tags": tuple(cand_tags),
+        })
+
+    meta = MeraEncodingMeta(
+        n_nodes=n_nodes, n_leaves=layout.n_leaves, L=layout.L,
+        leaf_dim=MERA_LEAF_DIM,
+        species_of_leaf=layout.species_of_leaf,
+        node_of_leaf=layout.node_of_leaf,
+        site_to_ast_path={k: occ.ast_path for k, occ in enumerate(sites)
+                          if occ.kind != _ENC_KIND_PAD},
+        binder_leaves=binder_leaves,
+        use_to_binder=use_to_binder,
+        nested_type_index=nested_type_index,
+        layout=layout,
+        children_of_node=children_of_node,
+        n_nodes_max=n_nodes_max,
+        forall_protected_leaves=forall_protected_leaves,
+        typehole_regions=typehole_regions,
+    )
+    return state, meta
+
+
+def _binder_id_preorder(ast: Node) -> list[int]:
+    """Pre-order list of id() of every Lam/Forall/Fix encountered."""
+    out: list[int] = []
+
+    def go(n: Node) -> None:
+        if isinstance(n, (Lam, Forall, Fix)):
+            out.append(id(n))
+            go(n.body)
+            return
+        for attr in ("fn", "arg", "lhs", "rhs", "cond",
+                     "then_b", "else_b", "head", "tail"):
+            child = getattr(n, attr, None)
+            if isinstance(child, Node):
+                go(child)
+    go(ast)
+    return out
 
 
 # --------------------------------------------------------------------------
@@ -491,6 +899,34 @@ def _encode_with_structural_holes(ast: Node, n_nodes_max: int,
     for k in children_of_node:
         children_of_node[k].sort()
 
+    # Forall-protected leaves (I-Task-10 blocker #5): same rule as the
+    # concrete path, walking the structural-sketch's substituted sites by
+    # their expanded-slot mapping. Hole-region slots themselves cannot
+    # introduce Forall binders (HoleVar->IntLit substitution erases them
+    # from candidates only, never the surrounding sketch).
+    forall_protected_leaves: set[int] = set()
+    forall_sites_str: set[int] = set()
+    for sub_idx in range(n_sub):
+        if sub_idx in hole_set:
+            continue
+        new_idx = expanded_slot_of_sub[sub_idx]
+        if sub_sites[sub_idx].kind == KIND_FORALL:
+            forall_sites_str.add(new_idx)
+            forall_protected_leaves.add(layout.leaf_of(new_idx, "bid"))
+    if forall_sites_str:
+        for sub_idx in range(n_sub):
+            if sub_idx in hole_set:
+                continue
+            new_idx = expanded_slot_of_sub[sub_idx]
+            occ = sub_sites[sub_idx]
+            if occ.var_ref is None:
+                continue
+            binder_new = expanded_slot_of_sub.get(occ.var_ref.binder_site)
+            if binder_new in forall_sites_str:
+                for species in ("kind", "type", "bid", "value", "tobl"):
+                    forall_protected_leaves.add(
+                        layout.leaf_of(new_idx, species))
+
     meta = MeraEncodingMeta(
         n_nodes=n_total, n_leaves=layout.n_leaves, L=layout.L,
         leaf_dim=MERA_LEAF_DIM,
@@ -504,6 +940,7 @@ def _encode_with_structural_holes(ast: Node, n_nodes_max: int,
         children_of_node=children_of_node,
         n_nodes_max=n_nodes_max,
         hole_regions=hole_regions,
+        forall_protected_leaves=forall_protected_leaves,
     )
     return state, meta
 
@@ -818,6 +1255,27 @@ def _encode_bundle(bundle: Bundle, n_nodes_max: int,
     hole_regions_meta = (
         hole_regions_out if sketch_is_structural else []
     )
+
+    # Forall-protected leaves (I-Task-10 blocker #5): scan the concatenated
+    # sites for KIND_FORALL binders; freeze the Forall's bid leaf + the 5
+    # species leaves of every Var whose var_ref.binder_site points at one
+    # (binder_site indices are already rebased into the unified pre-order).
+    forall_protected_leaves: set[int] = set()
+    forall_sites_b: set[int] = {
+        i for i in range(n_total)
+        if sites_all[i].kind == KIND_FORALL
+    }
+    if forall_sites_b:
+        for fs in forall_sites_b:
+            forall_protected_leaves.add(layout.leaf_of(fs, "bid"))
+        for i in range(n_total):
+            occ = sites_all[i]
+            if occ.var_ref is None:
+                continue
+            if occ.var_ref.binder_site in forall_sites_b:
+                for species in ("kind", "type", "bid", "value", "tobl"):
+                    forall_protected_leaves.add(layout.leaf_of(i, species))
+
     meta = MeraEncodingMeta(
         n_nodes=n_total, n_leaves=layout.n_leaves, L=layout.L,
         leaf_dim=MERA_LEAF_DIM,
@@ -833,5 +1291,6 @@ def _encode_bundle(bundle: Bundle, n_nodes_max: int,
         n_nodes_max=n_nodes_max,
         witness_node_ranges=witness_node_ranges,
         hole_regions=hole_regions_meta,
+        forall_protected_leaves=forall_protected_leaves,
     )
     return state, meta

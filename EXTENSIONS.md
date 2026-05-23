@@ -6,6 +6,90 @@ than left as a TODO or stub. Each entry names the call site, what is
 needed, the workaround currently in tree, and which acceptance criterion
 it unblocks.
 
+## RESOLVED — I-Task-10 blocker #3: R-AddZero reduction rule (`add x Zero -> x`)
+
+- Resolution: new `RULE_R_ADD_ZERO = "R-AddZero"` term added to
+  `MeraEvalHamiltonian` (`src/qft_pcn/logic/mera_evaluation_hamiltonian.py`).
+  Diagonal redex projector built in `_mera_eval_terms.add_zero_penalty_ops`
+  as an inclusion-exclusion sum of (1 BIN-base × 2 P[zero] expansions) +
+  (1 BIN-base × 2) + (1 BIN-base × 2×2 cross terms with coefficient -2) =
+  8 factored `dict[leaf -> (16,16)]` operators — never a 16**k operator
+  (spec §1.3). `P_exactly_one = P_lhs + P_rhs - 2 * P_lhs * P_rhs` is
+  faithful: 0 on both-zero and on non-redex configurations, 1 on the
+  exactly-one-zero redex. Transition gate (`_add_zero_moves` in the
+  Hamiltonian) snapshots the non-zero operand root's 5 species leaves on
+  first firing, then drives the BIN node's 5 leaves toward the snapshot
+  via `single_leaf_transition_gate` while collapsing the spent zero
+  operand's sub-tree to PAD. The non-zero operand root's own leaves
+  drain to PAD only AFTER the BIN node has fully received the snapshot
+  (the same Stage-C staging `_beta_moves` enforces), guarded by
+  `_add_zero_unfinished` + `_add_zero_cleanup_unfinished`. When the
+  non-zero operand is a Forall-protected `Var`, the BIN node's `bid`
+  leaf is driven toward the Var's bid index — entanglement-preserving
+  promotion (§1.1: universal quantification preserved through the
+  encoded MERA's tree entanglement, not classical substitution); the
+  frozen-leaves filter (#6) then drops any gate whose target leaf is
+  in `forall_protected_leaves`, so the Var's own leaves remain bitwise
+  unchanged.
+- Tests: `src/qft_pcn/tests/test_mera_addzero_rule.py` (6 cases) —
+  projector faithfulness on `NatLit(5)+Zero`, `NatLit(5)+NatLit(3)`,
+  and `Zero+Zero`; closed-case relaxation on `NatLit(5)+Zero` and
+  `Zero+NatLit(5)`; open-case `forall x:Nat. x+Zero` checks (i) the
+  Var's 5 leaves are bitwise unchanged under the protected-leaf filter,
+  (ii) the BIN node's `bid` leaf inherits the Var's bid index, and
+  (iii) the BIN node's `kind` leaf rotates from KIND_BIN to KIND_VAR.
+- No-regression: M2 reduction / eval-Hamiltonian / fix-recursion
+  suites (16 passed) and `test_mera_eval_terms` (4 passed) unchanged.
+- Unblocks: I-Task-10 substrate completeness for open-case proof
+  reduction (the demo's `forall x. x + 0 = x`-style obligations);
+  Blocker #4 (R-Eq-Refl) depends on this to relax `(x+0) = x` to the
+  reflexive `x = x` ground state.
+- Per `docs/superpowers/plans/2026-05-23-i-task-10-blocker-fixes.md`
+  blocker #3.
+
+## RESOLVED — I-Task-10 blocker #5: Forall-protected leaves under relaxation
+
+- Resolution: `MeraEncodingMeta`
+  (`src/qft_pcn/logic/mera_encoder.py`) now carries
+  `forall_protected_leaves: set[int]` (default `set()`), populated by
+  `_collect_forall_protected_leaves` over the encoder's NodeOccupancy
+  sites. For every `KIND_FORALL` binder site the helper adds the
+  Forall's own `bid` leaf, then walks all sites whose
+  `var_ref.binder_site` points to that Forall and adds those Vars' five
+  species leaves (`kind`, `type`, `bid`, `value`, `tobl`). The
+  populator runs in the three encoder dispatch paths
+  (`encode_mera`, `_encode_with_structural_holes`, `_encode_bundle`),
+  so witness-augmented sketches and bundles inherit the same
+  protection. The synthesis driver
+  (`logic/mera_synthesis/runner.py::_anneal`) forwards the set as
+  `frozen_leaves=` to all three phases of
+  `mera_imaginary_evolve_state`, reusing the operator-algebraic hook
+  from blocker #6. Encodings without any `Forall` produce
+  `forall_protected_leaves == set()` and the driver passes
+  `frozen_leaves=None`, preserving prior behavior bitwise. This is
+  §1.1 binding-as-entanglement on the MERA: the bound Var's leaf
+  vectors are unchanged through evolution, the bid leaf stays
+  entangled with the Forall — universal quantification by inertia,
+  not classical iteration (§1.6).
+- Tests: `src/qft_pcn/tests/test_mera_forall_protected.py` covers
+  (`test_encoder_populates_forall_protected_leaves`,
+  `test_evolution_preserves_forall_bound_var_leaves`,
+  `test_relaxation_does_not_pin_forall_var_value`,
+  `test_default_empty_when_no_forall`) — encoder populates the
+  expected 11 leaves for `forall n:Nat. Eq n n` (1 Forall bid + 2 *
+  5 Var species), 40 steps of composed (T-typing + H-eval)
+  imag-time evolution leave every protected leaf bitwise unchanged,
+  the bound Var's value species remains a unit one-hot at
+  `VALUE_NONE` (never pinned to a concrete integer), and the empty
+  default holds for Forall-free encodings.
+- Unblocks: I-Task-10 acceptance criterion that universal
+  quantifiers in propositions survive M2-style relaxation without
+  collapsing to a single witness; downstream lemma-library entries
+  whose proposition body uses `Forall` (J-Task-6 lemma promotion
+  reuses the same hook).
+- Per `docs/superpowers/plans/2026-05-23-i-task-10-blocker-fixes.md`
+  blocker #5. Depends on blocker #6 (`frozen_leaves=` substrate hook).
+
 ## RESOLVED — I-Task-10 blocker #6: `frozen_leaves=` in MERA imag-time evolution
 
 - Resolution: `mera_trotter_step`, `mera_imaginary_evolve_state`, and
