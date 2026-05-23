@@ -1,10 +1,15 @@
 /**
- * QPCN panel — three Plotly charts: the scalar energy (descent), a bar chart
- * of per-observable prediction error, and the learnable-parameter values.
- * A panel renders one Frame; the parent re-renders with new frames as the run
- * streams, so each chart reflects the current step.
+ * QPCN panel — energy readout, a per-observable prediction-error table, a
+ * bar chart of learnable parameter values, and a MetricsStrip tracking the
+ * scalar energy + each learnable parameter across the run.
  *
  * Reads `frame.layer_states.qpcn` (shape: `snapshot_qpcn`).
+ *
+ * Note: writable-param sliders are intentionally NOT exposed — the substrate
+ * setter for QPCN params is not surfaced here (see EXTENSIONS.md). The
+ * prediction-error "target" column is also omitted because snapshots don't
+ * carry target values; we render `(unknown)` in the readout meta instead of
+ * inventing one.
  */
 
 import { useEffect, useMemo, useRef } from 'react';
@@ -12,6 +17,7 @@ import Plotly from 'plotly.js-dist-min';
 import type { Data as PlotData, Layout as PlotLayout } from 'plotly.js-dist-min';
 import type { Frame } from '../lib/types';
 import { PanelShell } from './PanelShell';
+import { MetricsStrip } from './MetricsStrip';
 
 interface QpcnState {
   energy?: number | null;
@@ -50,61 +56,22 @@ function Chart({
   return <div ref={ref} style={{ width: '100%', height: '100%' }} />;
 }
 
-export function QpcnPanel({ frame }: { frame: Frame }) {
+export function QpcnPanel({
+  frame,
+}: {
+  frame: Frame;
+  baselineFrame?: Frame;
+}) {
   const st = (frame.layer_states.qpcn ?? {}) as QpcnState;
-  const errors = st.pred_errors ?? {};
-  const params = st.params ?? {};
+  const errors = (st.pred_errors ?? {}) as Record<string, number>;
+  const params = (st.params ?? {}) as Record<string, number>;
   const occ = st.occupations ?? [];
   const hasData =
     st.energy != null ||
     Object.keys(errors).length > 0 ||
     Object.keys(params).length > 0;
 
-  const errKeys = Object.keys(errors);
   const paramKeys = Object.keys(params);
-
-  // Build the Plotly trace/layout objects with stable identity: they only
-  // change when their underlying inputs change, so each Chart's
-  // `[data, layout]` effect fires once per real data update, not per render.
-  const energyData = useMemo<PlotData[]>(
-    () => [
-      {
-        x: ['E'],
-        y: [st.energy ?? 0],
-        type: 'bar',
-        marker: { color: '#d05f8f' },
-      },
-    ],
-    [st.energy],
-  );
-  const energyLayout = useMemo<Partial<PlotLayout>>(
-    () => ({
-      title: { text: 'Energy', font: { size: 11 } },
-      yaxis: { gridcolor: '#1c2230' },
-    }),
-    [],
-  );
-
-  const errVals = errKeys.map((k) => errors[k]);
-  const errData = useMemo<PlotData[]>(
-    () => [
-      {
-        x: errKeys,
-        y: errVals,
-        type: 'bar',
-        marker: { color: '#d0a05f' },
-      },
-    ],
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [errKeys.join('|'), errVals.join('|')],
-  );
-  const errLayout = useMemo<Partial<PlotLayout>>(
-    () => ({
-      title: { text: 'Per-observable error', font: { size: 11 } },
-      yaxis: { gridcolor: '#1c2230' },
-    }),
-    [],
-  );
 
   const paramVals = paramKeys.map((k) => params[k] ?? 0);
   const paramData = useMemo<PlotData[]>(
@@ -148,24 +115,85 @@ export function QpcnPanel({ frame }: { frame: Frame }) {
     [],
   );
 
+  const energyText =
+    st.energy != null ? st.energy.toFixed(4) : '(unknown)';
+
+  const readouts = (
+    <div className="qpcn-readouts" style={{ display: 'flex', gap: 16 }}>
+      <div>
+        <span style={{ color: '#7f8bb0', marginRight: 6 }}>energy</span>
+        <span style={{ color: '#fbc66a' }}>{energyText}</span>
+      </div>
+      <table
+        className="qpcn-errors"
+        style={{ borderCollapse: 'collapse', fontSize: 11 }}
+      >
+        <thead>
+          <tr>
+            <th style={{ textAlign: 'left', paddingRight: 12 }}>obs</th>
+            <th style={{ textAlign: 'right' }}>error</th>
+          </tr>
+        </thead>
+        <tbody>
+          {Object.entries(errors).map(([k, v]) => (
+            <tr key={k}>
+              <td style={{ paddingRight: 12 }}>{k}</td>
+              <td
+                style={{
+                  textAlign: 'right',
+                  color: v >= 0 ? '#ef9090' : '#9aedc1',
+                }}
+              >
+                {v.toFixed(4)}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+
+  const metricsStrip = (
+    <MetricsStrip
+      layer="qpcn"
+      metrics={[
+        {
+          key: 'E',
+          label: 'energy',
+          color: '#fbc66a',
+          select: (ls) => ls.energy as number,
+        },
+        ...Object.keys(
+          (st.params as Record<string, number>) ?? {},
+        ).map((p, i) => ({
+          key: `p:${p}`,
+          label: p,
+          color: ['#6cd0ff', '#9aedc1', '#d291ff'][i % 3],
+          select: (ls) =>
+            (ls.params as Record<string, number> | undefined)?.[p] as number,
+        })),
+      ]}
+    />
+  );
+
   return (
     <PanelShell
       title="QPCN — energy descent, errors, parameters"
       step={st.step ?? frame.step}
       meta={st.energy != null ? `E = ${st.energy.toFixed(4)}` : undefined}
       hasData={hasData}
+      readouts={readouts}
+      metricsStrip={metricsStrip}
     >
       <div
         style={{
           display: 'grid',
-          gridTemplateRows: '1fr 1fr',
+          gridTemplateRows: '1fr',
           gridTemplateColumns: '1fr 1fr',
           gap: 4,
           height: '100%',
         }}
       >
-        <Chart data={energyData} layout={energyLayout} />
-        <Chart data={errData} layout={errLayout} />
         <Chart data={paramData} layout={paramLayout} />
         <Chart data={occData} layout={occLayout} />
       </div>
