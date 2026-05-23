@@ -87,7 +87,12 @@ _MERA_LEAVES = 4
 
 
 def _build_network(spec: RunSpec) -> QFTPCNNetwork:
-    """Build a small two-layer `QFTPCNNetwork` for the manifold/multifield."""
+    """Build a two-layer `QFTPCNNetwork`.
+
+    Honours `spec.params["manifold"]["source"]` in {"flat", "hot-spot",
+    "two-source"} — the source pattern is *applied* in `run_simulation`
+    via the `observation` array. This builder only constructs the net.
+    """
     n = min(spec.grid, _MAX_GRID)
     rng = np.random.default_rng(0 if spec.seed is None else spec.seed)
     cfg = NetworkConfig(layers=[LayerConfig(channels=1),
@@ -96,40 +101,57 @@ def _build_network(spec: RunSpec) -> QFTPCNNetwork:
 
 
 def _build_qpcn(spec: RunSpec) -> QPCN:
-    """Build a small single-species `QPCN` (MPS substrate)."""
+    """Build a single-species `QPCN` (MPS substrate).
+
+    Honours `spec.params["qpcn"]` keys: `mass`, `kinetic`, `chi_max`,
+    `target_n0` (the *observation* target is consumed in `run_simulation`,
+    not here), `species` (list of species names — defaults to ["A"]).
+    """
     rng = np.random.default_rng(0 if spec.seed is None else spec.seed)
-    species = [FieldSpecies(name="A", cutoff=2, bare_mass=1.0, kinetic=0.5)]
+    p = dict(spec.params.get("qpcn") or {})
+    mass = float(p.get("mass", 1.0))
+    kinetic = float(p.get("kinetic", 0.5))
+    chi_max = min(int(p.get("chi_max", _QPCN_CHI)), _QPCN_CHI * 2)
+    names = list(p.get("species") or ["A"])
+    species = [FieldSpecies(name=n, cutoff=2, bare_mass=mass, kinetic=kinetic)
+               for n in names]
     cfg = QPCNConfig(
         species=species,
         N_sites=_QPCN_SITES,
-        chi_max=_QPCN_CHI,
-        learnable_params=["A.mass"],
-        observable_map=[(0, "A", "n")],
+        chi_max=chi_max,
+        learnable_params=[f"{names[0]}.mass"],
+        observable_map=[(0, names[0], "n")],
     )
     return QPCN(cfg, rng=rng)
 
 
-def _build_mera() -> MERA:
-    """Build a small vacuum `MERA` on a power-of-two leaf count."""
-    return MERA.vacuum(_MERA_LEAVES, d_local=2, chi_layer=4)
+def _build_mera(spec: RunSpec) -> MERA:
+    """Build a vacuum `MERA`. Honours `spec.params["mera"]`."""
+    p = dict(spec.params.get("mera") or {})
+    leaves = int(p.get("leaves", _MERA_LEAVES))
+    chi = int(p.get("chi_layer", 4))
+    if leaves not in (2, 4, 8):
+        leaves = _MERA_LEAVES
+    return MERA.vacuum(leaves, d_local=2, chi_layer=chi)
 
 
 def _build_multifield(spec: RunSpec) -> MultiFieldNetwork:
-    """Build a small two-field `MultiFieldNetwork` on a shared manifold.
+    """Build a two-field `MultiFieldNetwork` on a shared manifold.
 
-    Two field names ("a", "b") so the coupling table is non-empty; the grid
-    is clamped small so a full run stays cheap.
+    Honours `spec.params["multifield"]`: `learn_coupling` (bool),
+    `initial_coupling` (float in [-1, 1]).
     """
     n = min(spec.grid, _MAX_GRID)
     rng = np.random.default_rng(0 if spec.seed is None else spec.seed)
+    p = dict(spec.params.get("multifield") or {})
+    learn = bool(p.get("learn_coupling", True))
+    g0 = float(p.get("initial_coupling", 0.0))
     cfg = MultiFieldConfig(
         field_names=["a", "b"],
-        layer_configs={
-            "a": LayerConfig(channels=1),
-            "b": LayerConfig(channels=1),
-        },
-        coupling={("a", "b"): 0.0},
-        learn_coupling=True,
+        layer_configs={"a": LayerConfig(channels=1),
+                       "b": LayerConfig(channels=1)},
+        coupling={("a", "b"): g0},
+        learn_coupling=learn,
     )
     return MultiFieldNetwork(n, n, cfg, rng=rng)
 
@@ -141,10 +163,13 @@ def run_simulation(spec: RunSpec) -> Iterator[Frame]:
 
     Layers are grouped by substrate: `manifold` runs on a `QFTPCNNetwork`;
     `multifield` runs on its own real `MultiFieldNetwork`; `mps`/`qpcn`/
-    `hamiltonian` share a `QPCN`; `mera` runs standalone. Every active
+    `hamiltonian` share a `QPCN`; `mera` runs standalone. The `vqc` and
+    `logic` layers are accepted in `spec.layers` (so subscribers receive
+    their key in the WS handshake) but are *not* simulated here — they
+    remain fixture-only pending EXTENSIONS.md follow-up. Every active
     substrate contributes its snapshot to a single Frame per step via the
     generic `Recorder.capture`, so one stream can carry several layers at
-    once. `vqc`/`logic` are accepted but not simulated here.
+    once.
     """
     requested = set(spec.layers)
     recorder = Recorder()
@@ -163,12 +188,25 @@ def run_simulation(spec: RunSpec) -> Iterator[Frame]:
     net = _build_network(spec) if want_network else None
     multifield = _build_multifield(spec) if want_multifield else None
     qpcn = _build_qpcn(spec) if want_qpcn else None
-    mera = _build_mera() if want_mera else None
+    mera = _build_mera(spec) if want_mera else None
 
     observation = None
     if net is not None:
         c = net.layers[0].phi.channels
-        observation = np.zeros((c, net.manifold.nx, net.manifold.ny))
+        nx, ny = net.manifold.nx, net.manifold.ny
+        observation = np.zeros((c, nx, ny))
+        source = ((spec.params.get("manifold") or {}).get("source")
+                  or "flat")
+        if source != "flat":
+            xs = np.linspace(-1.0, 1.0, nx)[:, None]
+            ys = np.linspace(-1.0, 1.0, ny)[None, :]
+            if source == "hot-spot":
+                observation[0] = np.exp(-((xs ** 2 + ys ** 2) / 0.1))
+            elif source == "two-source":
+                observation[0] = (
+                    np.exp(-(((xs - 0.4) ** 2 + ys ** 2) / 0.08))
+                    + np.exp(-(((xs + 0.4) ** 2 + ys ** 2) / 0.08))
+                )
 
     mf_observations = None
     if multifield is not None:
@@ -181,7 +219,11 @@ def run_simulation(spec: RunSpec) -> Iterator[Frame]:
             for name, layer in multifield.fields.items()
         }
 
-    qpcn_targets = {(0, "A", "n"): 0.25} if qpcn is not None else {}
+    qpcn_targets = {}
+    if qpcn is not None:
+        tgt = (spec.params.get("qpcn") or {}).get("target_n0", 0.25)
+        if tgt is not None:
+            qpcn_targets = {(0, qpcn.cfg.species[0].name, "n"): float(tgt)}
 
     # Recorder retains every captured Frame in `recorder.frames` for callers
     # that consume the generator's side effects. Note `/export` does NOT reuse
