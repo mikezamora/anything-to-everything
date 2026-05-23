@@ -267,6 +267,10 @@ class MERA:
     # Disentanglers are only mutated by apply_local_gate's reconstruction
     # (the two assignment sites in apply_local_gate), which clear this.
     _is_product_cache: "bool | None" = None
+    # Bumped by every in-place mutation (leaf gate / 2-site gate /
+    # normalize-via-leaves). Read by ``_mera_window._bra_cache`` to
+    # invalidate the cross-ascent cache when the state changes.
+    _mutation_version: int = 0
 
     def __post_init__(self) -> None:
         N = len(self.leaves)
@@ -670,10 +674,12 @@ class MERA:
             self._superposition_terms = [
                 (c / s, sites) for c, sites in self._superposition_terms]
             self.top = self.top / s
+            self._mutation_version += 1
             return self
         scale = n ** (0.5 / self.N)
         for k in range(self.N):
             self.leaves[k] = self.leaves[k] / scale
+        self._mutation_version += 1
         return self
 
     def _cross_layer1(self, other: "MERA") -> list[np.ndarray]:
@@ -1287,6 +1293,9 @@ class MERA:
             self.inter_disentanglers[0][(leaf - 1) // 2] = recon4
         # A reconstructed disentangler is generally non-identity.
         self._is_product_cache = None
+        # Invalidate the bra-bra cross-ascent cache: disentanglers and/or
+        # inter-disentanglers at layer 0 changed.
+        self._mutation_version += 1
         return trunc_err
 
     def apply_local_gate(self, leaf: int, gate: np.ndarray) -> None:
@@ -1304,3 +1313,6 @@ class MERA:
                 f"gate shape {gate.shape}, expected ({d}, {d})")
         self.leaves[leaf] = np.einsum(
             'st,ltr->lsr', gate, self.leaves[leaf], optimize='greedy')
+        # Invalidate the bra-bra cross-ascent cache held by
+        # _mera_window: this leaf mutation changes the diagonal eta_k.
+        self._mutation_version += 1
