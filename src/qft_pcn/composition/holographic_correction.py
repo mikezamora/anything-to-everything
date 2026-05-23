@@ -39,7 +39,7 @@ from typing import Iterable, Mapping, Sequence
 
 import numpy as np
 
-from ..qft.mera import MERA
+from src.qft_pcn.qft.mera import MERA
 
 
 # ---------------------------------------------------------------------------

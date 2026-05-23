@@ -140,7 +140,7 @@ def test_structural_mismatch_is_infinite_syndrome():
     # A larger program → more leaves / different layer_dims.
     big, _ = encode_mera(parse(r"\x:Int. \y:Int. \z:Int. x + y + z"))
     if big.N == parent.N and big.layer_dims == parent.layer_dims:
-        pytest.skip("encoder padded both programs to the same shape")
+        pytest.fail("encoder padded shapes equal — fixture-shape regression")
     report = detect_logical_corruption(parent, {"shape_diff": big})
     assert "shape_diff" in report.flagged
     assert report.syndrome_distances["shape_diff"] == float('inf')

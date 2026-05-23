@@ -790,3 +790,72 @@ already perf-optimized through the M3 perf path
   functional + softmax surface; integration with orchestrator + corpus
   test deferred.
 - Unblocks: §12.16 production acceptance.
+
+## Missing dependency: §12.2 real Jones polynomial / Kauffman-bracket evaluation
+
+- Where: `src/qft_pcn/composition/topological_invariants.py` at commit
+  25fab9b shipped `compute_jones_polynomial` returning a `Polynomial`
+  whose coefficients were sorted-by-magnitude Wilson-loop expectations.
+  Spec review found this was a Wilson-loop fingerprint dressed as a
+  polynomial — NOT a Laurent polynomial in `t**(1/4)`, NOT derived from
+  Kauffman-bracket recursion, NOT built from a braid word. The function
+  has been renamed to `compute_wilson_loop_signature` returning a
+  `LoopSignature` dataclass (no polynomial dressing) per
+  `memory/no-placeholders.md`. Spec §12.2 (Witten 1988,
+  Reshetikhin-Turaev 1991) calls for the actual Jones polynomial:
+  - Extract closed loops from binding diagram (variable use -> binder bonds)
+  - Construct braid word from leaf crossings
+  - Evaluate Kauffman bracket `<L> = A<L_0> + A^{-1}<L_oo>` recursively
+  - Writhe-normalize to obtain V(t) as Laurent polynomial in `t**(1/4)`
+- Need:
+  - `extract_braid_word(state) -> BraidWord` — read closed loops from
+    bond entanglement structure of the encoded state.
+  - `kauffman_bracket(braid) -> LaurentPoly` — recursive evaluation
+    of `<L> = A<L_0> + A^{-1}<L_oo>` with unknot normalization
+    `<O> = -A^2 - A^{-2}`.
+  - `jones_polynomial(braid) -> LaurentPoly` — writhe-normalize the
+    Kauffman bracket to a topological invariant in `t**(1/4)`.
+  - Spec acceptance pairs (currently XFAIL in
+    `test_topological_invariants.py`):
+    * identify `\x:Int. x+0` with `\x:Int. x` (beta-equivalent, same
+      leaf count)
+    * identify `map f . map g` with `map (f . g)` (functor law)
+- Workaround: `compute_wilson_loop_signature` provides a NECESSARY but
+  not SUFFICIENT fingerprint. Two structurally-distinct programs that
+  happen to share Wilson loops would collide; spec §12.2's "exact
+  program equivalence" promise requires the full Jones polynomial.
+- Unblocks: §12.2 spec acceptance (the four example pairs in spec
+  §12.2 risk table).
+
+## Missing dependency: §12.5 holographic-code RECOVERY routine + 5%-noise acceptance
+
+- Where: `src/qft_pcn/composition/holographic_correction.py` ships only
+  DETECTION (compute_stabilizer_syndromes + detect_logical_corruption).
+  Spec §12.5 lines 1542-1543 require RECOVERY: "apply the inverse of
+  the detected error to restore the logical state". Spec line 1557 calls
+  for a 5%-noise-injection acceptance test verifying reconstructed-proof
+  correctness.
+- Need:
+  - `apply_holographic_recovery(parent_state, corruption_report) -> MERA` —
+    invert the detected error per Pastawski recovery.
+  - 5%-noise acceptance test injecting realistic perturbations + verifying
+    decode_mera produces correct AST after recovery.
+- Workaround: detection is operational at commit 1167ec3 (8 tests). Detection
+  alone suffices for "flag and refuse" failure modes; recovery is the
+  HaPPY-code completeness story.
+- Unblocks: §12.5 full acceptance (recovery + reconstruction). Cross-references
+  the §10.10 dispatcher wiring task.
+
+## Missing dependency: §12.5 detect_logical_corruption not wired into §10.10 dispatcher
+
+- Where: `src/qft_pcn/composition/dispatcher.py` + `result_integrator.py`
+  do not currently call `holographic_correction.detect_logical_corruption`
+  on dispatched-children results. Spec §12.5 line 1521 calls for QEC
+  detection "when sub-QPCNs in §10.10 return inconsistent results".
+- Need: integrate `detect_logical_corruption` into `dispatch_siblings`
+  or `integrate_child` so corruption flagging fires automatically on
+  orchestrator paths.
+- Workaround: the QEC module is standalone-callable; orchestrator users
+  can detect corruption manually post-hoc. Sufficient for unit-test
+  acceptance, insufficient for the §10.10 dispatcher contract.
+- Unblocks: §12.5 production wiring + §10.10 corruption-aware acceptance.
