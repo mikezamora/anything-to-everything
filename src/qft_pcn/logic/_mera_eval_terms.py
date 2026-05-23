@@ -19,7 +19,7 @@ import numpy as np
 from .mera_encoding import (
     MERA_LEAF_DIM, KIND_PAD,
     KIND_APP, KIND_LAM, KIND_BIN, KIND_INT, KIND_IF, KIND_BOOL,
-    KIND_SUCC, KIND_NATLIT, KIND_VAR, KIND_FIX, KIND_ZERO,
+    KIND_SUCC, KIND_NATLIT, KIND_VAR, KIND_FIX, KIND_ZERO, KIND_EQ,
 )
 from .encoding import (
     VALUE_PLUS, VALUE_MINUS, VALUE_TIMES, VALUE_LT, VALUE_EQ,
@@ -194,6 +194,58 @@ def add_zero_penalty_ops(bin_kind_leaf: int, bin_value_leaf: int,
             merged[bin_value_leaf] = p_plus
             ops.append(merged)
 
+    return ops
+
+
+def eqrefl_penalty_ops(eq_kind_leaf: int, lhs_leaf: int, rhs_leaf: int,
+                       lam: float) -> list[dict]:
+    """Diagonal penalty for one (species, lhs/rhs leaf pair) of an Eq
+    redex (spec §7.1 extended; plan blocker #4):
+
+        lam * P[kind=KIND_EQ](eq_kind_leaf) * (I - P_equal_pair)
+
+    where P_equal_pair on a (lhs_leaf, rhs_leaf) species pair is
+    sum_i P_i(lhs) * P_i(rhs) (the diagonal of |i,i><i,i|), so
+
+        I - P_equal_pair = I - sum_i P_i(lhs) * P_i(rhs)
+                        = sum_{i!=j} P_i(lhs) * P_j(rhs)   (240 terms),
+
+    the probability that lhs and rhs carry DIFFERENT basis indices on
+    this species. The diagonal expectation is computed as a sum of
+    single-leaf-marginal products (no 16^2 operator, spec §1.3): one
+    constant `lam * <P[KIND_EQ]>` term, MINUS 16 factored
+    `lam * <P[KIND_EQ]> * <P_i(lhs)> * <P_i(rhs)>` terms (one per
+    basis index i).
+
+    Returns 17 factored ops summing to the desired penalty:
+        +lam * P[KIND_EQ](eq_kind_leaf)                         (1 op)
+        -lam * P[KIND_EQ](eq_kind_leaf) * P_i(lhs) * P_i(rhs)   (16 ops)
+
+    Each op is a dict[leaf -> (16,16)] (3 leaves max — eq_kind_leaf,
+    lhs_leaf, rhs_leaf), well within the §1.3 budget.
+
+    <H>_state = 0 on this (species, leaf-pair) iff either the Eq node
+    is not KIND_EQ (the redex is not present) OR the two leaves carry
+    the same basis index (this species matches). Summed over species
+    and paired sub-tree nodes by `MeraEvalHamiltonian`, the total
+    energy is 0 iff every species on every paired (lhs, rhs) sub-tree
+    leaf agrees — i.e. lhs and rhs are leaf-for-leaf identical.
+    """
+    p_eq_scaled = _scaled(leaf_proj(KIND_EQ), lam)
+    ops: list[dict] = []
+    # Constant +lam * P[KIND_EQ] term. lhs and rhs leaves identity.
+    ops.append({eq_kind_leaf: p_eq_scaled})
+    # -lam * P[KIND_EQ] * P_i(lhs) * P_i(rhs) for each basis index i.
+    # The lam scaling rides on eq_kind_leaf for every term so the
+    # factored expectation yields lam * <product>. The minus sign also
+    # rides on eq_kind_leaf via -p_eq_scaled.
+    neg_p_eq_scaled = -p_eq_scaled
+    for i in range(MERA_LEAF_DIM):
+        ops.append({
+            eq_kind_leaf: neg_p_eq_scaled,
+            lhs_leaf:     leaf_proj(i),
+            rhs_leaf:     leaf_proj(i),
+        })
     return ops
 
 

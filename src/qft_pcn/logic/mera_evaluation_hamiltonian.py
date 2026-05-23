@@ -23,17 +23,17 @@ from .mera_encoder import MeraEncodingMeta
 from .mera_encoding import (
     MERA_LEAF_DIM, SPECIES_LEAF_OFFSET, LEAVES_PER_NODE,
     KIND_PAD, KIND_APP, KIND_BIN, KIND_IF, KIND_SUCC, KIND_FIX,
-    KIND_INT, KIND_NATLIT, KIND_ZERO,
+    KIND_INT, KIND_NATLIT, KIND_ZERO, KIND_EQ, KIND_BOOL,
 )
 from .encoding import (
     VALUE_PLUS, VALUE_MINUS, VALUE_TIMES, VALUE_LT, VALUE_EQ,
-    VALUE_FALSE, VALUE_TRUE, INT_LIT_OFFSET,
+    VALUE_FALSE, VALUE_TRUE, VALUE_NONE, INT_LIT_OFFSET,
 )
 from ._mera_window import mera_window_expectation_factored
 from ._mera_eval_terms import (
     beta_penalty_ops, arith_penalty_ops, cmp_penalty_ops,
     if_penalty_ops, succ_penalty_ops, fix_penalty_ops,
-    add_zero_penalty_ops, NATLIT_VALUE_ZERO,
+    add_zero_penalty_ops, eqrefl_penalty_ops, NATLIT_VALUE_ZERO,
     single_leaf_transition_gate, fix_transition_gate,
     arith_result_value_idx, cmp_result_value_idx,
     DEFAULT_LAMBDA_BETA, DEFAULT_LAMBDA_ARITH, DEFAULT_LAMBDA_IF,
@@ -47,9 +47,10 @@ RULE_R_IF = "R-If"
 RULE_R_SUCC = "R-Succ"
 RULE_R_FIX = "R-Fix"
 RULE_R_ADD_ZERO = "R-AddZero"
+RULE_R_EQ_REFL = "R-Eq-Refl"
 
 _ALL_RULES = (RULE_R_BETA, RULE_R_ARITH, RULE_R_CMP, RULE_R_IF,
-              RULE_R_SUCC, RULE_R_FIX, RULE_R_ADD_ZERO)
+              RULE_R_SUCC, RULE_R_FIX, RULE_R_ADD_ZERO, RULE_R_EQ_REFL)
 
 
 class MeraEvalError(Exception):
@@ -196,6 +197,13 @@ class MeraEvalHamiltonian:
         #    "leaves":  {sp -> int} # snapshot of nonzero's 5 leaf indices
         #   }
         self._add_zero_promote_targets: dict[int, dict] = {}
+        # Per-Eq-node snapshot of the promotion target (Eq -> BoolLit(True)):
+        # marks the moment the diagonal R-Eq-Refl residual fell below the
+        # firing threshold (lhs and rhs leaf-identical). Once snapshotted,
+        # the kind leaf is driven KIND_EQ -> KIND_BOOL, the value leaf to
+        # VALUE_TRUE, and the lhs/rhs sub-trees collapse to PAD. Mirrors
+        # the IF / beta / add-zero snapshot pattern (spec §7.4).
+        self._eq_refl_promote_targets: dict[int, dict] = {}
 
     def _enumerate_terms(self):
         terms = []
@@ -278,6 +286,15 @@ class MeraEvalHamiltonian:
             for kid in kids:
                 for sub in self._subtree_nodes(kid):
                     leaves.update(self._node_leaves(sub))
+        elif term.rule_id == RULE_R_EQ_REFL and len(kids) >= 2:
+            # R-Eq-Refl reads the leaves of every paired (lhs, rhs)
+            # sub-tree node, and writes the Eq node's own leaves
+            # (promotion to BoolLit(True)) plus the lhs/rhs sub-trees
+            # (collapse to PAD). Conservative footprint: both full
+            # sub-trees plus the Eq node.
+            for kid in kids:
+                for sub in self._subtree_nodes(kid):
+                    leaves.update(self._node_leaves(sub))
         result = frozenset(leaves)
         cache[key] = result
         return result
@@ -286,13 +303,48 @@ class MeraEvalHamiltonian:
         if rule == RULE_R_BETA:
             return self.lambda_beta
         if rule in (RULE_R_ARITH, RULE_R_CMP, RULE_R_SUCC,
-                    RULE_R_ADD_ZERO):
+                    RULE_R_ADD_ZERO, RULE_R_EQ_REFL):
             return self.lambda_arith
         if rule == RULE_R_IF:
             return self.lambda_if
         if rule == RULE_R_FIX:
             return self.lambda_fix
         raise MeraEvalTermNotFound(rule)
+
+    def _eq_paired_subtree(self, eq_node: int) -> list[tuple[int, int]]:
+        """Structural BFS pairing of lhs/rhs sub-tree nodes under an Eq
+        node (spec §7.1 extended; plan blocker #4). The first two
+        children of `eq_node` are the lhs and rhs roots; subsequent
+        recursion pairs them in lockstep position-by-position. Pairs
+        whose structure diverges (one side has children, the other does
+        not) are dropped — the diagonal penalty on the differing leaves
+        already keeps `<H>` non-zero on such configurations, and the
+        rule simply does not fire (a non-reflexive proposition is not
+        provable by reflexivity).
+
+        Pure addressing of `meta.children_of_node` (spec §1.2); does
+        NOT touch the AST or the state.
+        """
+        meta = self.meta
+        kids = meta.children_of_node.get(eq_node, [])
+        if len(kids) < 2:
+            return []
+        pairs: list[tuple[int, int]] = []
+        # BFS in lockstep — append each paired node, then queue paired
+        # children at matching positions.
+        from collections import deque
+        queue = deque()
+        queue.append((kids[0], kids[1]))
+        while queue:
+            l, r = queue.popleft()
+            pairs.append((l, r))
+            l_kids = meta.children_of_node.get(l, [])
+            r_kids = meta.children_of_node.get(r, [])
+            # Lockstep child pairing up to the shorter side. Divergent
+            # structure beyond is dropped — the rule does not fire there.
+            for j in range(min(len(l_kids), len(r_kids))):
+                queue.append((l_kids[j], r_kids[j]))
+        return pairs
 
     # ---- redex-use bookkeeping (addressing only, spec §1.2) -------------
 
@@ -357,6 +409,23 @@ class MeraEvalHamiltonian:
                 _kind_leaf(meta, kids[0]), _value_leaf(meta, kids[0]),
                 _kind_leaf(meta, kids[1]), _value_leaf(meta, kids[1]),
                 lam)
+        if term.rule_id == RULE_R_EQ_REFL:
+            # Sum, over every paired (lhs_sub, rhs_sub) node pair and
+            # every species, of `lam * P[KIND_EQ](eq) * (I - P_equal)`.
+            # Each factor is a small dict; <H>=0 iff every species on
+            # every paired sub-tree node carries the same basis index.
+            pairs = self._eq_paired_subtree(node)
+            if not pairs:
+                return []
+            eq_kind_leaf = _kind_leaf(meta, node)
+            ops_list: list[dict] = []
+            for l_node, r_node in pairs:
+                for sp in ("kind", "type", "bid", "value", "tobl"):
+                    l_leaf = meta.layout.leaf_of(l_node, sp)
+                    r_leaf = meta.layout.leaf_of(r_node, sp)
+                    ops_list.extend(eqrefl_penalty_ops(
+                        eq_kind_leaf, l_leaf, r_leaf, lam))
+            return ops_list
         raise MeraEvalTermNotFound(term)
 
     def term_energy(self, state: MERA, term: MeraEvalTerm) -> float:
@@ -573,6 +642,56 @@ class MeraEvalHamiltonian:
                 return True
         return False
 
+    def _eq_refl_unfinished(self, state: MERA, term: MeraEvalTerm) -> bool:
+        """True if `term` is an R-Eq-Refl redex whose Eq node is still
+        KIND_EQ even though the diagonal residual has dropped to 0 (the
+        lhs and rhs sub-trees are leaf-identical). This is exactly the
+        firing condition for the promotion gate: the diagonal energy
+        being 0 confirms reflexivity, and the rule must still emit
+        gates that promote the Eq node to BoolLit(True) and collapse
+        the operands to PAD.
+
+        Without this guard the default `term_energy < 1e-9` early-return
+        in `term_gates` would stop R-Eq-Refl exactly at the moment it
+        should fire — the rule would never run (spec §7.4: drive to
+        FULL reduction).
+        """
+        if term.rule_id != RULE_R_EQ_REFL:
+            return False
+        meta = self.meta
+        node = term.node
+        kids = meta.children_of_node.get(node, [])
+        if len(kids) < 2:
+            return False
+        # Only fire if the diagonal residual really is ~0 — otherwise
+        # the lhs/rhs are NOT yet leaf-identical and a premature
+        # promotion would corrupt the proof obligation.
+        if self.term_energy(state, term) >= 1e-6:
+            return False
+        # If the Eq node is no longer KIND_EQ (already promoted), the
+        # promotion is done — cleanup remains via the residual collapse,
+        # which the snapshot store keeps live. Mirrors AddZero cleanup.
+        eq_kind_w = _leaf_weights(state, _kind_leaf(meta, node))
+        if eq_kind_w[KIND_EQ] < 1e-6:
+            # Still unfinished if any leaf in the lhs/rhs sub-trees is
+            # not yet PAD.
+            if node in self._eq_refl_promote_targets:
+                rec = self._eq_refl_promote_targets[node]
+                for sub_root in (rec["lhs"], rec["rhs"]):
+                    for cnode in self._subtree_nodes(sub_root):
+                        # Skip any node that is forall-protected: a
+                        # protected Var must not be collapsed.
+                        kind_leaf = meta.layout.leaf_of(cnode, "kind")
+                        if kind_leaf in (
+                                meta.forall_protected_leaves or set()):
+                            continue
+                        w = _leaf_weights(state, kind_leaf)
+                        if w[KIND_PAD] < 0.999999:
+                            return True
+            return False
+        # KIND_EQ still dominant AND diagonal ~0: promotion fires now.
+        return True
+
     def _add_zero_cleanup_unfinished(self, state: MERA,
                                      term: MeraEvalTerm) -> bool:
         """True if R-AddZero has reached Stage C but the spent lhs/rhs
@@ -684,7 +803,8 @@ class MeraEvalHamiltonian:
                     and not self._beta_app_unfinished(state, term)
                     and not self._beta_cleanup_unfinished(state, term)
                     and not self._add_zero_unfinished(state, term)
-                    and not self._add_zero_cleanup_unfinished(state, term)):
+                    and not self._add_zero_cleanup_unfinished(state, term)
+                    and not self._eq_refl_unfinished(state, term)):
                 return []
         meta = self.meta
         node = term.node
@@ -765,6 +885,8 @@ class MeraEvalHamiltonian:
             moves, fix_pair_gates = self._fix_moves(state, node, dt, lam)
         elif term.rule_id == RULE_R_ADD_ZERO:
             moves = self._add_zero_moves(state, node, kids)
+        elif term.rule_id == RULE_R_EQ_REFL:
+            moves = self._eq_refl_moves(state, node, kids)
         gates = []
         for leaf, u, r in moves:
             # The drive is gradual: a single application of the
@@ -1186,6 +1308,58 @@ class MeraEvalHamiltonian:
         )
         if bin_resolved:
             moves.extend(self._collapse_moves(state, nonzero_op))
+        return moves
+
+    def _eq_refl_moves(self, state, node, kids):
+        """Eq lhs rhs -> BoolLit(True) once the diagonal R-Eq-Refl
+        residual has dropped to 0 (lhs and rhs are leaf-identical).
+
+        The promotion targets are FIXED constants (KIND_BOOL on the
+        kind leaf, VALUE_TRUE on the value leaf), not snapshots read
+        from the operand sub-trees: a BoolLit(True) has a canonical
+        encoding independent of what lhs / rhs looked like. The lhs
+        and rhs sub-trees collapse to PAD, EXCEPT any leaves the
+        evolution layer has marked forall-protected (a Forall-bound
+        Var keeps its leaves bitwise unchanged by spec §1.1, even
+        when the surrounding Eq promotes — the frozen-leaves filter
+        drops any collapse gate that targets a protected leaf).
+
+        The snapshot store records the lhs / rhs sub-tree roots on
+        first firing so the cleanup-unfinished guard can keep the
+        rule live until the spent sub-trees have fully reached PAD
+        (mirrors the IF / beta / add-zero cleanup pattern, spec §7.4).
+        """
+        if len(kids) < 2:
+            return []
+        meta = self.meta
+        lhs, rhs = kids[0], kids[1]
+        # Snapshot on first firing — used by the cleanup guard.
+        if node not in self._eq_refl_promote_targets:
+            self._eq_refl_promote_targets[node] = {
+                "lhs": lhs,
+                "rhs": rhs,
+            }
+        moves: list[tuple[int, int, int]] = []
+        # Promote the Eq node to BoolLit(True): kind leaf -> KIND_BOOL,
+        # value leaf -> VALUE_TRUE. Other species default to BoolLit's
+        # canonical (encoder-default) values, which the encoder builds
+        # as 0 across the board for atoms.
+        eq_kind_leaf = _kind_leaf(meta, node)
+        eq_kind_cur = _leaf_argmax(state, eq_kind_leaf)
+        moves.append((eq_kind_leaf, eq_kind_cur, KIND_BOOL))
+        eq_value_leaf = _value_leaf(meta, node)
+        eq_value_cur = _leaf_argmax(state, eq_value_leaf)
+        moves.append((eq_value_leaf, eq_value_cur, VALUE_TRUE))
+        # Collapse the lhs and rhs sub-trees to PAD. The evolution
+        # layer's frozen-leaves filter drops any gate that targets a
+        # forall-protected leaf (a bound Var keeps its leaves bitwise
+        # unchanged, §1.1) — so collapsing a sub-tree that contains a
+        # Forall-bound Var is harmless: the protected leaves survive
+        # the filter unscathed and the only practical effect is to
+        # drain non-protected spent literal leaves.
+        for sub_root in (lhs, rhs):
+            for cnode in self._subtree_nodes(sub_root):
+                moves.extend(self._collapse_moves(state, cnode))
         return moves
 
     def _fix_moves(self, state, node, dt, lam):
