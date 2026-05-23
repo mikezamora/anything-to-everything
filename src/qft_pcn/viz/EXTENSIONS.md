@@ -9,6 +9,7 @@ Each entry: **What's needed**, **Why deferred**, **Wire-up when ready**.
 
 ---
 
+<a id="vqc-live-training-panel"></a>
 ## vqc — live training panel
 
 - **What's needed:** `_build_vqc(spec)` + `snapshot_vqc(vqc)` re-added to
@@ -20,6 +21,7 @@ Each entry: **What's needed**, **Why deferred**, **Wire-up when ready**.
   add a `vqc.*` preset to `presets.py`, drop the `isExtension` prop from
   `VqcPanel`.
 
+<a id="logic-live-relaxation-panel"></a>
 ## logic — live relaxation panel
 
 - **What's needed:** `_build_logic(spec)` + `snapshot_logic(enc, state)`
@@ -28,6 +30,7 @@ Each entry: **What's needed**, **Why deferred**, **Wire-up when ready**.
 - **Wire-up when ready:** Same shape as vqc — rebuild + snapshot + add
   `logic.*` presets, drop the badge.
 
+<a id="qpcn-live-parameter-editing-during-pause"></a>
 ## qpcn — live parameter editing during pause
 
 - **What's needed:** A substrate setter on `Hamiltonian` (e.g.
@@ -38,6 +41,7 @@ Each entry: **What's needed**, **Why deferred**, **Wire-up when ready**.
   `/params/schema`; `QpcnPanel` will show sliders for any key whose schema
   entry has `writable=true`.
 
+<a id="mera-isometry-violation-indicator"></a>
 ## mera — isometry-violation indicator
 
 - **What's needed:** `snapshot_mera` to return per-layer
@@ -46,6 +50,7 @@ Each entry: **What's needed**, **Why deferred**, **Wire-up when ready**.
 - **Wire-up when ready:** `MeraPanel` renders the residual sparkline next
   to the bond-dim readout.
 
+<a id="hamiltonian-term-list-with-active-term-highlighting"></a>
 ## hamiltonian — term list with active-term highlighting
 
 - **What's needed:** `snapshot_hamiltonian` to enumerate active terms with
