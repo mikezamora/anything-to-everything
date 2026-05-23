@@ -330,7 +330,7 @@ it unblocks.
   passes because its diagnostic accepted Gap C OR Gap D as the
   surfacing reason; with Gap D resolved the orchestrator-blocked
   diagnostic now isolates to Gap C alone (handled separately).
-  Commit: (this commit).
+  Commit: 98e2999.
 
 ## RESOLVED (partial) -- Bridge DSL: `forall` / `Eq` / `Nat` / `List` / `Cons` / `Nil` surface (K-8 Blocker B)
 

@@ -14,6 +14,7 @@ from src.qft_pcn.composition.lemma_library import (
     DerivationMetadata,
     Lemma,
     LemmaLibrary,
+    _META_SET_FIELDS,
     _meta_from_json,
     _meta_to_json,
     bundle_from_mera,
@@ -100,6 +101,46 @@ def test_meta_to_json_handles_empty_set():
     restored = _meta_from_json(_meta_to_json(meta))
     assert restored.forall_protected_leaves == set()
     assert isinstance(restored.forall_protected_leaves, set)
+
+
+def test_meta_set_fields_autodetected_via_introspection():
+    """``_META_SET_FIELDS`` is the single source of truth for which
+    ``MeraEncodingMeta`` fields round-trip through a ``set`` restore.
+    It is autodetected from ``typing.get_type_hints(MeraEncodingMeta)``
+    -- the test pins the contract:
+
+    1. ``forall_protected_leaves: set[int]`` MUST appear (the field that
+       motivated Gap D's fix; missing it silently regresses to lists on
+       load, breaking ``in``-tests in evolution drivers).
+    2. ``list``-typed fields (``species_of_leaf``, ``node_of_leaf``,
+       ``hole_regions``, ``witness_node_ranges``, ``typehole_regions``)
+       MUST NOT appear -- a false positive would attempt ``int(x) for x``
+       over a list of strings / tuples / dicts and crash on load.
+
+    A future maintainer who adds e.g. ``set[tuple[int, int]]`` will see
+    this test still pass (the field is autodetected) but the loader
+    (``set(int(x) for x in ...)``) will then crash on first load -- by
+    design, so the schema-vs-loader mismatch surfaces immediately.
+    """
+    assert "forall_protected_leaves" in _META_SET_FIELDS, (
+        "Gap D regression: forall_protected_leaves dropped from the "
+        "autodetected set-field tuple -- introspection over "
+        "MeraEncodingMeta type hints failed to spot set[int]"
+    )
+    # No false positives: every current list-typed field stays out.
+    list_typed_fields = (
+        "species_of_leaf",
+        "node_of_leaf",
+        "hole_regions",
+        "witness_node_ranges",
+        "typehole_regions",
+    )
+    for name in list_typed_fields:
+        assert name not in _META_SET_FIELDS, (
+            f"introspection false positive: list-typed field {name!r} "
+            "leaked into _META_SET_FIELDS -- the int-coerce loader will "
+            "crash on first load"
+        )
 
 
 def test_library_save_load_with_forall_meta(tmp_path):

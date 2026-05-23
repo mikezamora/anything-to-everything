@@ -298,6 +298,7 @@ def fingerprint_distance(a: np.ndarray, b: np.ndarray) -> float:
 
 import json
 import hashlib
+import typing
 from dataclasses import asdict, fields
 from src.qft_pcn.composition.errors import LemmaHashCollision, LemmaNotFound
 
@@ -314,14 +315,15 @@ def _jsonable(v):
     Sets serialize as sorted lists (deterministic round-trip); tuples become
     lists; dicts have str-keyed values recursed. The set branch must precede
     any iterable handling because Python's `set` is iterable but unordered --
-    sorting keeps the on-disk form stable across processes.
+    sorting keeps the on-disk form stable across processes. We call
+    ``sorted(v)`` directly: every current ``MeraEncodingMeta`` set field is
+    ``set[int]`` (orderable). A future non-orderable set element type should
+    raise ``TypeError`` here loudly -- a silent ``key=repr`` coercion would
+    hide a real schema-vs-loader mismatch (the ``_meta_from_json`` set-field
+    loader assumes ``int`` elements).
     """
     if isinstance(v, set):
-        try:
-            items = sorted(v)
-        except TypeError:
-            items = sorted(v, key=repr)
-        return [_jsonable(x) for x in items]
+        return [_jsonable(x) for x in sorted(v)]
     if isinstance(v, tuple):
         return [_jsonable(x) for x in v]
     if isinstance(v, list):
@@ -331,9 +333,17 @@ def _jsonable(v):
     return v
 
 
-# MeraEncodingMeta fields that the serializer stores as JSON lists but must
-# be restored to ``set`` on load (Gap D fix). Add new set-typed fields here.
-_META_SET_FIELDS = ("forall_protected_leaves",)
+# Autodetected from MeraEncodingMeta type hints; restored as
+# ``set(int(x) for x in ...)`` in ``_meta_from_json``. Single source of truth:
+# adding a ``set[...]``-typed field to MeraEncodingMeta automatically extends
+# the round-trip without touching a registry. (Caveat: the loader coerces
+# elements via ``int(x)`` -- if a future field uses ``set[tuple[...]]`` or
+# similar, the loader needs an update; the introspection test pins this
+# assumption so the drift surfaces as a failing contract test.)
+_META_SET_FIELDS: tuple[str, ...] = tuple(
+    name for name, hint in typing.get_type_hints(MeraEncodingMeta).items()
+    if typing.get_origin(hint) is set
+)
 
 
 def _meta_to_json(meta: MeraEncodingMeta) -> str:
