@@ -2,12 +2,16 @@
 from __future__ import annotations
 
 import math
+import warnings
 from dataclasses import dataclass, field
 
 import numpy as np
 
+from src.qft_pcn.qft.mera import MERA
+
 from src.qft_pcn.composition._abstraction_const import (
-    DEFAULT_ALPHA, DEFAULT_DISTANCE_THRESHOLD,
+    DEFAULT_ALPHA, DEFAULT_CHI_CAP, DEFAULT_DISTANCE_THRESHOLD,
+    DENSITY_HERMITICITY_TOL, REPURIFICATION_TAIL_TOL, RepurificationWarning,
 )
 
 
@@ -141,3 +145,91 @@ def significant_clusters(clusters: list[Cluster], n_candidates: int,
     """Keep clusters with size >= k_min(n_candidates, alpha) (spec §5.3)."""
     threshold = k_min(n_candidates, alpha)
     return [c for c in clusters if c.size >= threshold]
+
+
+# --- §5.4: canonical-form computation ----------------------------------------
+
+
+@dataclass
+class CanonicalPrimitive:
+    rho_canonical: np.ndarray
+    mera: MERA
+    chi: int
+    avg_trace_distance: float
+    provenance: Provenance
+
+
+def _repurify(rho: np.ndarray, chi_cap: int) -> tuple[MERA, int]:
+    """Re-purify a density matrix into a bounded-bond MERA (spec §5.4 step 2).
+
+    Eigendecompose rho = sum_j p_j |e_j><e_j|; keep the top chi_cap eigenpairs;
+    build a purifying term superposition over the kept eigenvectors. The result
+    is a bounded-bond MERA -- never a dense leaf-space tensor (§1.1).
+    """
+    eigvals, eigvecs = np.linalg.eigh(rho)
+    order = np.argsort(eigvals)[::-1]
+    eigvals, eigvecs = eigvals[order], eigvecs[:, order]
+    keep = int(min(chi_cap, len(eigvals)))
+    kept_p = np.clip(eigvals[:keep].real, 0.0, None)
+    tail = float(np.sum(np.clip(eigvals[keep:].real, 0.0, None)))
+    if tail > REPURIFICATION_TAIL_TOL:
+        warnings.warn(
+            f"re-purification truncated tail mass {tail:.3e}",
+            RepurificationWarning, stacklevel=2,
+        )
+    total = float(kept_p.sum())
+    if total <= 0.0:
+        # degenerate (rho is the zero operator); fall back to |0>|0>
+        kept_p = np.zeros_like(kept_p)
+        kept_p[0] = 1.0
+    else:
+        kept_p = kept_p / total
+    d = rho.shape[0]
+    # Purifying term superposition: each kept eigenvector contributes a product
+    # term sqrt(p_j) over two boundary leaves (system + purifying reference).
+    # Two leaves -> N=2, every per-leaf object is d-dimensional (<= chi_cap**2).
+    terms: list[tuple[complex, list[np.ndarray]]] = []
+    for j in range(keep):
+        vec = np.asarray(eigvecs[:, j], dtype=complex)
+        leaf_ref = np.zeros(d, dtype=complex)
+        leaf_ref[j % d] = 1.0
+        terms.append((complex(np.sqrt(kept_p[j])), [vec, leaf_ref]))
+    mera = MERA.from_term_superposition(terms).normalize()
+    return mera, keep
+
+
+def compute_canonical_form(cluster: Cluster,
+                           chi_cap: int = DEFAULT_CHI_CAP,
+                           cycle_index: int = 0) -> CanonicalPrimitive:
+    """Cluster representative: operator-basis mean re-purified (spec §5.4).
+
+    Operator-algebraic only (§1.5/§1.6): the canonical state is the embedded
+    mean reduced density (Hermitian PSD trace-1), and the bounded-bond MERA
+    is its eigendecomposition-based re-purification. No AST inspection.
+    """
+    members = cluster.members
+    if not members:
+        raise ValueError("cannot compute canonical form of an empty cluster")
+    dim = max(m.rho.shape[0] for m in members)
+    rho_canonical = sum(_embed(m.rho, dim) for m in members) / len(members)
+    # Hermitize against round-off; validate the contract (§1.5).
+    rho_canonical = 0.5 * (rho_canonical + rho_canonical.conj().T)
+    herm_err = float(np.max(np.abs(rho_canonical - rho_canonical.conj().T)))
+    assert herm_err <= DENSITY_HERMITICITY_TOL, (
+        f"rho_canonical not Hermitian within tol: {herm_err:.3e}")
+    tr = complex(np.trace(rho_canonical))
+    assert abs(tr.real - 1.0) <= DENSITY_HERMITICITY_TOL and abs(tr.imag) <= DENSITY_HERMITICITY_TOL, (
+        f"rho_canonical not unit-trace: tr={tr}")
+    min_eig = float(np.linalg.eigvalsh(rho_canonical).min())
+    assert min_eig >= -DENSITY_HERMITICITY_TOL, (
+        f"rho_canonical not PSD: min_eig={min_eig:.3e}")
+    avg_d = float(np.mean([trace_distance(rho_canonical, m.rho)
+                           for m in members]))
+    mera, chi = _repurify(rho_canonical, chi_cap)
+    prov = Provenance(
+        source_ids=tuple(dict.fromkeys(m.source_id for m in members)),
+        occurrences=tuple((m.source_id, m.leaf_interval) for m in members),
+        discovered_in_cycle=cycle_index,
+    )
+    return CanonicalPrimitive(rho_canonical=rho_canonical, mera=mera, chi=chi,
+                              avg_trace_distance=avg_d, provenance=prov)
