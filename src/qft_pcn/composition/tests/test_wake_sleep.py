@@ -1,8 +1,6 @@
 """Wake-sleep orchestration + induction discovery (spec §6; acceptance §9.5-9.6, §9.8)."""
 from __future__ import annotations
 
-import pytest
-
 from src.qft_pcn.composition.wake_sleep import (
     Problem, WakeSleepConfig, CycleReport, wake_sleep_cycle, wake_sleep_loop,
 )

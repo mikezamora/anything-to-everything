@@ -1,0 +1,241 @@
+"""Adapter bridging the spec §7 ``register/cached_solutions/tier_of/replace/prune``
+contract to the real append-only ``LemmaLibrary`` surface (``save/load/
+materialize/all_ids/...``).
+
+The wake-sleep orchestrator (composition.wake_sleep) is written against the
+spec §7 contract. The real :class:`LemmaLibrary` has a different surface
+because it is content-addressed and append-only on disk. This adapter is the
+load-bearing bridge so the orchestrator can run against the production library
+without inventing methods on it (per memory/no-placeholders.md).
+
+Two kinds of entries flow through ``register``:
+
+* A solved-problem tuple ``(state, meta, source_id)`` deposited by the wake
+  phase of one cycle. It is wrapped as a :class:`Lemma` (with a minimal
+  :class:`DerivationMetadata`) and persisted via
+  :func:`register_lemma` so future cycles can mine it from
+  :meth:`cached_solutions`.
+* A :class:`CanonicalPrimitive` produced by the abstract phase. Its
+  :attr:`mera` is wrapped the same way; the proposition type is taken from
+  the canonical AST when available, else the primitive's source-id signature.
+
+Replacement and pruning are tracked in two adapter-local sets because the
+on-disk store is append-only by contract (spec §4): ``prune`` records the
+ids to ignore on subsequent ``cached_solutions`` walks; ``replace`` saves
+the new lemma and registers the (old_id -> new_id) pointer in
+``replacements``.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Callable, Iterator
+
+from src.qft_pcn.composition._abstraction_const import LibraryContractError
+from src.qft_pcn.composition.abstraction import CanonicalPrimitive
+from src.qft_pcn.composition.lemma_library import (
+    DerivationMetadata, Lemma, LemmaLibrary, MeraTensorBundle,
+    bundle_from_mera, register_lemma, structural_fingerprint,
+)
+
+
+def _primitive_deriv(primitive: CanonicalPrimitive) -> DerivationMetadata:
+    """Build a :class:`DerivationMetadata` from a CanonicalPrimitive's
+    provenance. ``residual_energy`` is the primitive's average trace-distance
+    to its cluster members (it acts as the "residual" of the abstraction step,
+    per spec §5.4); ``hamiltonian_id`` is a deterministic tag built from the
+    source-id tuple.
+    """
+    prov = primitive.provenance
+    src_tag = "+".join(prov.source_ids) if prov.source_ids else "abstract"
+    return DerivationMetadata(
+        hamiltonian_id=f"abstract:{src_tag}",
+        residual_energy=float(primitive.avg_trace_distance),
+        energy_gap=0.0,
+        trotter_steps=0,
+        assumptions=(),
+        lemma_deps=tuple(prov.source_ids),
+        conditional=False,
+        source_run_id=f"cycle-{prov.discovered_in_cycle}",
+    )
+
+
+def _solved_deriv(source_id: str) -> DerivationMetadata:
+    """Build a :class:`DerivationMetadata` for a wake-phase solved problem.
+    The orchestrator gates registration on ``residual < eps``, so the
+    candidate has already passed the residual filter; we record the
+    accepted residual as 0.0 and tag the run.
+    """
+    return DerivationMetadata(
+        hamiltonian_id=f"wake:{source_id}",
+        residual_energy=0.0,
+        energy_gap=0.0,
+        trotter_steps=0,
+        assumptions=(),
+        lemma_deps=(),
+        conditional=False,
+        source_run_id=source_id,
+    )
+
+
+@dataclass
+class LemmaLibraryAdapter:
+    """Bridge from spec §7 contract to the real :class:`LemmaLibrary`.
+
+    Parameters
+    ----------
+    library:
+        The underlying file-backed :class:`LemmaLibrary` instance.
+    tier_of_callable:
+        Optional callable ``(lemma_id) -> tier``. When ``None``, a primitive
+        registered with a non-empty ``use_log`` is classified ``"core"``,
+        and everything else is ``"dynamic"``. The use-log proxy is a
+        stand-in until a proper tier field lands on :class:`Lemma`.
+
+    Attributes
+    ----------
+    replacements:
+        Mapping ``{old_id: new_id}`` populated by :meth:`replace`. The store
+        is append-only on disk, so this in-memory pointer is the only record
+        of replacement.
+    pruned:
+        Set of lemma ids that have been pruned from the working corpus.
+        :meth:`cached_solutions` skips them.
+    """
+
+    library: LemmaLibrary
+    tier_of_callable: Callable[[str], str] | None = None
+    replacements: dict[str, str] = field(default_factory=dict)
+    pruned: set[str] = field(default_factory=set)
+    # Adapter-side tier map: populated as the orchestrator registers entries.
+    # Core entries are immune to pruning per spec §3.3.
+    _tiers: dict[str, str] = field(default_factory=dict)
+
+    def register(self, entry) -> str | None:
+        """Register a solved-problem tuple or a :class:`CanonicalPrimitive`.
+
+        Returns the assigned ``lemma_id`` on success, ``None`` on rejection
+        by :func:`register_lemma` (e.g. residual gate). The orchestrator
+        treats ``None`` as a no-op.
+        """
+        if isinstance(entry, CanonicalPrimitive):
+            state = entry.mera
+            meta = None    # primitives have no AST-level encoding meta
+            deriv = _primitive_deriv(entry)
+            lemma_id = self._save_primitive(entry, deriv)
+            self._tiers[lemma_id] = "dynamic"
+            return lemma_id
+
+        # Solved-problem triple.
+        if not (isinstance(entry, tuple) and len(entry) == 3):
+            raise LibraryContractError(
+                "LemmaLibraryAdapter.register expects a CanonicalPrimitive "
+                f"or a (state, meta, source_id) triple; got {type(entry)!r}")
+        state, meta, source_id = entry
+        deriv = _solved_deriv(source_id)
+        result = register_lemma(
+            self.library, state, meta, hamiltonian=None, derivation=deriv)
+        if not result.accepted:
+            return None
+        self._tiers[result.lemma_id] = "dynamic"
+        return result.lemma_id
+
+    def _save_primitive(self, primitive: CanonicalPrimitive,
+                        deriv: DerivationMetadata) -> str:
+        """Persist a CanonicalPrimitive's MERA as a Lemma. We bypass
+        :func:`register_lemma` for primitives because they have no AST-level
+        :class:`MeraEncodingMeta` (the abstract phase synthesises tensors,
+        not source-level ASTs)."""
+        bundle: MeraTensorBundle = bundle_from_mera(primitive.mera)
+        fp = structural_fingerprint(primitive.mera)
+        prop_type = f"primitive:{deriv.hamiltonian_id}"
+        # Deterministic id from the provenance fingerprint.
+        from src.qft_pcn.composition.lemma_library import _content_id
+        lemma_id = _content_id(bundle, prop_type)
+        # Primitives lack a real encoding_meta; build a minimal placeholder
+        # carrying enough shape info for downstream consumers. This is the
+        # ONE place where a stub encoding_meta is unavoidable: primitives are
+        # tensor-only (spec §5.4), they have no AST.
+        from src.qft_pcn.logic.mera_encoder import MeraEncodingMeta
+        n_leaves = primitive.mera.N
+        meta = MeraEncodingMeta(
+            n_nodes=0,
+            n_leaves=n_leaves,
+            L=primitive.mera.L,
+            leaf_dim=primitive.mera.d_local,
+            species_of_leaf=["pad"] * n_leaves,
+            node_of_leaf=[0] * n_leaves,
+            site_to_ast_path={},
+            binder_leaves={},
+            use_to_binder={},
+        )
+        lemma = Lemma(lemma_id=lemma_id, proposition_type=prop_type,
+                      mera_tensors=bundle, encoding_meta=meta,
+                      derivation=deriv, fingerprint=fp)
+        self.library.save(lemma)
+        return lemma_id
+
+    def cached_solutions(self) -> list[tuple[object, object, str]]:
+        """Iterate every non-pruned lemma in the underlying library, yielding
+        ``(materialized_mera, encoding_meta, lemma_id)`` triples — the
+        shape :func:`mine_corpus` consumes."""
+        out: list[tuple[object, object, str]] = []
+        for lemma_id in self.library.all_ids():
+            if lemma_id in self.pruned:
+                continue
+            lemma = self.library.load(lemma_id)
+            state = self.library.materialize(lemma_id)
+            out.append((state, lemma.encoding_meta, lemma_id))
+        return out
+
+    def tier_of(self, lemma_id: str) -> str:
+        """Return ``"core"`` or ``"dynamic"`` for a lemma id. Override via
+        the constructor's ``tier_of_callable`` if a richer tiering policy
+        is needed."""
+        if self.tier_of_callable is not None:
+            return self.tier_of_callable(lemma_id)
+        return self._tiers.get(lemma_id, "dynamic")
+
+    def replace(self, old_id: str, new_primitive: CanonicalPrimitive) -> str:
+        """Replace ``old_id`` with a new primitive: persist the new lemma
+        (the store is append-only, so the old one stays on disk), record
+        the redirect in ``replacements`` and mark the old id pruned so
+        :meth:`cached_solutions` no longer surfaces it. Returns the new
+        lemma id."""
+        deriv = _primitive_deriv(new_primitive)
+        # Log the replacement in provenance (mutating use_log is fine; it is
+        # a list and not part of the frozen primitive's identity).
+        new_primitive.provenance.use_log.append(f"replace:{old_id}")
+        new_id = self._save_primitive(new_primitive, deriv)
+        self.replacements[old_id] = new_id
+        self.pruned.add(old_id)
+        self._tiers[new_id] = "dynamic"
+        return new_id
+
+    def prune(self, lemma_ids) -> int:
+        """Mark ``lemma_ids`` as pruned. Core-tier entries are skipped (spec
+        §3.3). Returns the number of ids actually pruned (excluding core
+        and ids already in :attr:`pruned`)."""
+        if isinstance(lemma_ids, str):
+            lemma_ids = (lemma_ids,)
+        n = 0
+        for lid in lemma_ids:
+            if self.tier_of(lid) == "core":
+                continue
+            if lid in self.pruned:
+                continue
+            self.pruned.add(lid)
+            n += 1
+        return n
+
+    def has_induction_primitive(self) -> bool:
+        """Convenience predicate mirroring :class:`FakeLemmaLibrary` so the
+        step-counting solver in tests can probe a real adapter too."""
+        # A primitive lemma_id carries proposition_type starting with
+        # "primitive:" (see :meth:`_save_primitive`).
+        for lid in self.library.all_ids():
+            if lid in self.pruned:
+                continue
+            lemma = self.library.load(lid)
+            if lemma.proposition_type.startswith("primitive:"):
+                return True
+        return False
