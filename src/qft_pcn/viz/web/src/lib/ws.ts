@@ -1,11 +1,12 @@
 /**
  * WebSocket client for the QFT-PCN viz server.
  *
- * `connectRun` POSTs a `RunSpec` to `/run`, opens the run's WebSocket, and
- * routes each streamed message into the Zustand store: normal `Frame`s are
- * pushed, the `{done: true}` sentinel ends the live stream, and an `{error}`
- * message records the failure. The returned handle lets the caller close the
- * socket early.
+ * `connectRun` POSTs a `RunSpec` to `/run`, registers the run in the store
+ * via `openRun`/`setActiveRun`, then opens the run's WebSocket and routes
+ * each streamed message into the store: normal `Frame`s are pushed under
+ * the run id, the `{done: true}` sentinel ends the live stream for that
+ * run, and an `{error}` message records the failure. The returned handle
+ * lets the caller close the socket early.
  */
 
 import { useVizStore } from '../store';
@@ -24,8 +25,8 @@ function wsUrl(runId: string): string {
   return `${proto}://${window.location.host}/ws/${runId}`;
 }
 
-/** Route one parsed WebSocket message into the store. */
-function handleMessage(raw: string): void {
+/** Route one parsed WebSocket message into the store, addressed to runId. */
+function handleMessage(runId: string, raw: string): void {
   const store = useVizStore.getState();
   try {
     const msg = JSON.parse(raw) as
@@ -34,12 +35,12 @@ function handleMessage(raw: string): void {
       | { error: string };
 
     if ('error' in msg) {
-      store.setLive(false);
+      store.setLive(runId, false);
       store.setError(msg.error);
     } else if ('done' in msg) {
-      store.setLive(false);
+      store.setLive(runId, false);
     } else {
-      store.pushFrame(msg);
+      store.pushFrame(runId, msg);
     }
   } catch (err) {
     store.setError(`Malformed WebSocket message: ${String(err)}`);
@@ -49,32 +50,33 @@ function handleMessage(raw: string): void {
 /**
  * Start a run and stream its frames into the store.
  *
- * Resets the store, registers the run via `POST /run`, then opens the
+ * Registers the run via `POST /run`, opens it in the store, then opens the
  * WebSocket. Resolves once the socket has been created.
  */
 export async function connectRun(spec: RunSpec): Promise<RunHandle> {
-  useVizStore.getState().reset();
-
   const res = await fetch('/run', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(spec),
   });
   if (!res.ok) {
-    throw new Error(`POST /run failed: ${res.status}`);
+    throw new Error(`/run: ${res.status}`);
   }
   const { run_id: runId } = (await res.json()) as { run_id: string };
 
+  const store = useVizStore.getState();
+  store.openRun(runId);
+  store.setActiveRun(runId);
+
   const socket = new WebSocket(wsUrl(runId));
-  socket.onmessage = (ev: MessageEvent) => handleMessage(String(ev.data));
+  socket.onmessage = (ev: MessageEvent) => handleMessage(runId, String(ev.data));
   socket.onerror = () => {
-    useVizStore.getState().setLive(false);
     useVizStore.getState().setError('WebSocket error');
   };
   socket.onclose = () => {
     // If the backend drops the connection without the {done:true}
-    // sentinel, ensure the store does not stay live forever.
-    useVizStore.getState().setLive(false);
+    // sentinel, ensure this run does not stay live forever.
+    useVizStore.getState().setLive(runId, false);
   };
 
   return {

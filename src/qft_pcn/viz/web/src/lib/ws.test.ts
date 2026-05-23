@@ -25,7 +25,7 @@ class FakeWebSocket {
 
 describe('connectRun', () => {
   beforeEach(() => {
-    useVizStore.getState().reset();
+    useVizStore.getState().resetAll();
     FakeWebSocket.last = null;
     vi.stubGlobal('WebSocket', FakeWebSocket as unknown as typeof WebSocket);
     vi.stubGlobal(
@@ -37,7 +37,7 @@ describe('connectRun', () => {
     );
   });
 
-  it('routes a parsed frame into the store via pushFrame', async () => {
+  it('opens the run in the store and routes frames under its id', async () => {
     const spec = { layers: ['manifold'], steps: 2, grid: 8 };
     const handle = await connectRun(spec);
     expect(handle.runId).toBe('run-123');
@@ -52,34 +52,40 @@ describe('connectRun', () => {
     );
     expect(JSON.parse(init.body as string)).toEqual(spec);
 
+    // openRun + setActiveRun must have been called.
+    const state = useVizStore.getState();
+    expect(state.runs.has('run-123')).toBe(true);
+    expect(state.activeRunId).toBe('run-123');
+
     const socket = FakeWebSocket.last!;
     expect(socket.url).toContain('/ws/run-123');
 
     socket.emit(JSON.stringify({ step: 0, layer_states: {} }));
     socket.emit(JSON.stringify({ step: 1, layer_states: {} }));
 
-    expect(useVizStore.getState().frames.length).toBe(2);
+    const run = useVizStore.getState().runs.get('run-123')!;
+    expect(run.frames.length).toBe(2);
     expect(useVizStore.getState().currentFrame()?.step).toBe(1);
   });
 
-  it('clears live on the done sentinel', async () => {
+  it('clears live for the run on the done sentinel', async () => {
     await connectRun({ layers: ['manifold'], steps: 1, grid: 8 });
     FakeWebSocket.last!.emit(JSON.stringify({ done: true }));
-    expect(useVizStore.getState().live).toBe(false);
+    expect(useVizStore.getState().runs.get('run-123')!.live).toBe(false);
   });
 
-  it('records an error message', async () => {
+  it('records an error message and clears live for the run', async () => {
     await connectRun({ layers: ['manifold'], steps: 1, grid: 8 });
     FakeWebSocket.last!.emit(JSON.stringify({ error: 'boom' }));
-    expect(useVizStore.getState().live).toBe(false);
+    expect(useVizStore.getState().runs.get('run-123')!.live).toBe(false);
     expect(useVizStore.getState().error).toBe('boom');
   });
 
   it('clears live when the socket closes without a sentinel', async () => {
     await connectRun({ layers: ['manifold'], steps: 1, grid: 8 });
-    expect(useVizStore.getState().live).toBe(true);
+    expect(useVizStore.getState().runs.get('run-123')!.live).toBe(true);
     FakeWebSocket.last!.onclose?.();
-    expect(useVizStore.getState().live).toBe(false);
+    expect(useVizStore.getState().runs.get('run-123')!.live).toBe(false);
   });
 
   it('records an error for a malformed message instead of throwing', async () => {
@@ -95,6 +101,6 @@ describe('connectRun', () => {
     );
     await expect(
       connectRun({ layers: ['manifold'], steps: 1, grid: 8 }),
-    ).rejects.toThrow(/POST \/run failed: 500/);
+    ).rejects.toThrow(/\/run: 500/);
   });
 });
