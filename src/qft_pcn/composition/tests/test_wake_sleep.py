@@ -4,6 +4,8 @@ from __future__ import annotations
 from src.qft_pcn.composition.wake_sleep import (
     Problem, WakeSleepConfig, CycleReport, wake_sleep_cycle, wake_sleep_loop,
 )
+from src.qft_pcn.composition.lemma_library import LemmaLibrary
+from src.qft_pcn.composition.lemma_library_adapter import LemmaLibraryAdapter
 from .conftest import (
     FakeLemmaLibrary, make_stub_solver, make_step_counting_solver,
     build_induction_corpus,
@@ -113,28 +115,25 @@ def test_end_to_end_loop_against_real_library_adapter(tmp_path):
     NO mocks of encoder, miner, clustering, or library — the entire J
     sub-project substrate is exercised.
     """
-    from src.qft_pcn.composition.lemma_library import LemmaLibrary
-    from src.qft_pcn.composition.lemma_library_adapter import LemmaLibraryAdapter
-
     corpus = build_induction_corpus()
     library = LemmaLibrary(tmp_path)
     adapter = LemmaLibraryAdapter(library)
 
-    n_ids_before = len(library.all_ids())
     batches = [_problems(corpus), [], []]                # 1 wake + 2 quiescent
     reports = wake_sleep_loop(adapter, batches, make_stub_solver({}),
                               WakeSleepConfig(n_quiescent=2))
 
-    # Library grew: the five solved problems + the abstracted primitive are
-    # now persisted (some solved problems may content-address to the same id
-    # since they share the induction skeleton -- but the primitive's
-    # proposition_type carries the "primitive:" prefix so we can count it
-    # distinctly).
-    n_ids_after = len(library.all_ids())
-    assert n_ids_after > n_ids_before, \
-        "real LemmaLibrary did not grow after wake-sleep"
-    assert adapter.has_induction_primitive(), \
-        "no primitive-tagged lemma on disk after wake-sleep loop"
+    # Combined invariant per J-7 review: count primitive-tagged lemmas on
+    # disk by round-tripping every id through ``library.load()`` and
+    # inspecting ``proposition_type``. This exercises (a) library growth,
+    # (b) primitive tagging via the "primitive:" prefix, and (c) the full
+    # load() round-trip in one assertion.
+    prim_count = sum(
+        1 for lid in library.all_ids()
+        if library.load(lid).proposition_type.startswith("primitive:")
+    )
+    assert prim_count >= 1, \
+        f"expected >=1 primitive lemma on disk, got {prim_count}"
 
     # Loop terminated under quiescence (cycle 0 promotes, then two empty
     # batches -> quiescent counter hits n_quiescent=2 and breaks).

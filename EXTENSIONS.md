@@ -630,7 +630,18 @@ Original failure narrative (kept for historical context):
 
 ---
 
-## §9.7 dense-tensor ceiling — composition/tests baseline failures (K-9)
+## §9.7 dense-tensor ceiling — composition/tests baseline failures (K-9) [RESOLVED at 369075e]
+
+**RESOLVED** at commit `369075e` (J-7): the cap was raised to `chi_cap⁴
+= 65_536` to accommodate the real-MERA workload (single isometry blocks
+at chi_max=32 reach 1024; cross-level reconstructions reach 4096). J-7
+chose the raise-cap option over the alternative per-path scoping
+(re-instrument the guard to flag only mining/abstraction/fingerprint
+paths). The §1.6 operator-algebraic signal is preserved — the cap still
+fires on accidental large dense allocations outside legitimate MERA
+tensors. Original K-9 baseline analysis retained below for context.
+
+
 
 The `src/qft_pcn/composition/tests/conftest.py::_no_large_dense`
 autouse fixture enforces a strict 256-element ceiling on any 2D+
