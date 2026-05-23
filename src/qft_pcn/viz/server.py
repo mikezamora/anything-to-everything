@@ -14,6 +14,7 @@ import json
 import shutil
 import tempfile
 import uuid
+from dataclasses import asdict
 from pathlib import Path
 
 from fastapi import (BackgroundTasks, FastAPI, HTTPException, WebSocket,
@@ -21,6 +22,7 @@ from fastapi import (BackgroundTasks, FastAPI, HTTPException, WebSocket,
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
+from .presets import PARAM_SCHEMA, PRESETS
 from .runs import RunSpec, RunRegistry, run_simulation
 
 app = FastAPI(title="QFT-PCN Visualizer")
@@ -46,6 +48,18 @@ _EXPORTS_DIR = Path(__file__).resolve().parents[3] / "outputs" / "viz_exports"
 def health():
     """Liveness probe."""
     return {"status": "ok"}
+
+
+@app.get("/presets")
+def list_presets():
+    """Return the curated preset catalog."""
+    return [asdict(p) for p in PRESETS]
+
+
+@app.get("/params/schema")
+def params_schema():
+    """Return the per-layer JSON Schema for the Advanced expander."""
+    return PARAM_SCHEMA
 
 
 @app.post("/run")
