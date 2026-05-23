@@ -411,14 +411,20 @@ class MERA:
             n_l = N // (2 ** ell)
             d_l = dims[ell]
             d_up = dims[ell + 1] if ell + 1 < L else d_l
-            intra = [
-                np.eye(d_l * d_l, dtype=complex).reshape(d_l, d_l, d_l, d_l)
-                for _ in range(n_l // 2)
-            ]
-            inter = [
-                np.eye(d_l * d_l, dtype=complex).reshape(d_l, d_l, d_l, d_l)
-                for _ in range(max(0, n_l // 2 - 1))
-            ]
+            # All disentanglers at this layer are the identity by
+            # construction. Share ONE read-only identity tensor per layer
+            # rather than re-allocating np.eye(d_l*d_l) for every slot. For
+            # d_l=16 each is a 256x256 complex (~1 MB); a P3 Trotter step
+            # rebuilds the whole tree, so O(N) such allocations per step
+            # dominate the per-step cost (profiled). The shared tensor is
+            # never mutated through this construction path -- MERA tensors
+            # are written only by explicit gate-apply methods that operate
+            # on per-tensor copies.
+            _id_tensor = np.eye(d_l * d_l, dtype=complex).reshape(
+                d_l, d_l, d_l, d_l)
+            _id_tensor.setflags(write=False)
+            intra = [_id_tensor for _ in range(n_l // 2)]
+            inter = [_id_tensor for _ in range(max(0, n_l // 2 - 1))]
             iso: list[np.ndarray] = []
             new_amps: list[np.ndarray] = []
             for j in range(n_l // 2):
@@ -446,7 +452,7 @@ class MERA:
         assert len(cur_amps) == 2
         top = np.outer(cur_amps[0], cur_amps[1]).reshape(
             dims[L - 1], dims[L - 1], 1).astype(complex)
-        return cls(
+        out = cls(
             leaves=leaves,
             disentanglers=disentanglers,
             inter_disentanglers=inter_disentanglers,
@@ -454,6 +460,13 @@ class MERA:
             top=top,
             layer_dims=dims,
         )
+        # By construction every (intra + inter) disentangler is the identity
+        # — pre-set the _is_product fast-path cache so downstream callers
+        # (norm_sq, inner, expectation) skip the per-step
+        # _is_identity_matrix scan over every disentangler, which the per-
+        # Trotter-step profile shows dominates the rebuild cost.
+        out._is_product_cache = True
+        return out
 
     @classmethod
     def number_states(cls, occupations: list[int], d: int,
@@ -1067,6 +1080,11 @@ class MERA:
         tensors (leaves may differ). Used to guard the product-state
         inner-product fast path: the leaf-overlap telescoping identity
         only holds when bra and ket are built on the same tree."""
+        # Identity short-circuit: norm_sq/normalize call inner(self, self),
+        # so the common case is a self-comparison and a per-element
+        # array_equal scan over every isometry/disentangler is pure waste.
+        if self is other:
+            return True
         if not np.array_equal(self.top, other.top):
             return False
         for sl, ol in ((self.disentanglers, other.disentanglers),
