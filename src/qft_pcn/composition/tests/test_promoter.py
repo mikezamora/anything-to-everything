@@ -75,12 +75,18 @@ def test_conditional_lemma_allowed_with_opt_in(tmp_path):
     assert promoted.lemma_id == lid
 
 
-def test_projector_mode_not_yet_implemented(tmp_path):
-    """Projector-energy mode (spec §5.2b) is deferred; constructing a
-    Promoter with mode='projector' must fail at construction so a caller
-    does not silently get a PromotedLemma they cannot consume."""
-    with pytest.raises(NotImplementedError, match="projector"):
-        Promoter(LemmaLibrary(tmp_path), mode="projector")
+def test_projector_mode_cannot_apply_init_clamp(tmp_path):
+    """Projector-mode Promoter exists for projector_energy but cannot
+    masquerade as an init_clamp — guards against silent mis-use."""
+    lib = LemmaLibrary(tmp_path)
+    lid, lemma_meta = _register(lib)
+    p = Promoter(lib, mode="projector")
+    host, host_meta = encode_mera(parse(r"\x:Int. x"))
+    promoted = p.compile_constraint(
+        {"kind": "use_lemma", "lemma_id": lid,
+         "leaves": list(range(lemma_meta.n_leaves))})
+    with pytest.raises(NotImplementedError, match="init_clamp"):
+        p.apply_init_clamp(host, host_meta, promoted)
 
 
 def test_init_clamp_species_mismatch_raises(tmp_path):

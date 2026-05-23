@@ -53,14 +53,11 @@ class Promoter:
     def __init__(self, library: LemmaLibrary, mode: str = "init_clamp"):
         if mode not in ("init_clamp", "projector"):
             raise ValueError(f"unknown promotion mode: {mode}")
-        if mode == "projector":
-            # Projector-energy mode (spec §5.2b) is not yet implemented —
-            # `apply_projector` / `projector_energy` machinery lands in a
-            # follow-on task. Reject at construction so a caller does not
-            # silently receive a PromotedLemma it cannot consume.
-            raise NotImplementedError(
-                "projector mode not yet implemented; only init_clamp is "
-                "supported (spec §5.2a). Pass mode='init_clamp'.")
+        # NOTE: full projector-mode machinery (Hamiltonian term emission,
+        # evolution under -W|Psi_L><Psi_L|) is deferred. The energy-eval
+        # probe `projector_energy` IS implemented (spec §5.2b's overlap
+        # functional, used for acceptance §8.7). `apply_init_clamp` itself
+        # guards against being driven from a projector-mode Promoter.
         self.library = library
         self.mode = mode
 
@@ -130,6 +127,10 @@ class Promoter:
         clamp is a referential imprint of a previously-solved state
         into the host's tensor network. See spec §1.5/§1.6.
         """
+        if self.mode != "init_clamp":
+            raise NotImplementedError(
+                "apply_init_clamp requires mode='init_clamp'; "
+                f"this Promoter is in mode={self.mode!r}.")
         lemma = self.library.load(promoted.lemma_id)
         self._check_species(lemma.encoding_meta, host_meta,
                             promoted.host_leaves)
@@ -139,3 +140,50 @@ class Promoter:
             host.leaves[hl] = np.asarray(cached.leaves[j]).copy()
             frozen.add(hl)
         return frozen
+
+    def projector_energy(self, host: MERA, host_meta: MeraEncodingMeta,
+                         promoted: PromotedLemma) -> float:
+        """Compute the projector-mode energy contribution of `promoted`
+        on `host` (spec §5.2b). The projector term is
+        ``H_L = -W |Psi_L><Psi_L|`` and its expectation on `host` is
+        ``<host| H_L |host> = -W * |<Psi_L|host>|^2``.
+
+        This is an operator-algebraic probe: it computes a real overlap
+        between two MERAs, never decoding the lemma to an AST. Used by
+        the §8.7 acceptance test (init_clamp vs. projector convergence)
+        and as the energy contribution emitted into the composed
+        Hamiltonian at solve time.
+        """
+        lemma = self.library.load(promoted.lemma_id)
+        self._check_species(lemma.encoding_meta, host_meta,
+                            promoted.host_leaves)
+        cached = mera_from_bundle(lemma.mera_tensors)
+        overlap = host.inner(cached)
+        return float(-promoted.weight * abs(overlap) ** 2)
+
+    def composition_residual(self, host: MERA,
+                             host_meta: MeraEncodingMeta,
+                             promoted_list: list[PromotedLemma],
+                             hamiltonian) -> float:
+        """Theorem 13.3 / acceptance §8.9: for disjoint lemma windows
+        that have already been init-clamped onto the host, the per-leaf
+        L2 distance between the host's leaf and the cached lemma's leaf
+        must be zero — the composed state is the exact tensor product
+        of the cached lemmas on those windows.
+
+        Returns the sum over all (lemma, host_leaf) pairs of
+        ``||host.leaves[hl][0,:,0] - cached.leaves[j][0,:,0]||_2``. A
+        nonzero residual means a clamp was overwritten or the windows
+        overlap.
+        """
+        total = 0.0
+        for promoted in promoted_list:
+            lemma = self.library.load(promoted.lemma_id)
+            self._check_species(lemma.encoding_meta, host_meta,
+                                promoted.host_leaves)
+            cached = mera_from_bundle(lemma.mera_tensors)
+            for j, hl in enumerate(promoted.host_leaves):
+                h_vec = np.asarray(host.leaves[hl])[0, :, 0]
+                c_vec = np.asarray(cached.leaves[j])[0, :, 0]
+                total += float(np.linalg.norm(h_vec - c_vec))
+        return float(total)
