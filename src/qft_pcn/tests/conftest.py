@@ -19,7 +19,17 @@ import resource
 
 # Default cap: 8 GiB of virtual address space per test process.
 # Override via QFT_PCN_TEST_MEM_CAP_GB env var if a specific test needs more.
-_DEFAULT_CAP_GB = int(os.environ.get("QFT_PCN_TEST_MEM_CAP_GB", "8"))
+# When the GPU backend is active CuPy reserves a large virtual region for
+# its async memory pool — bump the default cap so it doesn't squeeze out
+# the host-side numpy heap (the encoder still allocates ~250 MiB of
+# disentanglers per MERA, which is fine on 24 GiB system RAM).
+_DEFAULT_CAP_GB = int(
+    os.environ.get(
+        "QFT_PCN_TEST_MEM_CAP_GB",
+        "32" if os.environ.get("QPCN_BACKEND", "auto").lower() != "cpu"
+        else "8",
+    )
+)
 _CAP_BYTES = _DEFAULT_CAP_GB * 1024 * 1024 * 1024
 
 

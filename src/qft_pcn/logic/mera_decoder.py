@@ -15,6 +15,7 @@ from .mera_encoder import MeraEncodingMeta
 from .mera_encoding import MERA_LEAF_DIM, LEAVES_PER_NODE
 from .decoder import parse_kind_stream
 from src.qft_pcn.qft.mera import MERA
+from src.qft_pcn.qft._backend import contract, to_device, to_host, xp as _xp, GPU_ACTIVE
 
 
 @dataclass
@@ -35,26 +36,24 @@ def _ascend_one_layer_batched(state: MERA, op: np.ndarray, ell: int,
     """
     j = pos // 2
     d_ell = state.layer_dims[ell]
-    I = np.eye(d_ell, dtype=complex)
+    I = _xp.eye(d_ell, dtype=complex)
+    op_dev = to_device(op)
     if pos % 2 == 0:
         # op acts on left slot of pair j; I on right slot.
         # op_pair[X, a, b, c, d] = op[X, a, c] * I[b, d]
-        op_pair = np.einsum('Xac,bd->Xabcd', op, I, optimize='greedy')
+        op_pair = contract('Xac,bd->Xabcd', op_dev, I)
     else:
         # op acts on right slot; I on left slot.
         # op_pair[X, a, b, c, d] = I[a, c] * op[X, b, d]
-        op_pair = np.einsum('ac,Xbd->Xabcd', I, op, optimize='greedy')
-    u = state.disentanglers[ell][j]
+        op_pair = contract('ac,Xbd->Xabcd', I, op_dev)
+    u = to_device(state.disentanglers[ell][j])
     # u_{A,B,a,b} . op_pair_{batch,a,b,c,d} -> tmp_{batch,A,B,c,d}
-    tmp = np.einsum('ABab,Xabcd->XABcd', u, op_pair, optimize='greedy')
+    tmp = contract('ABab,Xabcd->XABcd', u, op_pair)
     # tmp_{X,A,B,c,d} . conj(u)_{C,D,c,d} -> op_pair_conj_{X,A,B,C,D}
-    op_pair_conj = np.einsum('XABcd,CDcd->XABCD', tmp, u.conj(),
-                             optimize='greedy')
-    w = state.isometries[ell][j]
+    op_pair_conj = contract('XABcd,CDcd->XABCD', tmp, u.conj())
+    w = to_device(state.isometries[ell][j])
     # w_{A,a,b} . op_pair_conj_{X,a,b,c,d} . conj(w)_{B,c,d} -> op_up_{X,A,B}
-    op_up = np.einsum('Aab,Xabcd,Bcd->XAB',
-                      w, op_pair_conj, w.conj(),
-                      optimize='greedy')
+    op_up = contract('Aab,Xabcd,Bcd->XAB', w, op_pair_conj, w.conj())
     return op_up
 
 
@@ -88,9 +87,10 @@ def _leaf_marginal(state: MERA, leaf: int) -> np.ndarray:
         raise IndexError(f"leaf {leaf} out of range [0, {state.N})")
 
     # Build the batched operator: op0[s, a, b] = delta(s, a) * delta(s, b)
-    # i.e. op0[s] = |s><s|. Shape (d, d, d).
-    op_layer = np.zeros((d, d, d), dtype=complex)
-    idx = np.arange(d)
+    # i.e. op0[s] = |s><s|. Shape (d, d, d). Allocate via backend module
+    # so the ascent stays on-device end-to-end when GPU is active.
+    op_layer = _xp.zeros((d, d, d), dtype=complex)
+    idx = _xp.arange(d)
     op_layer[idx, idx, idx] = 1.0
 
     pos = leaf
@@ -98,15 +98,16 @@ def _leaf_marginal(state: MERA, leaf: int) -> np.ndarray:
         op_layer = _ascend_one_layer_batched(state, op_layer, ell, pos)
         pos //= 2
 
-    T = state.top[..., 0]   # (d_top, d_top)
+    T = to_device(state.top[..., 0])   # (d_top, d_top)
     if pos == 0:
         # <O_s> = sum_{a,A,b} T.conj()[a,b] * op_layer[s,a,A] * T[A,b]
-        vals = np.einsum('ab,SaA,Ab->S', T.conj(), op_layer, T,
-                         optimize='greedy')
+        vals = contract('ab,SaA,Ab->S', T.conj(), op_layer, T)
     else:
         # <O_s> = sum_{a,b,B} T.conj()[a,b] * op_layer[s,b,B] * T[a,B]
-        vals = np.einsum('ab,SbB,aB->S', T.conj(), op_layer, T,
-                         optimize='greedy')
+        vals = contract('ab,SbB,aB->S', T.conj(), op_layer, T)
+    # Bring back to host for the rest of the function (probabilities,
+    # clip, normalization happen as plain NumPy floats).
+    vals = to_host(vals)
     p = np.real(vals).astype(float)
     # Clamp tiny negatives from floating-point noise.
     np.clip(p, 0.0, None, out=p)

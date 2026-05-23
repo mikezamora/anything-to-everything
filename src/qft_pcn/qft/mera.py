@@ -24,6 +24,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from ._backend import contract, to_device, to_host
+
 
 # ---- exceptions -----------------------------------------------------------
 
@@ -689,26 +691,25 @@ class MERA:
         tensors, one per layer-0 pair.
         """
         N = self.N
-        etas = [self.leaves[k][0, :, 0].conj() * other.leaves[k][0, :, 0]
+        etas = [to_device(self.leaves[k][0, :, 0].conj()
+                          * other.leaves[k][0, :, 0])
                 for k in range(N)]
         out: list[np.ndarray] = []
         for j in range(N // 2):
             eta_l = etas[2 * j]
             eta_r = etas[2 * j + 1]
-            u_b = self.disentanglers[0][j]
-            u_k = other.disentanglers[0][j]
-            w_b = self.isometries[0][j]
-            w_k = other.isometries[0][j]
+            u_b = to_device(self.disentanglers[0][j])
+            u_k = to_device(other.disentanglers[0][j])
+            w_b = to_device(self.isometries[0][j])
+            w_k = to_device(other.isometries[0][j])
             # Effective layer-isometry (w composed with u):
             #   W[A, s_l, s_r] = sum_{a, b} w[A, a, b] * u[a, b, s_l, s_r]
-            Wb = np.einsum('Aab,abst->Ast', w_b, u_b, optimize='greedy')
-            Wk = np.einsum('Aab,abst->Ast', w_k, u_k, optimize='greedy')
+            Wb = contract('Aab,abst->Ast', w_b, u_b)
+            Wk = contract('Aab,abst->Ast', w_k, u_k)
             # M[A_bra, A_ket] = sum_{s_l, s_r} Wb.conj()[A_bra, s_l, s_r]
             #                                  * Wk[A_ket, s_l, s_r]
             #                                  * eta_l[s_l] * eta_r[s_r]
-            M = np.einsum('Bst,Kst,s,t->BK',
-                          Wb.conj(), Wk, eta_l, eta_r,
-                          optimize='greedy')
+            M = contract('Bst,Kst,s,t->BK', Wb.conj(), Wk, eta_l, eta_r)
             out.append(M)
         return out
 
@@ -730,27 +731,23 @@ class MERA:
         w_k_list = other.isometries[ell]
         out: list[np.ndarray] = []
         for j in range(n_above):
-            ML = cross_below[2 * j]      # (a_b, a_k)
-            MR = cross_below[2 * j + 1]  # (b_b, b_k)
-            u_b = u_b_list[j]
-            u_k = u_k_list[j]
-            w_b = w_b_list[j]
-            w_k = w_k_list[j]
+            ML = to_device(cross_below[2 * j])      # (a_b, a_k)
+            MR = to_device(cross_below[2 * j + 1])  # (b_b, b_k)
+            u_b = to_device(u_b_list[j])
+            u_k = to_device(u_k_list[j])
+            w_b = to_device(w_b_list[j])
+            w_k = to_device(w_k_list[j])
             # Composed bra/ket layer-isometries:
             #   Wb[A_b, a_b, b_b] = sum w_b.conj()[A_b, a', b'] *
             #                            u_b.conj()[a', b', a_b, b_b]
             #   Wk[A_k, a_k, b_k] = sum w_k[A_k, a', b'] *
             #                            u_k[a', b', a_k, b_k]
-            Wb = np.einsum('Bxy,xyab->Bab', w_b.conj(), u_b.conj(),
-                           optimize='greedy')
-            Wk = np.einsum('Kxy,xyab->Kab', w_k, u_k,
-                           optimize='greedy')
+            Wb = contract('Bxy,xyab->Bab', w_b.conj(), u_b.conj())
+            Wk = contract('Kxy,xyab->Kab', w_k, u_k)
             # M_new[A_b, A_k] = sum_{a_b, b_b, a_k, b_k}
             #     Wb[A_b, a_b, b_b] * Wk[A_k, a_k, b_k]
             #     * ML[a_b, a_k] * MR[b_b, b_k]
-            M_new = np.einsum('Bab,Kcd,ac,bd->BK',
-                              Wb, Wk, ML, MR,
-                              optimize='greedy')
+            M_new = contract('Bab,Kcd,ac,bd->BK', Wb, Wk, ML, MR)
             out.append(M_new)
         return out
 
@@ -796,25 +793,23 @@ class MERA:
             # N=2: top sits directly above the two leaves (no isometry
             # ascent consumed in norm_sq either). Contract leaves with
             # top tensors via shared basis.
-            eta_l = self.leaves[0][0, :, 0].conj() * other.leaves[0][0, :, 0]
-            eta_r = self.leaves[1][0, :, 0].conj() * other.leaves[1][0, :, 0]
-            T_b = self.top[..., 0].conj()
-            T_k = other.top[..., 0]
-            val = np.einsum('st,st,s,t->',
-                            T_b, T_k, eta_l, eta_r,
-                            optimize='greedy')
-            return complex(val)
+            eta_l = to_device(self.leaves[0][0, :, 0].conj()
+                              * other.leaves[0][0, :, 0])
+            eta_r = to_device(self.leaves[1][0, :, 0].conj()
+                              * other.leaves[1][0, :, 0])
+            T_b = to_device(self.top[..., 0].conj())
+            T_k = to_device(other.top[..., 0])
+            val = contract('st,st,s,t->', T_b, T_k, eta_l, eta_r)
+            return complex(to_host(val))
         cross = self._cross_layer1(other)
         for ell in range(1, L - 1):
             cross = self._cross_ascend(other, ell, cross)
         assert len(cross) == 2
         ML, MR = cross
-        T_b = self.top[..., 0].conj()    # (a_l_bra, a_r_bra)
-        T_k = other.top[..., 0]          # (a_l_ket, a_r_ket)
-        val = np.einsum('ab,cd,ac,bd->',
-                        T_b, T_k, ML, MR,
-                        optimize='greedy')
-        return complex(val)
+        T_b = to_device(self.top[..., 0].conj())    # (a_l_bra, a_r_bra)
+        T_k = to_device(other.top[..., 0])          # (a_l_ket, a_r_ket)
+        val = contract('ab,cd,ac,bd->', T_b, T_k, ML, MR)
+        return complex(to_host(val))
 
     # ---- local gate application -------------------------------------------
 
@@ -842,21 +837,19 @@ class MERA:
         """
         j = pos // 2
         d_ell = self.layer_dims[ell]
-        I = np.eye(d_ell, dtype=complex)
+        op_dev = to_device(op)
+        I = to_device(np.eye(d_ell, dtype=complex))
         if pos % 2 == 0:
             # op acts on left slot of pair j; I on right slot.
-            op_pair = np.einsum('ac,bd->abcd', op, I, optimize='greedy')
+            op_pair = contract('ac,bd->abcd', op_dev, I)
         else:
-            op_pair = np.einsum('ac,bd->abcd', I, op, optimize='greedy')
-        u = self.disentanglers[ell][j]
+            op_pair = contract('ac,bd->abcd', I, op_dev)
+        u = to_device(self.disentanglers[ell][j])
         # u . op_pair . u^dag  (acting in pair-Hilbert space)
-        tmp = np.einsum('ABab,abcd->ABcd', u, op_pair, optimize='greedy')
-        op_pair_conj = np.einsum('ABcd,CDcd->ABCD', tmp, u.conj(),
-                                 optimize='greedy')
-        w = self.isometries[ell][j]
-        op_up = np.einsum('Aab,abcd,Bcd->AB',
-                          w, op_pair_conj, w.conj(),
-                          optimize='greedy')
+        tmp = contract('ABab,abcd->ABcd', u, op_pair)
+        op_pair_conj = contract('ABcd,CDcd->ABCD', tmp, u.conj())
+        w = to_device(self.isometries[ell][j])
+        op_up = contract('Aab,abcd,Bcd->AB', w, op_pair_conj, w.conj())
         return op_up
 
     def local_expectation(self, leaf: int, op: np.ndarray) -> complex:
@@ -873,24 +866,22 @@ class MERA:
             raise ValueError(f"op shape {op.shape}, expected ({d}, {d})")
         if self._superposition_terms is not None:
             return self._local_expectation_from_terms(leaf, op)
-        op_layer = op
+        op_layer = to_device(op)
         pos = leaf
         for ell in range(self.L - 1):
             op_layer = self._ascend_one_layer(op_layer, ell, pos)
             pos //= 2
         # At layer L-1 with 2 top sites; pos is 0 or 1.
-        T = self.top[..., 0]   # (d_top, d_top)
+        T = to_device(self.top[..., 0])   # (d_top, d_top)
         if pos == 0:
             # op acts on left top site:
             # <O> = sum_{a, A, b} T.conj()[a, b] · op[a, A] · T[A, b]
-            val = np.einsum('ab,aA,Ab->', T.conj(), op_layer, T,
-                            optimize='greedy')
+            val = contract('ab,aA,Ab->', T.conj(), op_layer, T)
         else:
             # op acts on right top site:
             # <O> = sum_{a, b, B} T.conj()[a, b] · op[b, B] · T[a, B]
-            val = np.einsum('ab,bB,aB->', T.conj(), op_layer, T,
-                            optimize='greedy')
-        return complex(val)
+            val = contract('ab,bB,aB->', T.conj(), op_layer, T)
+        return complex(to_host(val))
 
     def _local_expectation_from_terms(self, leaf: int,
                                       op: np.ndarray) -> complex:
@@ -928,40 +919,33 @@ class MERA:
         if op.shape != (d * d, d * d):
             raise ValueError(
                 f"op shape {op.shape}, expected ({d * d}, {d * d})")
-        op4 = op.reshape(d, d, d, d)   # (out_l, out_r, in_l, in_r)
+        op4 = to_device(op.reshape(d, d, d, d))   # (out_l, out_r, in_l, in_r)
         if leaf % 2 == 0:
             # Intra-pair: the gate acts on pair j = leaf // 2 of layer 0.
             j = leaf // 2
-            u = self.disentanglers[0][j]
+            u = to_device(self.disentanglers[0][j])
             # u . op . u^dag
-            tmp = np.einsum('ABab,abcd->ABcd', u, op4, optimize='greedy')
-            op_pair = np.einsum('ABcd,CDcd->ABCD', tmp, u.conj(),
-                                optimize='greedy')
-            w = self.isometries[0][j]
-            op_layer = np.einsum('Aab,abcd,Bcd->AB',
-                                 w, op_pair, w.conj(),
-                                 optimize='greedy')
+            tmp = contract('ABab,abcd->ABcd', u, op4)
+            op_pair = contract('ABcd,CDcd->ABCD', tmp, u.conj())
+            w = to_device(self.isometries[0][j])
+            op_layer = contract('Aab,abcd,Bcd->AB', w, op_pair, w.conj())
             # Now at layer 1, position j; ascend remaining layers.
             pos = j
             for ell in range(1, self.L - 1):
                 op_layer = self._ascend_one_layer(op_layer, ell, pos)
                 pos //= 2
-            T = self.top[..., 0]
+            T = to_device(self.top[..., 0])
             if self.L == 1:
                 # N=2 case: top is already in the physical basis; op_layer
                 # is the original op (no layer-0 ascent applied actually).
                 # Handle separately:
-                val = np.einsum('ab,abcd,cd->',
-                                T.conj(), op4, T,
-                                optimize='greedy')
-                return complex(val)
+                val = contract('ab,abcd,cd->', T.conj(), op4, T)
+                return complex(to_host(val))
             if pos == 0:
-                val = np.einsum('ab,aA,Ab->', T.conj(), op_layer, T,
-                                optimize='greedy')
+                val = contract('ab,aA,Ab->', T.conj(), op_layer, T)
             else:
-                val = np.einsum('ab,bB,aB->', T.conj(), op_layer, T,
-                                optimize='greedy')
-            return complex(val)
+                val = contract('ab,bB,aB->', T.conj(), op_layer, T)
+            return complex(to_host(val))
         # Inter-pair: leaf is odd. (leaf, leaf+1) straddle adjacent pairs.
         # For product MERAs (all disentanglers identity), the inter-pair
         # contraction reduces to the direct 4-site expectation on the
