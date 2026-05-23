@@ -227,7 +227,11 @@ def _tokenize(src: str) -> list[_Tok]:
         value = m.group(kind)
         if value == "true" or value == "false":
             kind = "bool"
-        elif value in ("if", "then", "else", "Int", "Bool"):
+        elif value in (
+            "if", "then", "else", "Int", "Bool",
+            # Extended-calculus surface keywords (I-Task-10):
+            "forall", "Eq", "Nat", "Zero", "Succ", "NatLit",
+        ):
             kind = "keyword"
         out.append(_Tok(kind, value))
         pos = m.end()
@@ -271,6 +275,9 @@ class _Parser:
         if t.kind == "keyword" and t.value == "Bool":
             self.eat("keyword", "Bool")
             return TBool()
+        if t.kind == "keyword" and t.value == "Nat":
+            self.eat("keyword", "Nat")
+            return TNat()
         if t.kind == "lp":
             self.eat("lp")
             ty = self.parse_ty()
@@ -291,7 +298,19 @@ class _Parser:
         t = self.peek()
         if t.kind == "keyword" and t.value == "if":
             return self.parse_if()
+        if t.kind == "keyword" and t.value == "forall":
+            return self.parse_forall()
         return self.parse_cmp()
+
+    def parse_forall(self) -> Node:
+        # forall <ident>:<type>. <expr>
+        self.eat("keyword", "forall")
+        name_tok = self.eat("ident")
+        self.eat("colon")
+        ty = self.parse_ty()
+        self.eat("dot")
+        body = self.parse_expr()
+        return Forall(param=name_tok.value, param_ty=ty, body=body)
 
     def parse_if(self) -> Node:
         self.eat("keyword", "if")
@@ -330,10 +349,19 @@ class _Parser:
 
     def parse_app(self) -> Node:
         head = self.parse_atom()
-        while self.peek().kind in ("ident", "int", "bool", "lp"):
+        while self._can_start_atom(self.peek()):
             arg = self.parse_atom()
             head = App(fn=head, arg=arg)
         return head
+
+    @staticmethod
+    def _can_start_atom(t: _Tok) -> bool:
+        if t.kind in ("ident", "int", "bool", "lp", "lambda"):
+            return True
+        # Atom-initial keywords from the extended-calculus surface.
+        if t.kind == "keyword" and t.value in ("Zero", "Succ", "NatLit", "Eq"):
+            return True
+        return False
 
     def parse_atom(self) -> Node:
         t = self.peek()
@@ -355,6 +383,28 @@ class _Parser:
             return BoolLit(val=(t.value == "true"))
         if t.kind == "lambda":
             return self.parse_lambda()
+        if t.kind == "keyword" and t.value == "Zero":
+            self.eat("keyword", "Zero")
+            return Zero()
+        if t.kind == "keyword" and t.value == "Succ":
+            self.eat("keyword", "Succ")
+            arg = self.parse_atom()
+            return Succ(arg=arg)
+        if t.kind == "keyword" and t.value == "NatLit":
+            self.eat("keyword", "NatLit")
+            # Accept either "NatLit(<int>)" or "NatLit <int>".
+            if self.peek().kind == "lp":
+                self.eat("lp")
+                int_tok = self.eat("int")
+                self.eat("rp")
+            else:
+                int_tok = self.eat("int")
+            return NatLit(val=int(int_tok.value))
+        if t.kind == "keyword" and t.value == "Eq":
+            self.eat("keyword", "Eq")
+            lhs = self.parse_atom()
+            rhs = self.parse_atom()
+            return Eq(lhs=lhs, rhs=rhs)
         if t.kind == "lp":
             self.eat("lp")
             e = self.parse_expr()
