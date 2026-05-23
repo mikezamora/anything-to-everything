@@ -25,7 +25,7 @@ export const SECTIONS: SectionSpec[] = [
     story: [
       'The QFT side carries the system\'s quantum content. Each spatial point holds an operator-valued bosonic field with a truncated Fock space; the many-body state is a Matrix Product State (MPS) with controllable bond dimension.',
       'The Hamiltonian is built locally from one-site and two-site terms. Evolution uses second-order Suzuki-Trotter splitting with SVD-based bond truncation — real-time for unitary dynamics, imaginary-time for relaxation.',
-      'MERA layers add multi-scale structure; the VQC panel shows a parameterized quantum circuit that can drop into any PCN layer as a generative map.',
+      'MERA layers add multi-scale structure; the VQC panel shows a variational quantum circuit that can drop into any PCN layer as a generative map.',
     ],
     layers: ['mps', 'mera', 'vqc', 'hamiltonian'],
     layerSummaries: [
