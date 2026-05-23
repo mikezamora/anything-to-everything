@@ -36,4 +36,30 @@ describe('MetricsStrip', () => {
     ]} />);
     expect(container.querySelectorAll('path').length).toBe(1);
   });
+
+  it('overlays a baseline polyline per series when a baseline run is pinned', () => {
+    let s = useVizStore.getState();
+    s.openRun('A');
+    s = useVizStore.getState();
+    s.openRun('B');
+    s = useVizStore.getState();
+    s.setActiveRun('A');
+    s = useVizStore.getState();
+    s.pinBaseline('B');
+    for (let i = 0; i < 5; i++) {
+      s = useVizStore.getState();
+      s.pushFrame('A', { step: i, layer_states: { qpcn: { energy: i * 0.1 } } });
+      s = useVizStore.getState();
+      s.pushFrame('B', { step: i, layer_states: { qpcn: { energy: i * 0.2 } } });
+    }
+    const { container } = render(<MetricsStrip layer="qpcn" metrics={[
+      { key: 'e', label: 'E', color: '#fa0',
+        select: (ls) => ls.energy as number },
+    ]} />);
+    // 1 active + 1 baseline = 2 paths total for a single series.
+    expect(container.querySelectorAll('path').length).toBe(2);
+    // The baseline path is dashed at 60% alpha.
+    const dashed = container.querySelector('path[stroke-dasharray]');
+    expect(dashed).toBeTruthy();
+  });
 });
