@@ -112,6 +112,75 @@ def test_init_clamp_species_mismatch_raises(tmp_path):
         p.apply_init_clamp(host, host_meta, promoted)
 
 
+def test_init_clamp_strength_half_blends_host_and_cached(tmp_path):
+    """Spec §6.4 / precision-weighted clamp: strength=0.5 produces a
+    renormalized blend of cached + host leaves, NOT a full overwrite."""
+    lib = LemmaLibrary(tmp_path)
+    lid, lemma_meta = _register(lib)
+    p = Promoter(lib)
+    # Use the same source as the lemma so species/leaf counts align by
+    # construction. We then perturb the host's leaf 0 so the blend is
+    # observably different from both the pure-host and pure-cached
+    # tensors.
+    host, host_meta = encode_mera(parse(r"\x:Int. x"))
+    pre_host_leaf = np.asarray(host.leaves[0]).copy()
+    # Inject a small perturbation so host[0] != cached[0]; otherwise
+    # the blend is trivially equal to both.
+    host.leaves[0] = host.leaves[0] + 0.1
+    host_perturbed = np.asarray(host.leaves[0]).copy()
+    cached = lib.materialize(lid)
+    cached_leaf0 = np.asarray(cached.leaves[0]).copy()
+    n = lemma_meta.n_leaves
+    promoted = p.compile_constraint(
+        {"kind": "use_lemma", "lemma_id": lid, "leaves": list(range(n))})
+    frozen = p.apply_init_clamp(host, host_meta, promoted, strength=0.5)
+    assert isinstance(frozen, set) and 0 in frozen
+    # Expected: renormalized 0.5 * cached + 0.5 * host_perturbed at leaf 0.
+    expected = 0.5 * cached_leaf0 + 0.5 * host_perturbed
+    norm = float(np.linalg.norm(expected[0, :, 0]))
+    if norm > 0.0:
+        expected = expected / norm
+    assert np.allclose(host.leaves[0], expected)
+    # And the blend at leaf 0 is NOT byte-equal to the cached tensor.
+    assert not np.allclose(host.leaves[0], cached_leaf0)
+    # Nor byte-equal to the (perturbed) pre-clamp host tensor.
+    assert not np.allclose(host.leaves[0], host_perturbed)
+    _ = pre_host_leaf  # retained for readability; unused after blend
+
+
+def test_init_clamp_strength_zero_leaves_host_unchanged_modulo_norm(tmp_path):
+    """strength=0.0 means a zero-weight blend -- the host leaf survives
+    up to renormalization. (Norm is preserved trivially since host leaves
+    are already unit-normalized by the encoder.)"""
+    lib = LemmaLibrary(tmp_path)
+    lid, lemma_meta = _register(lib)
+    p = Promoter(lib)
+    host, host_meta = encode_mera(parse(r"\x:Int. x"))
+    pre = [np.asarray(v).copy() for v in host.leaves]
+    n = lemma_meta.n_leaves
+    promoted = p.compile_constraint(
+        {"kind": "use_lemma", "lemma_id": lid, "leaves": list(range(n))})
+    p.apply_init_clamp(host, host_meta, promoted, strength=0.0)
+    for i in range(n):
+        # Host leaves are unit-norm by the encoder; strength=0.0 +
+        # renormalization is an identity.
+        assert np.allclose(host.leaves[i], pre[i])
+
+
+def test_init_clamp_strength_out_of_range_raises(tmp_path):
+    lib = LemmaLibrary(tmp_path)
+    lid, lemma_meta = _register(lib)
+    p = Promoter(lib)
+    host, host_meta = encode_mera(parse(r"\x:Int. x"))
+    n = lemma_meta.n_leaves
+    promoted = p.compile_constraint(
+        {"kind": "use_lemma", "lemma_id": lid, "leaves": list(range(n))})
+    with pytest.raises(ValueError, match="strength"):
+        p.apply_init_clamp(host, host_meta, promoted, strength=-0.1)
+    with pytest.raises(ValueError, match="strength"):
+        p.apply_init_clamp(host, host_meta, promoted, strength=1.5)
+
+
 def test_init_clamp_writes_lemma_tensors_no_rederivation(tmp_path):
     """Acceptance §8.6: after apply_init_clamp, the host window's tensors
     are byte-equal to the cached lemma's -- proving promotion is a

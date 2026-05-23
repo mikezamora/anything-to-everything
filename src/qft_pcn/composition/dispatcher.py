@@ -27,6 +27,18 @@ class ChildResult:
     solved_ast: typing.Any          # decoded AST, or None
     run_diagnostic: dict            # G's RunResult.to_dict() for provenance
     error: str | None
+    # --- I-Task-7 plumbing (spec §6.1) ----------------------------------
+    # ``meta`` is the MeraEncodingMeta the child was decoded under -- the
+    # result-integrator needs it to invoke ``register_lemma`` and to feed
+    # ``Promoter`` species checks. ``hamiltonian`` is the (optional) M2
+    # Hamiltonian under which residual_energy was measured; passing it
+    # through enables the compress branch of ``register_lemma``.
+    # ``trotter_steps`` carries provenance into ``DerivationMetadata``.
+    # All three default to safe no-op values so that older call sites
+    # (tests, stubs) keep working unchanged.
+    meta: typing.Any = None
+    hamiltonian: typing.Any = None
+    trotter_steps: int = 0
 
 
 def run_child(sub_goal: SubGoal, *, chi_max: int = DEFAULT_CHI_MAX,

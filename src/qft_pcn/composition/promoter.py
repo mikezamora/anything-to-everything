@@ -115,7 +115,8 @@ class Promoter:
                     f"host leaf {hl} species {host_species[hl]!r}")
 
     def apply_init_clamp(self, host: MERA, host_meta: MeraEncodingMeta,
-                         promoted: PromotedLemma) -> set[int]:
+                         promoted: PromotedLemma,
+                         strength: float = 1.0) -> set[int]:
         """Write the lemma's leaf tensors into the host's lemma window;
         return the set of host leaf indices that the caller must freeze
         during subsequent relaxation (spec §5.2a, acceptance §8.6).
@@ -126,18 +127,46 @@ class Promoter:
         never re-run, and the host MERA's AST is never rewritten -- the
         clamp is a referential imprint of a previously-solved state
         into the host's tensor network. See spec §1.5/§1.6.
+
+        ``strength`` (spec §6.4): at the default value 1.0 the host leaf
+        is fully overwritten by the cached lemma leaf (the original
+        full-strength clamp). For ``0.0 <= strength < 1.0`` the host
+        leaf becomes the renormalized blend
+        ``strength * cached + (1 - strength) * host``. This realizes the
+        precision-weighted clamp the result-integrator wants for a
+        provisional (above-gate, below-ceiling) child: a low-residual
+        child clamps strongly, a higher-residual one clamps gently
+        without overwriting host context. A leaf whose blend would be
+        identically zero is left untouched (no division by zero); the
+        leaf index is still returned in the frozen set because the
+        caller's intent is recorded by the clamp call.
         """
         if self.mode != "init_clamp":
             raise NotImplementedError(
                 "apply_init_clamp requires mode='init_clamp'; "
                 f"this Promoter is in mode={self.mode!r}.")
+        if not 0.0 <= float(strength) <= 1.0:
+            raise ValueError(
+                f"strength must be in [0.0, 1.0]; got {strength!r}")
+        s = float(strength)
         lemma = self.library.load(promoted.lemma_id)
         self._check_species(lemma.encoding_meta, host_meta,
                             promoted.host_leaves)
         cached = mera_from_bundle(lemma.mera_tensors)
         frozen: set[int] = set()
         for j, hl in enumerate(promoted.host_leaves):
-            host.leaves[hl] = np.asarray(cached.leaves[j]).copy()
+            cached_leaf = np.asarray(cached.leaves[j])
+            if s >= 1.0:
+                host.leaves[hl] = cached_leaf.copy()
+            else:
+                host_leaf = np.asarray(host.leaves[hl])
+                blended = s * cached_leaf + (1.0 - s) * host_leaf
+                # Renormalize the per-site state vector (shape (1, d, 1)).
+                vec = blended[0, :, 0]
+                norm = float(np.linalg.norm(vec))
+                if norm > 0.0:
+                    blended = blended / norm
+                host.leaves[hl] = blended
             frozen.add(hl)
         return frozen
 
