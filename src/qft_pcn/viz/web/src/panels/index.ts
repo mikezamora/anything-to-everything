@@ -15,7 +15,7 @@ import { MeraPanel } from './MeraPanel';
 import { VqcPanel } from './VqcPanel';
 import { LogicPanel } from './LogicPanel';
 
-export type PanelComponent = ComponentType<{ frame: Frame }>;
+export type PanelComponent = ComponentType<{ frame: Frame; baselineFrame?: Frame }>;
 
 export const PANELS: Record<LayerKey, PanelComponent> = {
   manifold: ManifoldPanel,
