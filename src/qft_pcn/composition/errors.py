@@ -32,3 +32,34 @@ class LemmaValidationError(CompositionError):
 
 class CompressionError(CompositionError):
     """Bond compression could not reach eps_compress without exceeding it."""
+
+
+class GoalGraphError(CompositionError):
+    """A back-edge slipped past cycle detection. A bug, not recoverable."""
+
+
+class DispatchTimeout(CompositionError):
+    """Child goal exceeded its dispatch timeout (carried in ChildResult, spec §5.4)."""
+
+    def __init__(self, goal_id: str, timeout_s: float):
+        super().__init__(f"child {goal_id!r} exceeded timeout {timeout_s}s")
+        self.goal_id = goal_id
+        self.timeout_s = timeout_s
+
+
+class IntegrationRefused(CompositionError):
+    """Integration residual exceeded the configured gate (spec §6.3)."""
+
+    def __init__(self, residual: float, gate: float):
+        super().__init__(f"integration refused: residual {residual!r} exceeds gate {gate!r}")
+        self.residual = residual
+        self.gate = gate
+
+
+class RevisionExhausted(CompositionError):
+    """Goal revision attempts exhausted without convergence (spec §6.5)."""
+
+    def __init__(self, goal_id: str, attempts: int):
+        super().__init__(f"revision exhausted for {goal_id!r} after {attempts} attempts")
+        self.goal_id = goal_id
+        self.attempts = attempts
