@@ -34,7 +34,9 @@ from src.qft_pcn.logic.mera_encoder import encode_mera
 from src.qft_pcn.logic.mera_encoding import (
     KIND_EQ, KIND_BOOL, KIND_PAD,
 )
-from src.qft_pcn.logic.encoding import VALUE_TRUE
+from src.qft_pcn.logic.encoding import VALUE_TRUE, KIND_VAR
+from src.qft_pcn.logic.mera_decoder import decode_mera
+from src.qft_pcn.logic.ast import BoolLit, Forall as _Forall
 from src.qft_pcn.logic.mera_evaluation_hamiltonian import (
     MeraEvalHamiltonian, RULE_R_EQ_REFL, RULE_R_ADD_ZERO,
     _kind_leaf, _value_leaf, _leaf_weights,
@@ -188,3 +190,152 @@ def test_eqrefl_addzero_composite():
     assert post_val[VALUE_TRUE] > 0.99, (
         f"Eq node value leaf did not promote to VALUE_TRUE: "
         f"{post_val}")
+
+
+# ---- Gap E: R-Eq-Refl co-projects orphan subtree descendants to PAD ----
+#
+# Spec / pins: the R-Eq-Refl promotion gate (`_eq_refl_moves`) walks the
+# FULL lhs/rhs subtrees (not only their immediate roots) via
+# `_subtree_nodes(sub_root)` and emits a kind-leaf PAD collapse on every
+# descendant node. This keeps the decoder's trailing-PAD check (`site N
+# not PAD after AST parse`) green: after `Eq` is promoted to a leaf
+# `BoolLit(True)`, every node that used to sit inside lhs/rhs becomes
+# structurally absent (kind argmax = KIND_PAD) and the decoder reads
+# `BoolLit(True)` straight off.
+#
+# Forall-protected leaves stay bitwise unchanged: the frozen-leaves
+# filter in `mera_evolution_logic.py` drops any gate that targets a
+# protected leaf. A bound Var inside an Eq subtree therefore keeps its
+# entanglement with its Forall binder even after the surrounding Eq
+# promotes -- the §1.1 binding-as-entanglement invariant.
+
+
+def test_eqrefl_nested_lhs_pad_collapses_descendants():
+    """`Eq (NatLit 3 + Zero) (NatLit 3)`: the lhs is a Bin(+) subtree
+    with deeper descendants. Once R-AddZero rewrites `(NatLit 3 + Zero)`
+    to `NatLit 3`, R-Eq-Refl confirms equality and promotes the Eq node
+    to `BoolLit(True)`. The orphan descendants (Bin, NatLit-lhs, Zero,
+    NatLit-rhs) must all have their kind leaves driven to KIND_PAD --
+    otherwise `decode_mera` rejects the encoded stream's trailing
+    non-PAD entries (Gap E)."""
+    src = Eq(lhs=Bin(op="+", lhs=NatLit(val=3), rhs=Zero()),
+             rhs=NatLit(val=3))
+    state, meta = encode_mera(src)
+    H = MeraEvalHamiltonian(meta)
+    protected = set(meta.forall_protected_leaves)
+    _, final = mera_imaginary_evolve_state(
+        state, H, dt=0.1, steps=400, chi_layer=16,
+        frozen_leaves=protected)
+    # Every descendant node (every node STRICTLY BELOW the Eq node) must
+    # have its kind leaf argmax at KIND_PAD; otherwise the decoder's
+    # trailing-PAD check breaks.
+    eq_node = 0
+    for cnode in range(meta.n_nodes):
+        if cnode == eq_node:
+            continue
+        kind_w = _leaf_weights(final, _kind_leaf(meta, cnode))
+        assert int(np.argmax(kind_w)) == KIND_PAD, (
+            f"descendant node {cnode} kind argmax did not collapse to "
+            f"PAD: weights={kind_w}")
+    # Decoder must succeed and parse `BoolLit(True)`.
+    res = decode_mera(final, meta)
+    assert isinstance(res.ast, BoolLit) and res.ast.val is True, (
+        f"decode did not parse BoolLit(True): {res.ast}")
+
+
+def test_eqrefl_nested_rhs_pad_collapses_descendants():
+    """Same as the lhs nesting case but with the deeper subtree on the
+    rhs of the Eq: `Eq (NatLit 3) (NatLit 3 + Zero)`. R-Eq-Refl's PAD
+    collapse must symmetrically cover the rhs subtree's descendants."""
+    src = Eq(lhs=NatLit(val=3),
+             rhs=Bin(op="+", lhs=NatLit(val=3), rhs=Zero()))
+    state, meta = encode_mera(src)
+    H = MeraEvalHamiltonian(meta)
+    protected = set(meta.forall_protected_leaves)
+    _, final = mera_imaginary_evolve_state(
+        state, H, dt=0.1, steps=400, chi_layer=16,
+        frozen_leaves=protected)
+    eq_node = 0
+    for cnode in range(meta.n_nodes):
+        if cnode == eq_node:
+            continue
+        kind_w = _leaf_weights(final, _kind_leaf(meta, cnode))
+        assert int(np.argmax(kind_w)) == KIND_PAD, (
+            f"descendant node {cnode} kind argmax did not collapse to "
+            f"PAD: weights={kind_w}")
+    res = decode_mera(final, meta)
+    assert isinstance(res.ast, BoolLit) and res.ast.val is True, (
+        f"decode did not parse BoolLit(True): {res.ast}")
+
+
+def test_eqrefl_with_forall_protected_var_inside_subtree():
+    """`forall x:Nat. Eq (add x Zero) x`: the bound Var leaves (every
+    species of every bound-Var-use site) are Forall-protected. The
+    R-Eq-Refl PAD-collapse emits gates targeting every descendant kind
+    leaf, but the evolution layer's frozen-leaves filter drops any gate
+    that targets a protected leaf -- so the bound Var sites keep their
+    KIND_VAR entry bitwise unchanged (the §1.1 binding-as-entanglement
+    invariant survives the promotion). Non-protected descendants
+    (the Bin node, the Zero node) collapse to PAD.
+
+    This pins the architectural seam: Forall-protected leaves remain
+    intact even when the surrounding subtree is logically discarded.
+    Any downstream decoder gap (trailing-PAD check rejecting the
+    surviving KIND_VAR sites) must be addressed at a different seam
+    (decoder, not substrate)."""
+    body = Eq(lhs=Bin(op="+", lhs=Var(name="x"), rhs=Zero()),
+              rhs=Var(name="x"))
+    src = _Forall(param="x", param_ty=TNat(), body=body)
+    state, meta = encode_mera(src)
+    H = MeraEvalHamiltonian(meta)
+    protected = set(meta.forall_protected_leaves)
+    assert protected, (
+        "Forall-protected leaves set is empty -- I-Task-10 blocker #5 "
+        "must populate it")
+
+    # Snapshot all protected leaves' bitwise values pre-evolution.
+    pre_protected = {
+        lf: _leaf_weights(state, lf).copy() for lf in protected
+    }
+
+    _, final = mera_imaginary_evolve_state(
+        state, H, dt=0.1, steps=400, chi_layer=16,
+        frozen_leaves=protected)
+
+    # Every protected leaf is bitwise unchanged.
+    for lf, pre_w in pre_protected.items():
+        post_w = _leaf_weights(final, lf)
+        assert np.allclose(post_w, pre_w, atol=1e-9), (
+            f"protected leaf {lf} changed under evolution: "
+            f"pre={pre_w} post={post_w}")
+
+    # Locate the Eq node (body of the Forall).
+    forall_kids = meta.children_of_node.get(0, [])
+    assert forall_kids
+    eq_node = forall_kids[0]
+    bin_node = meta.children_of_node.get(eq_node, [])[0]
+    bin_kids = meta.children_of_node.get(bin_node, [])
+    assert len(bin_kids) == 2
+    var_lhs, zero_node = bin_kids[0], bin_kids[1]
+    rhs_var = meta.children_of_node.get(eq_node, [])[1]
+
+    # Eq node promoted to KIND_BOOL.
+    eq_kind_w = _leaf_weights(final, _kind_leaf(meta, eq_node))
+    assert eq_kind_w[KIND_BOOL] > 0.99, (
+        f"Eq node not promoted to KIND_BOOL: {eq_kind_w}")
+
+    # Bin node and Zero node (non-protected) collapse to PAD.
+    for cnode in (bin_node, zero_node):
+        kind_w = _leaf_weights(final, _kind_leaf(meta, cnode))
+        assert int(np.argmax(kind_w)) == KIND_PAD, (
+            f"non-protected descendant node {cnode} kind argmax not "
+            f"PAD: weights={kind_w}")
+
+    # Protected Var sites (lhs Var, rhs Var) keep their KIND_VAR
+    # entry: a Forall-bound Var inside an Eq subtree survives the
+    # surrounding promotion.
+    for cnode in (var_lhs, rhs_var):
+        kind_w = _leaf_weights(final, _kind_leaf(meta, cnode))
+        assert int(np.argmax(kind_w)) == KIND_VAR, (
+            f"Forall-protected Var node {cnode} no longer KIND_VAR: "
+            f"weights={kind_w}")

@@ -456,6 +456,25 @@ it unblocks.
 
 ## Missing dependency: post-promotion stale leaves break decoder trailing-PAD check (Gap E)
 
+Status: **partially resolved** — the substrate's R-Eq-Refl promotion
+`_eq_refl_moves` already walks the FULL lhs/rhs subtrees (via
+`_subtree_nodes`) and drives every descendant's kind leaf toward PAD
+through `_collapse_moves`. Verified by
+`test_eqrefl_nested_lhs_pad_collapses_descendants` /
+`test_eqrefl_nested_rhs_pad_collapses_descendants`: for
+`Eq (NatLit 3 + Zero) (NatLit 3)` (and the rhs-nested mirror), every
+descendant node's kind argmax is `KIND_PAD` after evolution and
+`decode_mera` parses `BoolLit(True)` cleanly. The §10.10 composite
+`forall x:Nat. Eq (add x Zero) x` still fails decode, but the
+surviving non-PAD sites are precisely the Forall-protected bound
+`Var x` leaves -- the frozen-leaves filter (per spec §1.1) prevents
+the collapse gate from touching them. That residual blocker is
+restated as **Gap F** below; the original "orphan descendants survive
+because the promotion only collapsed the immediate roots" diagnosis
+is closed.
+
+Original failure narrative (kept for historical context):
+
 - Where: surfaces in `src/qft_pcn/logic/decoder.py::parse_kind_stream`
   trailing-PAD loop (lines ~315-321).
   Producer: `src/qft_pcn/logic/mera_evaluation_hamiltonian.py::eq_refl_moves`
@@ -505,4 +524,61 @@ it unblocks.
   `KIND_BOOL` + `VALUE_TRUE` -- the substrate IS proving the
   theorem; only the orchestrator's lemma-persistence handoff is
   blocked by the stale-descendant residue.
-- Commit: 7ae483f.
+- Commit: 7ae483f (initial diagnosis). Gap E "orphan descendants
+  not collapsed" closure verified by the two `nested_*_pad_collapses_descendants`
+  tests; remaining Forall-protected blocker tracked as Gap F.
+
+## Missing dependency: Forall-protected Var leaves block decoder trailing-PAD check after R-Eq-Refl (Gap F)
+
+- Where: surfaces in `src/qft_pcn/logic/decoder.py::parse_kind_stream`
+  trailing-PAD loop (lines ~315-321) on the §10.10 composite
+  `forall x:Nat. Eq (add x Zero) x`. After R-AddZero + R-Eq-Refl
+  fire, the Eq node (node 1) promotes to `KIND_BOOL` + `VALUE_TRUE`
+  and the non-protected descendants (the Bin node, the Zero node)
+  collapse to `KIND_PAD` -- but the bound `Var x` use sites (nodes
+  3 and 5) keep their `KIND_VAR` entry, because every species leaf
+  of every bound-Var-use site lives in `meta.forall_protected_leaves`
+  (see `_collect_forall_protected_leaves` in
+  `src/qft_pcn/logic/mera_encoder.py` lines ~920-946). The
+  evolution layer's frozen-leaves filter in
+  `src/qft_pcn/logic/mera_evolution_logic.py` correctly drops any
+  collapse gate that targets a protected leaf -- so the surviving
+  KIND_VAR sites are not a substrate bug, they are the §1.1
+  binding-as-entanglement invariant: a Forall-bound Var keeps its
+  bond with its binder even when the surrounding subtree is
+  logically discarded.
+- Effect: `decode_mera` parses `Forall(BoolLit(True))` and then
+  trips the trailing-PAD check at node 3 with
+  `DecodeError("site 3 not PAD after AST parse (kind=1)")`. The
+  same downstream chain as Gap E: `register_lemma` surfaces
+  `validation_failed:decode_error:...`; the K-5 integrator refuses;
+  the orchestrator returns `SolveResult(solved=False, ...)`.
+- Need: one of
+  (a) widen `parse_kind_stream`'s trailing-PAD policy to recognise
+      Forall-protected `KIND_VAR` sites as STRUCTURALLY DEAD when
+      they fall under a parent that has promoted to a leaf node
+      (a Forall-bound Var whose binding-tree context has collapsed
+      to BoolLit no longer participates in the surface AST and can
+      be skipped in the trailing scan). This preserves the
+      "single ground state, one AST" invariant by reading the
+      protected-leaf set as a structural-deadness oracle, not by
+      ignoring stale bits.
+  (b) re-encode the Forall body's bound-Var-use leaves through an
+      additional projector that lets R-Eq-Refl's collapse drive
+      the **kind** leaf to PAD while keeping the **bid** leaf
+      entangled with the binder (relaxing protection to bid only).
+      The current encoder protects ALL 5 species; only bid is
+      load-bearing for §1.1.
+  Option (b) is more principled (it keeps the decoder strict and
+  matches the §6.1 architecture-soul: the substrate IS the proof);
+  Option (a) is the cheaper unblock for the K-8 orchestrator path.
+- Pinned by: `test_eqrefl_with_forall_protected_var_inside_subtree`
+  in `src/qft_pcn/tests/test_mera_eqrefl_rule.py` (asserts the
+  protected Var leaves stay bitwise unchanged + non-protected
+  descendants collapse to PAD) and
+  `test_orchestrator_refusal_diagnostic_pins_substrate_seam` in
+  `src/qft_pcn/composition/tests/test_cross_level_acceptance.py`
+  (still green: still surfaces the `not PAD after AST parse
+  (kind=1)` decode_error, with kind=1 == KIND_VAR confirming the
+  Forall-protected Var seam).
+- Commit: this Gap-E partial resolution.
