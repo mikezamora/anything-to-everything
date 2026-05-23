@@ -6,7 +6,23 @@ decomposition is never re-proposed.
 """
 from __future__ import annotations
 
+from typing import Protocol
+
 from .goal_graph import SubGoal, Node, make_sub_goal
+
+
+class LLMReviser(Protocol):
+    """Duck-typed contract for LLM-backed alternative decomposition.
+
+    `suggest_decomposition` returns an ordered list of alternative
+    decomposition dicts (each `{"goal_prop": str, "boundary": dict}` per
+    spec §6.5). The orchestrator (Task 7) consults the LLM-backed reviser
+    when present; otherwise falls back to `HeuristicReviser`.
+    """
+
+    def suggest_decomposition(
+        self, goal_prop: str, boundary: dict
+    ) -> list[dict]: ...
 
 # Fixed catalogue of structural permutations the heuristic reviser cycles
 # through. Each entry rewrites the failed goal into a distinct decomposition.
@@ -20,8 +36,8 @@ _HEURISTIC_CATALOGUE = (
 class FailedDecompositionCache:
     """Records decompositions known to fail, keyed by goal_id (spec §10)."""
 
-    def __init__(self):
-        self._failed: dict[str, set[tuple]] = {}
+    def __init__(self) -> None:
+        self._failed: dict[str, set[tuple[str, ...]]] = {}
 
     def mark_failed(self, goal_id: str, decomposition: list[SubGoal]) -> None:
         ids = tuple(sg.goal_id for sg in decomposition)
@@ -36,7 +52,7 @@ class HeuristicReviser:
     """Deterministic offline fallback: permute the decomposition from a
     fixed catalogue (spec §10)."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._cursor: dict[str, int] = {}
 
     def decompose(self, node: Node) -> list[SubGoal]:
@@ -50,12 +66,17 @@ class HeuristicReviser:
                               boundary=node.goal.boundary, parent_site=0)]
 
 
-def revise(node: Node, *, llm=None, reviser: HeuristicReviser | None = None,
+def revise(node: Node, *, llm: LLMReviser | None = None,
+           reviser: HeuristicReviser | None = None,
            cache: FailedDecompositionCache | None = None) -> list[SubGoal]:
     """Return an alternative decomposition for a PENDING_REVISION node.
 
     Prefers G's LLM frontend when provided; falls back to the heuristic
     reviser. Never re-proposes a cached failed decomposition.
+
+    Note: for cursor progression across calls, the caller should keep the
+    same `HeuristicReviser` instance alive across invocations (the Task 7
+    orchestrator already does so).
     """
     reviser = reviser or HeuristicReviser()
     cache = cache or FailedDecompositionCache()
