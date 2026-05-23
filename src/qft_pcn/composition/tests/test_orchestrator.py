@@ -98,6 +98,9 @@ def test_solve_goal_graph_three_levels_with_stub_runner(
     """
     cstate, cmeta = child_state_meta
     pstate, pmeta = parent_state_meta
+    # IndCase is the internal node (it decomposes into LemmaA + LemmaB);
+    # LemmaA and LemmaB are leaves (no entry in the table -> empty
+    # decomposition -> handled by the leaf branch of _solve).
     table = {
         "Thm":     [({"g": "ind"}, "IndCase")],
         "IndCase": [({"g": "L1a"}, "LemmaA"), ({"g": "L1b"}, "LemmaB")],

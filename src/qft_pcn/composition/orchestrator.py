@@ -5,9 +5,9 @@ Ties the composition modules together into a single search loop:
     expand -> cycle-check -> dispatch siblings in parallel
             -> gated integration -> revise on failure -> recompute F_hierarchy
 
-The schedule minimizes ``F_hierarchy`` (spec §7): the frontier ordering is the
-expected free-energy reduction (deterministic proxy here: boundary size plus
-existing child count). Plain BFS is the easy fallback only.
+The schedule orders the frontier with a structural proxy (boundary size +
+child count); a real expected-ΔF estimator is a follow-on per spec §5.3.
+Plain BFS is the easy fallback only.
 
 Spec invariants enforced (per Task 7 in
 ``docs/superpowers/plans/2026-05-22-cross-level-passing-plan.md``):
@@ -61,13 +61,32 @@ class SolveResult:
     final_free_energy: float
 
 
-def _frontier_priority(node: Node) -> float:
-    """Expected free-energy reduction (spec §5.3).
+class _JointResult:
+    """ChildResult-shaped namespace for the synthetic 'joint of children'
+    result attached to internal nodes whose children all SOLVED.
 
-    Higher hole-density / precision-weighted error first. The deterministic
-    proxy here is the boundary size plus the current child count; a real
-    estimate plugs in when the compiler provides it. Plain BFS is the EASY
-    fallback -- this is the principled ordering.
+    Only the attributes that downstream consumers (``compute_free_energy``,
+    ``extract_proof_tree``) read from ``ChildResult`` are populated; the
+    rest are deliberately absent so a stray reader gets ``AttributeError``
+    instead of a silently-wrong default.
+    """
+
+    __slots__ = ("residual_energy", "solved_ast")
+
+    def __init__(self, *, residual_energy: float, solved_ast):
+        self.residual_energy = residual_energy
+        self.solved_ast = solved_ast
+
+
+def _frontier_priority(node: Node) -> float:
+    """Structural fan-out proxy for frontier ordering (spec §5.3).
+
+    This is NOT an expected-ΔF estimate -- it returns ``len(boundary) +
+    len(children)``, a deterministic structural fan-out signal that orders
+    higher-coupled, more-expanded nodes first. A real expected-ΔF estimator
+    (snapshot goal_graph, hypothetically decompose, compare
+    :func:`compute_free_energy`) is a follow-on per spec §5.3. Plain BFS is
+    the EASY fallback -- this proxy is the principled-but-cheap interim.
     """
     return float(len(node.goal.boundary) + len(node.children))
 
@@ -86,7 +105,8 @@ def solve_goal_graph(
     parent_meta=None,
 ) -> SolveResult:
     """Drive the goal graph to a verified proof tree or a structured failure
-    report. The schedule minimizes F_hierarchy (spec §7).
+    report. The schedule orders the frontier with a structural fan-out proxy
+    (spec §7); a real expected-ΔF estimator is a follow-on per spec §5.3.
 
     Parameters
     ----------
@@ -151,8 +171,8 @@ def solve_goal_graph(
         # MAX_REVISIONS + 1: one initial attempt plus MAX_REVISIONS retries.
         for _ in range(MAX_REVISIONS + 1):
             if node.children:
-                # Spec §5.3: highest expected F-reduction first. BFS is
-                # the easy fallback only.
+                # Spec §5.3: structural fan-out proxy orders the frontier;
+                # see _frontier_priority. BFS is the easy fallback only.
                 ready = sorted(
                     [c for c in node.children if not c.quarantined],
                     key=_frontier_priority,
@@ -175,6 +195,7 @@ def solve_goal_graph(
                         runner=runner, timeout_s=timeout_s,
                     )
                     for child in leaf_siblings:
+                        # integrate_child mutates child.status to SOLVED/FAILED.
                         integrate_child(
                             parent_state, parent_meta, child, child.result,
                             lemma_library,
@@ -195,14 +216,19 @@ def solve_goal_graph(
                     # an attribute-only namespace keeps the shape compatible
                     # with ChildResult-consuming utilities (compute_free_energy,
                     # extract_proof_tree) without dragging in a heavier type.
+                    # Every SOLVED child has a result attached (invariant of
+                    # integrate_child); a strict assertion is preferred over
+                    # a silent fallback (anti-shortcut).
+                    for c in node.children:
+                        assert c.result is not None, (
+                            f"SOLVED child {c.goal.goal_id} has no result"
+                        )
                     node.result = _JointResult(
                         residual_energy=sum(
-                            getattr(c.result, "residual_energy", 0.0)
-                            for c in node.children
+                            c.result.residual_energy for c in node.children
                         ),
                         solved_ast=tuple(
-                            getattr(c.result, "solved_ast", None)
-                            for c in node.children
+                            c.result.solved_ast for c in node.children
                         ),
                     )
                 else:
@@ -212,6 +238,7 @@ def solve_goal_graph(
                 dispatch_siblings(
                     [node], backend, runner=runner, timeout_s=timeout_s,
                 )
+                # integrate_child mutates node.status to SOLVED/FAILED.
                 integrate_child(
                     parent_state, parent_meta, node, node.result,
                     lemma_library,
@@ -248,12 +275,11 @@ def solve_goal_graph(
             for sg in alt:
                 node.add_child(Node(goal=sg, status=Status.PENDING))
 
-        # Loop fell through without solving and without raising -- the
-        # MAX_REVISIONS guard above already handled exhaustion, so this
-        # path is only reached if the for-range was 0 (impossible: it's
-        # MAX_REVISIONS + 1 >= 1). Mark FAILED defensively.
-        node.status = Status.FAILED
-        return False
+        # Loop fell through without solving and without raising. The
+        # MAX_REVISIONS guard inside the loop body already handled
+        # exhaustion (it raises RevisionExhausted), so this path is
+        # unreachable: the for-range is MAX_REVISIONS + 1 >= 1.
+        assert False, "unreachable: MAX_REVISIONS + 1 >= 1"
 
     try:
         solved = _solve(root, frozenset())
@@ -295,20 +321,3 @@ def solve_goal_graph(
         },
         final_free_energy=f_final,
     )
-
-
-class _JointResult:
-    """ChildResult-shaped namespace for the synthetic 'joint of children'
-    result attached to internal nodes whose children all SOLVED.
-
-    Only the attributes that downstream consumers (``compute_free_energy``,
-    ``extract_proof_tree``) read from ``ChildResult`` are populated; the
-    rest are deliberately absent so a stray reader gets ``AttributeError``
-    instead of a silently-wrong default.
-    """
-
-    __slots__ = ("residual_energy", "solved_ast")
-
-    def __init__(self, *, residual_energy: float, solved_ast):
-        self.residual_energy = residual_energy
-        self.solved_ast = solved_ast
