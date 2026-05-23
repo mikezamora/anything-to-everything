@@ -226,6 +226,103 @@ def test_conjecture_band_integrates_with_reduced_strength(
     assert lem.derivation.conditional is True
 
 
+class _StubParentMeta:
+    """Minimal meta carrying ``n_nodes`` for the range-check precondition.
+
+    The integrator's precondition runs BEFORE any MERA op, so we do not
+    need a real encoded parent here -- using ``encode_mera`` would trip
+    the conftest §9.7 dense-tensor ceiling (pre-existing baseline).
+    """
+    def __init__(self, n_nodes: int) -> None:
+        self.n_nodes = n_nodes
+
+
+def _make_register_lemma_stub(monkeypatch):
+    """Bypass register_lemma so the clamp branch is reachable in stub
+    tests. The precondition we're pinning runs INSIDE the clamp branch
+    (gated on parent_state / parent_meta being non-None), so a real
+    register_lemma + real MERA round-trip is not needed -- and would
+    trip the conftest §9.7 dense-tensor ceiling."""
+    from src.qft_pcn.composition import result_integrator as ri
+
+    class _RegOK:
+        accepted = True
+        lemma_id = "L"
+        reason = ""
+
+    def _stub_reg(*args, **kwargs):
+        return _RegOK
+
+    class _NoopPromoter:
+        def __init__(self, lib, mode): pass
+        def compile_constraint(self, spec): return {}
+        def apply_init_clamp(self, *a, **kw): pass
+
+    monkeypatch.setattr(ri, "register_lemma", _stub_reg)
+    monkeypatch.setattr(ri, "Promoter", _NoopPromoter)
+
+
+def test_integrate_child_rejects_empty_parent_leaves_on_non_root(
+    lib, monkeypatch
+):
+    """Caller-discipline precondition: a non-root SubGoal MUST publish a
+    non-empty ``parent_leaves`` tuple. The integrator clamps a lemma
+    footprint into the parent MERA; an empty footprint on a child is a
+    decomposer / dispatcher bug, not a runtime input. ``integrate_child``
+    raises ``ValueError`` loudly inside the clamp branch (gated on
+    parent_state/parent_meta non-None) rather than emitting a malformed
+    promoter constraint."""
+    _make_register_lemma_stub(monkeypatch)
+    # Build a non-root node (node.parent set) with an empty parent_leaves.
+    g = make_sub_goal({"g": "empty"}, goal_prop="P", boundary={},
+                     parent_leaves=())
+    node = Node(goal=g, status=Status.ACTIVE)
+    node.parent = Node(
+        goal=make_sub_goal({"g": "par"}, goal_prop="Par", boundary={},
+                           parent_leaves=()),
+        status=Status.ACTIVE,
+    )
+    child_result = ChildResult(
+        goal_id=g.goal_id, converged=True, residual_energy=1e-9,
+        ground_state=object(), solved_ast="ast",
+        run_diagnostic={"spectral_gap": 1.0}, error=None,
+        meta=_StubParentMeta(n_nodes=4),
+        hamiltonian=None, trotter_steps=0,
+    )
+    with pytest.raises(ValueError, match=r"non-empty parent_leaves"):
+        integrate_child(parent_state=object(),
+                        parent_meta=_StubParentMeta(n_nodes=4),
+                        node=node, child_result=child_result,
+                        lemma_library=lib)
+
+
+def test_integrate_child_rejects_out_of_range_parent_leaves(
+    lib, monkeypatch
+):
+    """Range-check precondition: ``parent_leaves`` entries must lie
+    within the parent MERA's host capacity. An out-of-range leaf is a
+    decomposer bug -- silent clamp would corrupt the parent MERA.
+    ``integrate_child`` raises ``ValueError`` inside the clamp branch."""
+    _make_register_lemma_stub(monkeypatch)
+    from src.qft_pcn.logic.mera_encoding import LEAVES_PER_NODE
+    parent_meta = _StubParentMeta(n_nodes=4)
+    # Stub meta has only n_nodes, so the integrator falls back to
+    # n_nodes * LEAVES_PER_NODE = 20; a leaf at 120 is far out of range.
+    out_of_range = parent_meta.n_nodes * LEAVES_PER_NODE + 100
+    node = _node(parent_leaves=(out_of_range,))
+    child_result = ChildResult(
+        goal_id=node.goal.goal_id, converged=True, residual_energy=1e-9,
+        ground_state=object(), solved_ast="ast",
+        run_diagnostic={"spectral_gap": 1.0}, error=None,
+        meta=_StubParentMeta(n_nodes=4),
+        hamiltonian=None, trotter_steps=0,
+    )
+    with pytest.raises(ValueError, match=r"out of range"):
+        integrate_child(parent_state=object(), parent_meta=parent_meta,
+                        node=node, child_result=child_result,
+                        lemma_library=lib)
+
+
 def test_missing_meta_refused(lib, parent_state_meta, child_state_meta):
     """A ChildResult without ``meta`` cannot drive register_lemma; the
     integrator must refuse rather than crash. This guards the

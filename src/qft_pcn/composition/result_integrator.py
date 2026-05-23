@@ -16,6 +16,7 @@ from .lemma_library import (
     LemmaLibrary, DerivationMetadata, register_lemma,
 )
 from .promoter import Promoter
+from ..logic.mera_encoding import LEAVES_PER_NODE
 
 RESIDUAL_GATE = 1e-6        # absolute residual ceiling for a true ground state
 CONJECTURE_CEILING = 1e-3   # above the gate, below this: integrate as conjecture
@@ -148,6 +149,39 @@ def integrate_child(parent_state: Any, parent_meta: Any, node: Node,
     # Skipping is principled here: spec §6.1's clamp targets a *parent*
     # MERA; without one, registration alone is the integration step.
     if parent_state is not None and parent_meta is not None:
+        # --- caller-discipline preconditions (loud failures, not coerce) --
+        # A non-root node MUST publish a non-empty parent_leaves tuple: the
+        # integrator is about to clamp a lemma footprint, and an empty
+        # footprint on a non-root child is a decomposer / dispatcher bug,
+        # not a runtime input to be silently tolerated. Gated on
+        # ``parent_state is not None`` so root-leaf integrations (no parent
+        # workspace) still flow through register-only path.
+        if node.parent is not None and len(node.goal.parent_leaves) == 0:
+            raise ValueError(
+                "non-root SubGoal must have non-empty parent_leaves; "
+                "got empty tuple -- caller discipline failure"
+            )
+        # Range-check the footprint against the parent MERA. Host capacity
+        # is ``parent_meta.n_leaves`` (layout-padded leaf count); a stub
+        # meta carrying only ``n_nodes`` falls back to
+        # ``n_nodes * LEAVES_PER_NODE`` (the raw, non-PAD count). A stub
+        # without either skips the check -- the structural contract is
+        # only binding when the parent meta surfaces its host capacity.
+        n_host: int | None = None
+        n_leaves_attr = getattr(parent_meta, "n_leaves", None)
+        if n_leaves_attr is not None:
+            n_host = int(n_leaves_attr)
+        else:
+            n_nodes_attr = getattr(parent_meta, "n_nodes", None)
+            if n_nodes_attr is not None:
+                n_host = int(n_nodes_attr) * LEAVES_PER_NODE
+        if n_host is not None and node.goal.parent_leaves:
+            if not all(0 <= leaf < n_host
+                       for leaf in node.goal.parent_leaves):
+                raise ValueError(
+                    f"SubGoal.parent_leaves out of range for parent MERA "
+                    f"(n_host={n_host}): got {node.goal.parent_leaves!r}"
+                )
         host_leaves = _resolve_host_leaves(node, child_meta)
         promoter = Promoter(lemma_library, mode="init_clamp")
         try:

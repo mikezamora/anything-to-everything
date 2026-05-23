@@ -107,6 +107,36 @@ def test_resolve_host_leaves_empty_tuple_is_returned_as_is():
     assert out == ()
 
 
+def test_make_sub_goal_rejects_duplicate_leaves():
+    """Duplicate entries in ``parent_leaves`` are a caller-discipline
+    failure: the same host leaf cannot carry two distinct child lemmas.
+    ``make_sub_goal`` raises ``ValueError`` loudly (no silent dedup --
+    silent coerce hides the decomposer bug)."""
+    import pytest
+    with pytest.raises(ValueError, match=r"unique"):
+        make_sub_goal({"g": "dup"}, goal_prop="P", boundary={},
+                      parent_leaves=(2, 2, 5))
+
+
+def test_make_sub_goal_rejects_negative_leaf():
+    """A negative leaf index is meaningless on the parent MERA -- the
+    decomposer published garbage. ``make_sub_goal`` raises ``ValueError``
+    citing the offending tuple."""
+    import pytest
+    with pytest.raises(ValueError, match=r"non-negative"):
+        make_sub_goal({"g": "neg"}, goal_prop="P", boundary={},
+                      parent_leaves=(-1, 0, 1))
+
+
+def test_make_sub_goal_accepts_unsorted_unique_non_negative():
+    """Tuple ORDER is significant (it is the entanglement footprint
+    order on the parent MERA, §1.1). ``make_sub_goal`` preserves the
+    caller's order verbatim -- no sort, no canonicalisation."""
+    g = make_sub_goal({"g": "ord"}, goal_prop="P", boundary={},
+                     parent_leaves=(9, 2, 5))
+    assert g.parent_leaves == (9, 2, 5)
+
+
 def test_integrator_passes_non_contiguous_window_to_promoter():
     """End-to-end contract assertion: a SubGoal with a non-contiguous
     ``parent_leaves`` tuple drives the integrator to invoke

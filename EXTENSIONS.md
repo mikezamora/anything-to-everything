@@ -260,6 +260,25 @@ it unblocks.
 - Unblocks: integrator's call to `Promoter.compile_constraint(... leaves=
   [...])` for non-trivial decomposers (J-Task / decomposer follow-on)
   now has the canonical leaf tuple to consume.
+  Commit: 00b1d82.
+
+## Missing dependency: non-contiguous decomposer demonstrator absent
+
+- Where: `src/qft_pcn/composition/goal_graph.py:build_goal_graph` only
+  seeds the root with `parent_leaves=()`; the user-supplied `decomposer`
+  callable is the surface that would publish non-contiguous tuples
+  (e.g. species-permuted lemma footprints). `revision.py:97` LLM-path
+  hand-rolls `(i,)` per sibling -- a placeholder, not a real
+  non-contiguous decomposer.
+- Need: an in-tree non-contiguous decomposer demonstrator that publishes
+  e.g. `(2, 5, 9)` for a 3-site lemma footprint and proves the
+  integrator clamps without classical rewrite.
+- Workaround: `test_subgoal_parent_leaves.py::test_integrator_passes_non_contiguous_window_to_promoter`
+  exercises the integrator API end-to-end via a stub Promoter -- pins the
+  contract but not a real decomposer. Production decomposers will land
+  with J-Task follow-on (subtree miner + clustering).
+- Unblocks: §5.2/§5.6 surface exercised in production code (today only
+  exercised via tests).
 
 ## RESOLVED: orchestrator does not own a parent MERA
 

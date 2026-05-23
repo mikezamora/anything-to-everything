@@ -63,13 +63,34 @@ def make_sub_goal(dsl_spec: dict, *, goal_prop: str, boundary: dict,
     ``parent_leaves`` is the explicit host-leaf tuple the child lemma
     occupies. Callers with only a contiguous base+count should use
     :func:`make_contiguous_sub_goal`.
+
+    Invariants on ``parent_leaves`` (raised loud, not silently coerced --
+    caller-discipline failures must surface, per ``no-placeholders``):
+      * Every element is a NON-NEGATIVE int.
+      * Every element is UNIQUE (no duplicates).
+    The element ORDER is significant (it is the entanglement-footprint
+    order on the parent MERA, §1.1) and is preserved verbatim. The
+    range check against ``parent_meta.n_nodes * LEAVES_PER_NODE`` is
+    deferred to :func:`result_integrator.integrate_child`, where the
+    parent meta is in scope.
     """
+    normalized = tuple(int(i) for i in parent_leaves)
+    if any(i < 0 for i in normalized):
+        raise ValueError(
+            f"SubGoal.parent_leaves must be non-negative ints; "
+            f"got {normalized!r}"
+        )
+    if len(set(normalized)) != len(normalized):
+        raise ValueError(
+            f"SubGoal.parent_leaves must contain unique leaf indices; "
+            f"got {normalized!r}"
+        )
     return SubGoal(
         goal_id=_content_hash(goal_prop, dsl_spec),
         dsl_spec=dsl_spec,
         goal_prop=goal_prop,
         boundary=dict(boundary),
-        parent_leaves=tuple(int(i) for i in parent_leaves),
+        parent_leaves=normalized,
     )
 
 
