@@ -52,6 +52,49 @@ def test_decode_forall_with_eq_body():
     assert ast.body.rhs.arg.name == ast.param
 
 
+def test_decode_nested_forall():
+    """forall x:Nat. forall y:Nat. Eq x y — exercises depth>1 binder_stack
+    with both binders being Forall.
+
+    Pins the post-Gap-C invariant that the (widened) binder_stack resolves
+    VAR sites correctly across two stacked Forall binders: the inner Eq's
+    lhs must bind to the outer Forall and the rhs to the inner Forall.
+    """
+    inner_body = Eq(lhs=Var(name="x"), rhs=Var(name="y"))
+    inner = Forall(param="y", param_ty=TNat(), body=inner_body)
+    src = Forall(param="x", param_ty=TNat(), body=inner)
+    state, meta = encode_mera(src)
+    res = decode_mera(state, meta)
+    ast = res.ast
+    # Outer is Forall.
+    assert isinstance(ast, Forall), (
+        f"expected outer Forall, got {type(ast).__name__}"
+    )
+    assert isinstance(ast.param_ty, TNat)
+    outer_param = ast.param
+    # Outer body is also Forall.
+    assert isinstance(ast.body, Forall), (
+        f"expected inner Forall, got {type(ast.body).__name__}"
+    )
+    assert isinstance(ast.body.param_ty, TNat)
+    inner_param = ast.body.param
+    # Fresh names must distinguish the two binders.
+    assert outer_param != inner_param
+    # Innermost body is Eq with lhs->outer, rhs->inner.
+    eq = ast.body.body
+    assert isinstance(eq, Eq)
+    assert isinstance(eq.lhs, Var)
+    assert isinstance(eq.rhs, Var)
+    assert eq.lhs.name == outer_param, (
+        f"lhs Var {eq.lhs.name!r} should bind to outer param "
+        f"{outer_param!r}"
+    )
+    assert eq.rhs.name == inner_param, (
+        f"rhs Var {eq.rhs.name!r} should bind to inner param "
+        f"{inner_param!r}"
+    )
+
+
 def test_decode_fix_nat_body():
     """fix f:Nat. f  round-trips and decodes to a Fix(param_ty=TNat)."""
     src = Fix(param="f", param_ty=TNat(), body=Var(name="f"))

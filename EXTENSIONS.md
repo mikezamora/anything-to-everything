@@ -277,21 +277,27 @@ it unblocks.
 
 ## RESOLVED: `decoder.parse_one` rejects `KIND_FORALL` / `KIND_FIX` (Gap C)
 
-- Status: RESOLVED on branch `claude/qft-pcn-hybrid-architecture-ihCIR`
-  (pending commit). The Part-2 stub in `parse_kind_stream._parse_one`
-  has been replaced with proper binder branches that mirror the
-  `KIND_LAM` machinery: push a freshly-named `Forall` / `Fix` onto
-  `binder_stack`, descend into the body, pop, and patch the body.
-  `param_ty` recovery: Fix uses `_extended_type_from_tag(ti, ...)`
-  because a `Fix`'s site type tag IS its `param_ty` tag; Forall
-  defaults to `TNat()` because the site type tag is `TYPE_PROP`
-  (Forall returns Prop), so the param type is not directly recoverable
-  from the leaf — `TNat` is the canonical §10.10 lemma quantifier.
-- Pinned by: `src/qft_pcn/tests/test_decoder_forall_fix.py`
+- Status: RESOLVED in commit `40cbbee` on branch
+  `claude/qft-pcn-hybrid-architecture-ihCIR` (mixed commit with the
+  viz worker's "feat(viz/web): compare-mode wiring" — content is in
+  the tree; history-rewrite avoided per git safety protocol). The
+  Part-2 stub in `parse_kind_stream._parse_one` has been replaced with
+  proper binder branches that mirror the `KIND_LAM` machinery: push a
+  freshly-named `Forall` / `Fix` onto `binder_stack`, descend into the
+  body, pop, and patch the body. `param_ty` recovery: Fix uses
+  `_extended_type_from_tag(ti, ...)` because a `Fix`'s site type tag
+  IS its `param_ty` tag; Forall defaults to `TNat()` because the site
+  type tag is `TYPE_PROP` (Forall returns Prop), so the param type is
+  not directly recoverable from the leaf — `TNat` is the canonical
+  §10.10 lemma quantifier.
+- Pinned by: 3 new tests in `src/qft_pcn/tests/test_decoder_forall_fix.py`
   (`test_decode_forall_identity_body`, `test_decode_forall_with_eq_body`,
-  `test_decode_fix_nat_body`) — three round-trips through `encode_mera`
-  → `decode_mera` confirm the AST shape and binder-bound `Var`
-  resolution.
+  `test_decode_fix_nat_body`) — round-trips through `encode_mera` →
+  `decode_mera` confirm the AST shape and binder-bound `Var` resolution.
+  No-regression coverage: 45 pre-existing tests across
+  `test_mera_reduction.py`, `test_mera_holes.py`, `test_mera_roundtrip.py`,
+  `test_mera_decoder.py`, `test_logic_decoder.py`, `test_logic_roundtrip.py`
+  remain green.
 - Downstream effect on the K-8 acceptance pin
   (`test_orchestrator_refusal_diagnostic_pins_substrate_seam`): the
   refusal reason flips from `validation_failed:decode_error:...
@@ -349,3 +355,22 @@ it unblocks.
   induction). The §10.10 inductive-theorem PATH itself is exercised
   by the in-substrate composite `forall x:Nat. Eq (add x Zero) x`
   per the K-8 retry directive's Step 2 fallback.
+
+## Missing dependency: Forall param_ty recovery limited to TNat; TList elem limited to TNat
+
+- Where: `src/qft_pcn/logic/decoder.py` — `_parse_one` `KIND_FORALL` branch
+  defaults `param_ty=TNat()` because the Forall's site type tag IS
+  `TYPE_PROP` (Forall returns Prop, not its param's type). Symmetrically,
+  `_extended_type_from_tag` returns `TList(elem=TNat())` for `TYPE_LIST`
+  because a flat type tag carries no element type.
+- Need: an auxiliary encoding slot (e.g. the `bid` species on Forall sites,
+  currently unused except as the binder ID) to carry the param_ty tag.
+  Symmetric slot for TList element type.
+- Workaround: TNat default is faithful to §10.10's canonical Nat-centric
+  inductive lemmas (`forall x:Nat. ...`). Every test today uses Nat
+  quantifiers. Non-Nat quantifiers (`forall b:Bool. ...`,
+  `forall xs:List Bool. ...`) would round-trip with wrong param_ty.
+- Unblocks: K-Task-? and any §12 physics extension whose lemmas use
+  non-Nat quantifiers. The §10.10 inductive path proven at substrate
+  (`test_cross_level_acceptance.py`) uses Nat, so this is not blocking
+  current acceptance.

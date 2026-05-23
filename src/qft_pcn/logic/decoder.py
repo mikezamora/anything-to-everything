@@ -14,6 +14,7 @@ import numpy as np
 from .ast import (
     Node, Var, Lam, App, IntLit, BoolLit, If, Bin,
     Ty, TInt, TBool, TArrow,
+    Forall, Fix,
 )
 from .encoding import (
     KIND_CUTOFF, TYPE_CUTOFF, BID_CUTOFF, VALUE_CUTOFF, TOBL_CUTOFF, D_LOCAL,
@@ -206,7 +207,7 @@ def parse_kind_stream(decoded_sites: list[tuple],
         nested_type_index = {}
     n_total = len(decoded_sites)
     pos = [0]
-    binder_stack: list[Lam] = []
+    binder_stack: list[Lam | Forall | Fix] = []
     name_counter = [0]
 
     def _fresh_name() -> str:
