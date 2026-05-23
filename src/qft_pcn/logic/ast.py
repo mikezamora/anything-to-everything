@@ -231,6 +231,10 @@ def _tokenize(src: str) -> list[_Tok]:
             "if", "then", "else", "Int", "Bool",
             # Extended-calculus surface keywords (I-Task-10):
             "forall", "Eq", "Nat", "Zero", "Succ", "NatLit",
+            # List surface keywords (EXTENSIONS.md §335-353 follow-up):
+            # encoder substrate supports Cons/Nil/TList; length/reverse
+            # are deferred (separate EXTENSIONS entry).
+            "List", "Cons", "Nil",
         ):
             kind = "keyword"
         out.append(_Tok(kind, value))
@@ -278,6 +282,14 @@ class _Parser:
         if t.kind == "keyword" and t.value == "Nat":
             self.eat("keyword", "Nat")
             return TNat()
+        if t.kind == "keyword" and t.value == "List":
+            # List <elem_ty_atom>  (parametric list; element type is an
+            # atom-level type so "List Nat", "List (List Nat)", and
+            # "List (Int -> Bool)" all parse unambiguously without
+            # eagerly consuming the surrounding arrow context).
+            self.eat("keyword", "List")
+            elem = self.parse_ty_atom()
+            return TList(elem=elem)
         if t.kind == "lp":
             self.eat("lp")
             ty = self.parse_ty()
@@ -359,7 +371,9 @@ class _Parser:
         if t.kind in ("ident", "int", "bool", "lp", "lambda"):
             return True
         # Atom-initial keywords from the extended-calculus surface.
-        if t.kind == "keyword" and t.value in ("Zero", "Succ", "NatLit", "Eq"):
+        if t.kind == "keyword" and t.value in (
+            "Zero", "Succ", "NatLit", "Eq", "Cons", "Nil",
+        ):
             return True
         return False
 
@@ -405,6 +419,14 @@ class _Parser:
             lhs = self.parse_atom()
             rhs = self.parse_atom()
             return Eq(lhs=lhs, rhs=rhs)
+        if t.kind == "keyword" and t.value == "Nil":
+            self.eat("keyword", "Nil")
+            return Nil()
+        if t.kind == "keyword" and t.value == "Cons":
+            self.eat("keyword", "Cons")
+            head = self.parse_atom()
+            tail = self.parse_atom()
+            return Cons(head=head, tail=tail)
         if t.kind == "lp":
             self.eat("lp")
             e = self.parse_expr()

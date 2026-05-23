@@ -332,29 +332,72 @@ it unblocks.
   diagnostic now isolates to Gap C alone (handled separately).
   Commit: (this commit).
 
-## Bridge DSL: no `forall` / `Eq` / `Nat` / `List` surface (K-8 Blocker B)
+## RESOLVED (partial) -- Bridge DSL: `forall` / `Eq` / `Nat` / `List` / `Cons` / `Nil` surface (K-8 Blocker B)
 
-- Where: `src/qft_pcn/bridge/dsl/schema.py` + the bridge DSL parser
-  extension `52e9387` -- the AST gained `forall`, `Eq`, `Nat`, `add`,
-  `Zero`, `Succ`, `NatLit` keywords, but the bridge DSL surface that
-  `bridge.runtime.run_problem` consumes (the dispatcher's default
-  child runner) has not been extended in parallel. There is no `List`
-  surface anywhere yet.
-- Need: bridge DSL schema entries for the extended-calculus
-  vocabulary (`forall`, `Eq`, `Nat`, `add`, `Zero`, `Succ`, `NatLit`
-  at minimum; `List`/`Cons`/`Nil`/`length`/`reverse` to land the
-  spec's literal §10.10 theorem `forall xs : List A. length (reverse
-  xs) = length xs`).
-- Workaround: K-Task-8 acceptance (`test_cross_level_acceptance.py`)
-  drives child runs via `encode_mera` + `mera_imaginary_evolve_state`
-  directly, bypassing the bridge. This is principled for the
-  inductive-theorem PATH (the substrate proof itself does not go
-  through the bridge), but the spec's literal list-induction example
-  is deferred until the bridge DSL grows the `List` surface.
-- Unblocks: K-Task-8 acceptance on the spec's literal theorem (list
-  induction). The §10.10 inductive-theorem PATH itself is exercised
-  by the in-substrate composite `forall x:Nat. Eq (add x Zero) x`
-  per the K-8 retry directive's Step 2 fallback.
+- Original gap (`52e9387`): the AST text parser gained `forall`,
+  `Eq`, `Nat`, `add`, `Zero`, `Succ`, `NatLit` tokens but had not
+  been end-to-end round-tripped from the bridge layer, and the
+  spec's literal §10.10 theorem
+  `forall xs:List A. length (reverse xs) = length xs` was
+  unreachable because the textual surface had no `List` / `Cons` /
+  `Nil` keywords.
+- Resolution: `src/qft_pcn/logic/ast.py` tokenizer + parser now
+  recognise `List`, `Cons`, `Nil` (`List T` as a parametric type
+  atom; `Cons head tail` and `Nil` as atom-position term nodes
+  routed through the existing `Cons` / `Nil` AST nodes the encoder
+  substrate already supports). New tests in
+  `src/qft_pcn/bridge/tests/test_dsl_extended_calculus.py` round-trip
+  every extended-calculus keyword through parse → `encode_mera` →
+  `mera_imaginary_evolve_state` → reduction-residual / leaf-weight
+  inspection, including the §10.10 in-substrate composite
+  `forall x:Nat. Eq (x + Zero) x` (Eq node promotes to
+  `KIND_BOOL` / `VALUE_TRUE`; R-AddZero + R-Eq-Refl residuals
+  < 1e-3). This is the K-8 retry directive's Step 2 fallback proven
+  from the bridge-layer DSL surface.
+- Note on `bridge.runtime.run_problem`: that entry point consumes a
+  physics JSON DSL (fields / sites / Hamiltonian terms), not a
+  logic-theorem source. The principled "DSL → encoder → solver"
+  path for theorems is `parse()` → `encode_mera()` →
+  `mera_imaginary_evolve_state()`, exactly what
+  `composition/tests/test_cross_level_acceptance.py` drives and what
+  the new bridge test re-proves from the textual surface. A separate
+  physics-vs-logic dispatch in `run_problem` is a substrate extension,
+  not a DSL surface fix.
+- Still deferred: `length` / `reverse` primitives in the encoder
+  substrate (see new entry "List arithmetic in encoder substrate"
+  below). The bridge test for the literal §10.10 list-induction
+  theorem is `pytest.mark.skip`'d with a reference to that entry.
+
+## Missing dependency: List arithmetic in encoder substrate (`length` / `reverse`)
+
+- Where: `src/qft_pcn/logic/mera_encoding.py` (kind table),
+  `src/qft_pcn/logic/mera_encoder.py` (AST → state walk),
+  `src/qft_pcn/logic/mera_typing_hamiltonian.py` (typing-rule
+  terms), `src/qft_pcn/logic/mera_evaluation_hamiltonian.py`
+  (reduction rules `length(Nil)=0`,
+  `length(Cons h t)=Succ (length t)`, `reverse(Nil)=Nil`,
+  `reverse(Cons h t)=append (reverse t) (Cons h Nil)`).
+- Need: dedicated `KIND_LENGTH`, `KIND_REVERSE` (and likely
+  `KIND_APPEND`) species in the kind table; encoder leaf-emission
+  for unary list operators; typing-Hamiltonian terms enforcing
+  `length : List A -> Nat` and `reverse : List A -> List A`;
+  reduction-Hamiltonian terms implementing the structural-induction
+  reductions above so the §10.10 list-induction theorem promotes
+  through the same R-Eq-Refl + Forall-protected channel that
+  `forall x:Nat. Eq (x + Zero) x` already uses. Decoder
+  (`logic/decoder.py`) must parse the new kinds back to
+  `App(Var("length"), ...)` / `App(Var("reverse"), ...)` (or
+  dedicated nodes).
+- Workaround: the textual `List` / `Cons` / `Nil` surface has
+  landed (above); `length` / `reverse` remain free identifiers in
+  the parsed AST (they tokenise as `ident` and so an expression
+  like `length xs` parses as `App(Var("length"), Var("xs"))` --
+  which simply does not reduce under the current evaluation
+  Hamiltonian).
+  `src/qft_pcn/bridge/tests/test_dsl_extended_calculus.py::test_parses_list_length_reverse_theorem`
+  is `pytest.mark.skip`'d until this entry is resolved.
+- Unblocks: K-Task-8 acceptance on the spec's literal §10.10
+  theorem `forall xs:List A. length (reverse xs) = length xs`.
 
 ## Missing dependency: Forall param_ty recovery limited to TNat; TList elem limited to TNat
 
