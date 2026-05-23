@@ -550,23 +550,14 @@ class RegistrationResult:
 def _validate_decoded(decoded_ast, hamiltonian) -> tuple[bool, str]:
     """Classically type-check the decoded AST (spec §4.5 step 2).
 
-    Returns ``(ok, detail)``. Reuses the synthesis stack's classical
-    checker when present; otherwise this is a soft gate -- the residual
-    gate still rejects unsolved candidates, and the type-checker fallback
-    keeps Sub-project I usable before the synthesis stack lands its own
-    AST type-checker. Tests monkeypatch this function directly to drive
-    the rejection branch.
+    Returns ``(ok, detail)``. The synthesis stack today exposes no
+    standalone AST type-checker (only the problem-level `validate_problem`
+    in `logic/synthesis/_validate.py`, which validates SynthesisProblem
+    shape, not a decoded AST). Until one lands, this is a soft gate: the
+    residual gate carries the weight, and tests monkeypatch this function
+    to drive the rejection branch. See plan §I.7 — the
+    "no-checker-available" fallback.
     """
-    try:
-        # The synthesis stack today exposes `validate_problem` (problem-level
-        # validation) but no standalone AST type-checker. Until one lands,
-        # the soft path returns True and lets the residual gate carry the
-        # weight. See plan §I.7 — the "no-checker-available" fallback.
-        from src.qft_pcn.logic.synthesis._validate import (  # noqa: F401
-            validate_problem,
-        )
-    except Exception:
-        return True, "no-checker-available"
     return True, "no-checker-available"
 
 
@@ -611,10 +602,18 @@ def register_lemma(library: LemmaLibrary, state, meta, hamiltonian,
 
     # 2. validation pass (resolved through the module namespace so that
     # tests can monkeypatch ``L._validate_decoded`` and have register_lemma
-    # see the patched function).
+    # see the patched function). Wrap decode_mera in try/except so the
+    # function stays total per spec §4.5 — a corrupt or un-parseable
+    # state is reported via the result, not propagated as a raise.
     import sys as _sys
     _mod = _sys.modules[__name__]
-    decoded = decode_mera(state, meta)
+    try:
+        decoded = decode_mera(state, meta)
+    except Exception as exc:
+        with near_log.open("a") as fh:
+            fh.write(f"validation_failed decode_error:{exc}\n")
+        return RegistrationResult(
+            False, None, f"validation_failed:decode_error:{exc}")
     ast = getattr(decoded, "ast", decoded)
     ok, detail = _mod._validate_decoded(ast, hamiltonian)
     if not ok:
