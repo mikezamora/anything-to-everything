@@ -610,3 +610,20 @@ Original failure narrative (kept for historical context):
   "substrate gap appears fixed — flip this test" message). The
   §10.10 in-substrate composite is now provable through the real
   orchestrator + integrator + lemma-library pipeline.
+- **FULLY OPERATIONAL** via `289757d` Gap F decoder oracle: the K-8
+  §10.10 acceptance is now positive-asserted. The two BLOCKED-pin
+  tests in `src/qft_pcn/composition/tests/test_cross_level_acceptance.py`
+  have been flipped to positive in this commit:
+  `test_orchestrator_solves_inductive_theorem_end_to_end` asserts
+  `result.solved is True`, `result.proof_tree is not None`,
+  `result.failure_report is None`, and the LemmaLibrary actually
+  persisted ≥1 lemma (real `all_ids()` + `load()` round-trip);
+  `test_orchestrator_clamps_lemma_into_parent_state` asserts the
+  §1.1 entanglement-clamp fires bitwise (`np.array_equal` on the
+  SubGoal's `parent_leaves` window) AND the §1.3 locality invariant
+  holds (sentinel leaf outside the window is bitwise unchanged).
+  3/3 in `test_cross_level_acceptance.py` pass on the real
+  `encode_mera` + `mera_imaginary_evolve_state` + `register_lemma`
+  + `Promoter.apply_init_clamp` + `LemmaLibrary` pipeline (no
+  stubs, no mocks). The §10.10 induction theorem path is
+  end-to-end operational through the orchestrator.

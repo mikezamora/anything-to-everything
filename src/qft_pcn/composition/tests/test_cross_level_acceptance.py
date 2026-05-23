@@ -1,69 +1,48 @@
-"""K-Task-8 §10.10 acceptance retry: inductive theorem via cross-level passing.
+"""K-Task-8 §10.10 acceptance: inductive theorem via cross-level passing.
 
-Brief context (from the K-8 retry directive):
+The substrate seam that previously pinned the orchestrator to BLOCKED
+is fully closed. All four named gaps are RESOLVED:
 
-* **Blocker A** (RunResult enrichment + dispatcher.run_child broken import)
-  was resolved at HEAD (commits e9e245d, d5313d4).
-* **Blocker B** (bridge DSL has no `forall`/`Eq`/`Nat`/`List` surface)
-  is still open at the bridge layer. The parser AST is extended; the
-  bridge DSL is not. This test therefore drives the child runs with
-  the **real `encode_mera`** path directly (bypassing the bridge DSL)
-  and proves the §10.10 *theorem path* on the in-substrate composite:
+  * Gap C (decoder Forall/Fix branches) -- 40cbbee + 2c21972
+  * Gap D (``_meta_to_json`` set + ``Ty`` serializer) -- 98e2999 +
+    9285446 + a31d6f6
+  * Gap E (R-Eq-Refl DFS / post-promotion stale leaves) -- bf11354
+  * Gap F (decoder reads ``forall_protected_leaves`` as a structural-
+    deadness oracle in the trailing-PAD scan) -- 289757d
 
-      forall x : Nat. Eq (add x Zero) x
+Combined with the orchestrator-owns-parent-MERA chain
+(00b1d82 + 70e0bf4 + 5c438b6), the §10.10 induction theorem is
+FULLY OPERATIONAL through the real
+``solve_goal_graph + register_lemma + integrator + lemma_library``
+pipeline on the in-substrate composite::
 
-  which is the validated I-10 load-bearing composite (M2 reduction
-  layer test ``test_eqrefl_addzero_composite``).
+    forall x : Nat. Eq (add x Zero) x
 
-What the retry uncovered, after Gap C (decoder Forall/Fix branches) and
-Gap D (`_meta_to_json` set + Ty serializer `nested_type_index`) BOTH
-closed, is a NEW substrate gap (Gap E) that still prevents the
-orchestrator's end-to-end pipeline from closing on this theorem.
-Documented in EXTENSIONS.md ("post-promotion stale leaves break
-trailing-PAD check") and diagnosed by the assertions below:
-
-  **Gap E** (post-promotion stale leaves: decoder trailing-PAD)
-      ``decoder.parse_kind_stream`` enforces that every site BEYOND the
-      parsed AST is ``KIND_PAD``. The §10.10 imaginary-time evolution
-      successfully promotes the ``Eq(add x Zero, x)`` body to
-      ``BoolLit(True)`` -- node 1 flips from KIND_EQ to KIND_BOOL --
-      but the original Eq subtree's descendant leaves (the Bin/+, two
-      Vars, Zero) are NOT erased to PAD by the promotion. They survive
-      under nodes 3-5 as stale VAR/PAD residue. The decoder consumes
-      Forall->BoolLit (nodes 0, 1) and then expects PAD at node 2..N
-      but finds VAR at node 3, raising
-      ``DecodeError("site 3 not PAD after AST parse (kind=1)")``.
-      ``register_lemma`` surfaces this as
-      ``RegistrationResult(False, ..., 'validation_failed:decode_error:site N not PAD ...')``.
-      Effect: no Forall-rooted child state whose body promotes to a
-      shallower form can be registered as a lemma; the integrator
-      refuses the clamp and the orchestrator exhausts its revisions.
-
-  (Gap C and Gap D are RESOLVED at 40cbbee+2c21972 and
-   98e2999+9285446+a31d6f6 respectively; this file's previous pin on
-   "validation_failed:decode_error:Forall/Fix" or "set is not JSON
-   serializable" has been retargeted onto Gap E.)
-
-This file therefore ships:
+This file ships three load-bearing acceptance tests:
 
 * a **substrate-level acceptance** test that proves the §10.10
   composite at the M2 reduction layer end-to-end (no orchestrator),
   re-verifying that the I-10 substrate work is operational;
-* an **orchestrator BLOCKED diagnostic** test that drives the full
+* an **orchestrator end-to-end** test that drives the full
   cross-level-message-passing pipeline with a real child runner and
-  asserts the orchestrator surfaces a structured ``failure_report``
-  whose diagnostic exposes Gap C or Gap D precisely. The test is NOT
-  ``xfail`` or ``skip``: it pins the current substrate behaviour so a
-  future substrate fix flips a known assertion (the failure_report
-  carries the named-blocker diagnostic) into success.
+  asserts ``solve_goal_graph`` returns
+  ``SolveResult(solved=True, proof_tree=...)`` with the lemma
+  actually registered into the ``LemmaLibrary``;
+* an **orchestrator clamp-fired** test that takes a bitwise snapshot
+  of the parent_state's leaves BEFORE ``solve_goal_graph`` and
+  asserts the SubGoal's ``parent_leaves`` window is bitwise mutated
+  (the §1.1 entanglement clamp fired) while leaves OUTSIDE the
+  window are bitwise unchanged (§1.3 locality preserved -- the clamp
+  is a *factored* operator, not a global overwrite).
 
 No stubs. No fabricated proofs. The orchestrator wiring is exercised
-with real ``encode_mera`` / ``mera_imaginary_evolve_state`` / real
-``LemmaLibrary`` / real ``register_lemma`` -- the gap is genuinely the
-substrate layer below the orchestrator, not the orchestrator itself.
+with the real ``encode_mera`` / ``mera_imaginary_evolve_state`` /
+``LemmaLibrary`` / ``register_lemma`` / ``Promoter.apply_init_clamp``
+surfaces -- the substrate IS the proof (§6.1).
 """
 from __future__ import annotations
 
+import numpy as np
 import pytest
 
 from src.qft_pcn.composition.dispatcher import (
@@ -73,7 +52,6 @@ from src.qft_pcn.composition.dispatcher import (
 from src.qft_pcn.composition.goal_graph import make_sub_goal
 from src.qft_pcn.composition.lemma_library import LemmaLibrary
 from src.qft_pcn.composition.orchestrator import (
-    MAX_REVISIONS,
     SolveResult,
     solve_goal_graph,
 )
@@ -219,21 +197,29 @@ def test_substrate_level_inductive_theorem_proves_end_to_end():
 # ---------------------------------------------------------------------------
 
 
-class _SiblingDecomposer:
-    """A single-leaf root decomposition: the root maps to one leaf
-    sub-goal whose runner returns a real ChildResult. This is the
-    minimum shape that exercises the orchestrator -> dispatcher ->
-    integrator -> register_lemma chain end-to-end."""
+def _make_sibling_decomposer(n_leaves: int):
+    """Single-leaf root decomposition: the root maps to ONE leaf
+    sub-goal whose runner returns a real ChildResult. The
+    ``parent_leaves`` window is the full leading host-leaf range
+    ``[0, n_leaves)`` -- the lemma (which is a full encoded MERA of
+    the §10.10 composite) occupies the entire host leaf array, and
+    publishing the matching window is the caller-discipline
+    contract enforced by :func:`Promoter.compile_constraint` (lemma
+    leaf count must equal constraint leaf count).
+    """
+    window = tuple(range(0, n_leaves))
 
-    def decompose(self, node):
-        if node.goal.goal_prop == "len_reverse_eq_len":
-            return [make_sub_goal(
-                {"goal": "lemma_addzero_eqrefl",
-                 "ast_id": "forall_x_eq_addzero_x"},
-                goal_prop="lemma_addzero_eqrefl",
-                boundary={}, parent_leaves=(0,),
-            )]
-        return []
+    class _SiblingDecomposer:
+        def decompose(self, node):
+            if node.goal.goal_prop == "len_reverse_eq_len":
+                return [make_sub_goal(
+                    {"goal": "lemma_addzero_eqrefl",
+                     "ast_id": "forall_x_eq_addzero_x"},
+                    goal_prop="lemma_addzero_eqrefl",
+                    boundary={}, parent_leaves=window,
+                )]
+            return []
+    return _SiblingDecomposer()
 
 
 def _real_child_runner(sub_goal, timeout_s):
@@ -273,38 +259,35 @@ def lemma_lib(tmp_path):
     return LemmaLibrary(tmp_path)
 
 
-def test_orchestrator_blocked_on_lemma_persistence_substrate_gap(lemma_lib):
-    """The orchestrator drives the §10.10 composite through a real
-    child runner; the K-5 integrator invokes the real I-7
-    ``register_lemma``; persistence fails on Gap E (post-promotion
-    stale leaves break the decoder's trailing-PAD check; see module
-    docstring + EXTENSIONS.md).
+def test_orchestrator_solves_inductive_theorem_end_to_end(lemma_lib):
+    """The orchestrator drives the §10.10 composite
+    ``forall x:Nat. Eq (add x Zero) x`` through a real child runner;
+    the K-5 integrator invokes the real I-7 ``register_lemma`` (now
+    accepting the Forall-rooted lemma because Gap F's decoder
+    deadness-oracle widening lets the trailing-PAD scan accept
+    structurally-dead but entanglement-alive Forall-protected Var
+    sites); the lemma is bitwise-clamped onto ``parent_state`` via
+    ``Promoter.apply_init_clamp``; the proof tree is extracted.
 
-    This test pins the current behaviour: the orchestrator must NEVER
-    fabricate a proof for a child whose lemma cannot be registered;
-    it must surface a structured ``failure_report`` instead. The test
-    asserts:
+    With Gap C (40cbbee + 2c21972), Gap D (98e2999 + 9285446 +
+    a31d6f6), Gap E (bf11354), and Gap F (289757d) all RESOLVED,
+    the orchestrator end-to-end pipeline closes. Assertions:
 
-    * ``result.solved is False`` and ``result.proof_tree is None``
-      (no fabricated proof);
-    * ``result.failure_report`` is populated with a real diagnostic;
-    * the orchestrator surfaced ``revision_attempts > 0`` (it tried
-      the spec's MAX_REVISIONS + 1 attempts before giving up, never
-      a silent loop).
-
-    When Gap E is fixed (post-promotion projector erases the orphan
-    subtree to PAD, or the decoder tolerates stale descendants of a
-    promoted node), this test must FLIP: ``result.solved`` becomes
-    ``True`` and the diagnostic-failure assertion below will fail
-    loudly, signalling to the next K-8 retry that the orchestrator
-    end-to-end pipeline now closes.
+    * ``result.solved is True`` and ``result.proof_tree is not None``
+      (a real ProofTree, not a fabricated one -- the residual-energy
+      gate + spectral-gap gate cleared);
+    * ``result.failure_report is None`` (the §6.5 invariant: exactly
+      one of proof_tree / failure_report is non-None);
+    * the LemmaLibrary actually persisted the lemma (the I-7 surface
+      wrote a bundle to disk, not just a logical entry);
+    * the §10.10 induction theorem is OPERATIONAL through orchestrator.
     """
     pstate, pmeta = encode_mera(_ast_theorem())
 
     result = solve_goal_graph(
         {"theorem": "forall_x_eq_addzero_x"},
         root_prop="len_reverse_eq_len",
-        decomposer=_SiblingDecomposer(),
+        decomposer=_make_sibling_decomposer(pmeta.n_leaves),
         backend=ThreadPoolBackend(max_workers=1),
         lemma_library=lemma_lib,
         runner=_real_child_runner,
@@ -312,119 +295,140 @@ def test_orchestrator_blocked_on_lemma_persistence_substrate_gap(lemma_lib):
         parent_state=pstate, parent_meta=pmeta,
     )
 
-    # No fabricated proof.
+    # The §6.5 contract: exactly one of proof_tree / failure_report is
+    # non-None. Solved path: proof_tree populated, failure_report None.
     assert isinstance(result, SolveResult)
-    assert result.solved is False, (
-        "orchestrator solved the theorem -- substrate gap appears "
-        "fixed; flip this test to assert solved=True + a real "
-        "ProofTree (see K-8 retry directive Step 4)"
+    assert result.solved is True, (
+        f"orchestrator failed to solve the §10.10 composite end-to-end "
+        f"-- substrate seam may have re-opened. "
+        f"failure_report={result.failure_report}"
     )
-    assert result.proof_tree is None
-    assert result.failure_report is not None
+    assert result.proof_tree is not None, (
+        "result.solved is True but proof_tree is None -- §6.5 "
+        "exactly-one-non-None invariant violated"
+    )
+    assert result.failure_report is None, (
+        f"result.solved is True but failure_report is populated: "
+        f"{result.failure_report}"
+    )
 
-    # Structured diagnostic -- the orchestrator captured the exhaustion
-    # and never silently looped (§6.5 typed-error contract).
-    report = result.failure_report
-    assert report["root_status"] in {"failed", "pending_revision"}
-    assert "exhausted_goal_id" in report
-    # Tighter than `> 0`: the orchestrator must exhaust the full
-    # MAX_REVISIONS + 1 budget (one initial attempt + MAX_REVISIONS
-    # retries -- see orchestrator.py:185-186, :268-277). Loud + specific
-    # over vague + permissive: a future short-circuit must trip this.
-    assert report["revision_attempts"] >= MAX_REVISIONS + 1, (
-        f"orchestrator did not exhaust MAX_REVISIONS+1={MAX_REVISIONS + 1} "
-        f"attempts; got revision_attempts={report['revision_attempts']}"
+    # The lemma was actually persisted into the library (the I-7
+    # register_lemma surface wrote a bundle to disk and indexed it).
+    # We exercise the real ``all_ids`` / ``load`` surface rather than
+    # poking at private attributes (anti-shortcut): a non-empty listing
+    # means a child run's converged ground state was accepted by
+    # ``register_lemma`` (decode + Hamiltonian witness both pass).
+    lemma_ids = list(lemma_lib.all_ids())
+    assert len(lemma_ids) >= 1, (
+        f"orchestrator solved but no lemma persisted -- the integrator "
+        f"path bypassed register_lemma; got lemma_ids={lemma_ids}"
     )
-    # Gap-E-specific: pin the integrator's audit trail on the
-    # decode_error reason string so this test ties to Gap E
-    # (post-promotion stale leaves break trailing-PAD), not to any
-    # future blocker. The orchestrator's top-level failure_report
-    # carries the exhaustion summary; the granular substrate reason
-    # is preserved in the lemma_library's near_misses.log per the K-5
-    # integrator audit-trail contract. When Gap E is fixed (decode_error
-    # no longer appears in the near-misses log because registration
-    # succeeds), this assertion flips loudly alongside the rest.
-    near_log = lemma_lib.root / "near_misses.log"
-    assert near_log.exists(), "near_misses log not written"
-    assert "decode_error" in near_log.read_text(), (
-        f"near_misses log did not carry a decode_error reason -- "
-        f"substrate seam may have moved beyond Gap E. "
-        f"failure_report={result.failure_report}; "
-        f"log={near_log.read_text()!r}"
+    # And the bundle is actually loadable (the I-7 round-trip closes):
+    # if the bundle is corrupt, ``load`` raises rather than returning
+    # a tombstone.
+    bundle = lemma_lib.load(lemma_ids[0])
+    assert bundle is not None, (
+        f"persisted lemma {lemma_ids[0]} failed to round-trip through "
+        f"LemmaLibrary.load -- I-7 round-trip is broken"
     )
 
 
-def test_orchestrator_refusal_diagnostic_pins_substrate_seam(
-    lemma_lib, tmp_path,
-):
-    """Directly invoke the K-5 integrator on a real ChildResult to pin
-    the **exact** refusal reason. This isolates the substrate seam from
-    the orchestrator's retry loop so a future fix can target the named
-    gap.
+def test_orchestrator_clamps_lemma_into_parent_state(lemma_lib):
+    """The §1.1 binding = entanglement clamp: the orchestrator's
+    integration step writes the lemma's per-site leaf tensor into
+    the parent_state's parent_leaves window via
+    ``Promoter.apply_init_clamp``. This test pins the *bitwise*
+    mutation contract:
 
-    The assertion below names Gap E (post-promotion stale leaves break
-    the decoder's trailing-PAD check) by its `register_lemma` reason
-    string. When the Gap E fix lands the reason changes (or becomes
-    None because the registration succeeds), forcing the next K-8
-    retry to update this pin.
+    * the clamp must FIRE -- at least one host leaf in the SubGoal's
+      ``parent_leaves`` window is bitwise different from its pre-clamp
+      snapshot (``np.array_equal`` returns ``False``);
+    * the clamp must be LOCAL (§1.3) -- every host leaf OUTSIDE the
+      ``parent_leaves`` window is bitwise IDENTICAL to its pre-clamp
+      snapshot. The promoter writes only ``host.leaves[hl]`` for
+      ``hl in promoted.host_leaves``; a regression that broadcasts the
+      write would corrupt the parent MERA's untouched context.
+
+    This is the §1.1 architecture-soul check at the operator-algebraic
+    surface: the integrator's clamp is a factored leaf write, never a
+    global overwrite. ``np.array_equal`` (NOT ``np.allclose``) is the
+    correct gate -- the clamp is a tensor copy, not a relaxation.
     """
-    from src.qft_pcn.composition.goal_graph import Node, Status
-    from src.qft_pcn.composition.result_integrator import integrate_child
+    pstate, pmeta = encode_mera(_ast_theorem())
 
-    sub_goal = make_sub_goal(
-        {"goal": "lemma_addzero_eqrefl"},
-        goal_prop="lemma_addzero_eqrefl",
-        boundary={}, parent_leaves=(0,),
+    # The SubGoal's parent_leaves window: the canonical host-leaf
+    # footprint the lemma occupies on the parent MERA (spec §5.2a).
+    # The decomposer publishes parent_leaves=range(0, pmeta.n_leaves)
+    # -- a §10.10 Forall-rooted lemma occupies the full host MERA.
+    # To make the §1.3 locality assertion non-vacuous we append a
+    # sentinel leaf to the parent's leaf list (outside the clamp
+    # window); the promoter must leave it bitwise unchanged. This is
+    # the standard parent-workspace locality fixture (see
+    # test_orchestrator_preserves_unclamped_leaves).
+    d_local = pstate.leaves[0].shape[1]
+    sentinel = np.zeros((1, d_local, 1), dtype=complex)
+    sentinel[0, 2, 0] = 1.0
+    sentinel_idx = len(pstate.leaves)
+    pstate.leaves.append(np.array(sentinel, copy=True))
+
+    parent_leaves_window = set(range(0, pmeta.n_leaves))
+    assert sentinel_idx not in parent_leaves_window, (
+        "sentinel must live OUTSIDE the clamp window for §1.3 to bite"
     )
-    node = Node(goal=sub_goal, status=Status.PENDING)
 
-    child_result = _real_child_runner(sub_goal, timeout_s=120.0)
-    # Substrate proof actually worked (residual is < 1e-6); the
-    # integrator's gap+residual gates clear; the refusal is downstream.
-    assert child_result.residual_energy < 1e-6, (
-        f"substrate did not converge: residual="
-        f"{child_result.residual_energy}"
-    )
+    # Snapshot every host leaf BITWISE (full ndarray copies, dtype-
+    # preserving) BEFORE the orchestrator drives the integrator. This
+    # is the §1.3 locality oracle -- the parent's untouched leaves
+    # must compare bitwise-equal across the clamp.
+    n_host_leaves = len(pstate.leaves)
+    pre_snapshot = [np.array(leaf, copy=True) for leaf in pstate.leaves]
+    assert all(0 <= leaf < n_host_leaves for leaf in parent_leaves_window)
 
-    outcome = integrate_child(
-        parent_state=None, parent_meta=None,
-        node=node, child_result=child_result,
+    result = solve_goal_graph(
+        {"theorem": "forall_x_eq_addzero_x"},
+        root_prop="len_reverse_eq_len",
+        decomposer=_make_sibling_decomposer(pmeta.n_leaves),
+        backend=ThreadPoolBackend(max_workers=1),
         lemma_library=lemma_lib,
+        runner=_real_child_runner,
+        timeout_s=120.0,
+        parent_state=pstate, parent_meta=pmeta,
+    )
+    # Sanity gate the run actually solved -- if it didn't, the clamp
+    # never fired and any locality assertion would be vacuous. Use a
+    # distinct error message from the previous test so a regression
+    # bisect can tell them apart.
+    assert result.solved is True, (
+        f"clamp-fired test: orchestrator failed to solve before clamp "
+        f"could fire -- failure_report={result.failure_report}"
     )
 
-    # The integration refused -- pinning the named substrate gap.
-    assert outcome.integrated is False, (
-        "integrate_child accepted the lemma -- the substrate gap "
-        "appears fixed; flip this test to assert outcome.integrated "
-        "is True and inspect the registered lemma in lemma_lib"
-    )
-    # Diagnostic exposes the substrate seam: Gap E (post-promotion
-    # stale leaves break the decoder's trailing-PAD check) per the
-    # module docstring + EXTENSIONS.md. Gap C / Gap D are RESOLVED.
-    reason = outcome.reason
-    assert "lemma registration failed" in reason, (
-        f"unexpected refusal reason -- diagnose before pinning: {reason}"
-    )
-    # Pin on the Gap E substrate seam: ``validation_failed:decode_error``
-    # carrying the trailing-PAD violation. If the reason no longer
-    # matches, the substrate has moved and the next K-8 retry must
-    # re-diagnose before flipping.
-    assert "validation_failed:decode_error" in reason, (
-        f"refusal reason did not surface a decode_error -- substrate "
-        f"seam may have moved beyond Gap E: {reason}"
-    )
-    assert "not PAD after AST parse" in reason, (
-        f"refusal reason did not match Gap E (post-promotion stale "
-        f"leaves break trailing-PAD check): {reason}"
+    # The clamp FIRED: at least one leaf in the parent_leaves window
+    # is bitwise mutated. ``np.array_equal`` is the entanglement-clamp
+    # gate (anti-shortcut: NOT ``np.allclose`` -- the promoter does a
+    # tensor copy at strength=1.0, an exact bit-for-bit overwrite).
+    fired = [
+        hl for hl in parent_leaves_window
+        if not np.array_equal(pre_snapshot[hl], pstate.leaves[hl])
+    ]
+    assert fired, (
+        f"clamp did not fire -- parent_leaves window {parent_leaves_window} "
+        f"bitwise unchanged after solve_goal_graph. The §1.1 binding-as-"
+        f"entanglement contract is broken (the orchestrator solved but "
+        f"the integrator never wrote a leaf)."
     )
 
-    # The near-misses log captured the same diagnostic -- the
-    # integrator's audit trail is preserving the substrate gap
-    # observation for offline diagnosis.
-    near_log = lemma_lib.root / "near_misses.log"
-    assert near_log.exists(), "near_misses log not written"
-    log_text = near_log.read_text()
-    assert "validation_failed" in log_text, (
-        f"near_misses log did not capture the Gap E substrate seam: "
-        f"{log_text}"
-    )
+    # §1.3 LOCALITY: every leaf OUTSIDE the parent_leaves window is
+    # bitwise identical. The promoter's per-site write must not bleed
+    # into the parent's untouched context (a regression that called
+    # ``host.leaves = [...]`` instead of ``host.leaves[hl] = ...``
+    # would trip this -- and would be a serious §1.3 violation).
+    for hl in range(n_host_leaves):
+        if hl in parent_leaves_window:
+            continue
+        assert np.array_equal(pre_snapshot[hl], pstate.leaves[hl]), (
+            f"§1.3 locality violation: host leaf {hl} (outside the "
+            f"parent_leaves window {parent_leaves_window}) was bitwise "
+            f"mutated by the clamp. The promoter's per-site write "
+            f"bled into untouched context."
+        )
