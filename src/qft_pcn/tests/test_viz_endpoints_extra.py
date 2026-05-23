@@ -84,3 +84,62 @@ def test_set_params_400_when_no_qpcn_substrate(client, monkeypatch):
         assert "qpcn" in res.json()["detail"].lower()
     finally:
         srv._controllers.pop("live", None)
+
+
+from unittest.mock import patch
+
+
+def test_dsl_schema_endpoint(client):
+    r = client.get("/dsl/schema")
+    assert r.status_code == 200
+    assert r.json()["$id"].endswith("dsl/v1.json")
+
+
+def test_dsl_models_endpoint_503_when_ollama_down(client):
+    # When httpx.get raises, the endpoint should surface 503, not 500.
+    with patch("src.qft_pcn.viz.server.llm.list_models",
+               side_effect=Exception("connection refused")):
+        r = client.get("/dsl/models")
+        assert r.status_code == 503
+
+
+def test_dsl_translate_returns_dsl(client):
+    fake = {"dsl": {"fields": [{"name": "A", "cutoff": 2}],
+                    "hamiltonian": {"terms": [
+                        {"kind": "mass", "species": "A", "coefficient": 1.0}]},
+                    "observables": [
+                        {"operator": "n", "site": 0,
+                         "species": "A", "target": 0.25}]}}
+    with patch("src.qft_pcn.viz.server.llm.generate_dsl",
+               return_value=fake):
+        r = client.post("/dsl/translate",
+                        json={"prompt": "go", "model": "gemma3:4b"})
+        assert r.status_code == 200
+        assert r.json()["dsl"]["fields"][0]["name"] == "A"
+
+
+def test_dsl_run_registers_runspec(client):
+    dsl = {"fields": [{"name": "A", "cutoff": 2}],
+           "hamiltonian": {"terms": [
+               {"kind": "mass", "species": "A", "coefficient": 1.0},
+               {"kind": "kinetic", "species": "A", "coefficient": 0.5}]},
+           "observables": [
+               {"operator": "n", "site": 0,
+                "species": "A", "target": 0.25}]}
+    r = client.post("/dsl/run", json={"dsl": dsl})
+    assert r.status_code == 200
+    assert "run_id" in r.json()
+
+
+def test_dsl_run_validates(client):
+    r = client.post("/dsl/run", json={"dsl": {"fields": []}})
+    assert r.status_code == 400
+
+
+def test_dsl_export_returns_dsl_for_known_run(client):
+    run = client.post("/run", json={"layers": ["qpcn"], "steps": 2,
+                                     "grid": 8}).json()
+    r = client.get(f"/dsl/export/{run['run_id']}")
+    assert r.status_code == 200
+    body = r.json()
+    assert "fields" in body and "hamiltonian" in body

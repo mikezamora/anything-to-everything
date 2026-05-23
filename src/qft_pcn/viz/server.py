@@ -25,6 +25,8 @@ from fastapi.responses import FileResponse, StreamingResponse
 from .controller import RunController
 from .presets import PARAM_SCHEMA, PRESETS
 from .runs import RunSpec, RunRegistry, run_simulation
+from . import dsl as _dsl
+from . import llm
 
 app = FastAPI(title="QFT-PCN Visualizer")
 app.add_middleware(CORSMiddleware, allow_origins=["*"],
@@ -260,3 +262,70 @@ def export_download(job_id: str):
         raise HTTPException(status_code=404, detail="export not ready")
     return FileResponse(job["output"], media_type="video/mp4",
                         filename=f"{job.get('layer', 'export')}.mp4")
+
+
+@app.get("/dsl/schema")
+def get_dsl_schema():
+    return _dsl.load_schema()
+
+
+@app.get("/dsl/models")
+def get_dsl_models():
+    try:
+        return llm.list_models()
+    except Exception as exc:  # noqa: BLE001  (Ollama down -> 503)
+        raise HTTPException(status_code=503,
+                            detail=f"ollama unreachable: {exc}")
+
+
+@app.post("/dsl/translate")
+def post_dsl_translate(body: dict):
+    prompt = (body.get("prompt") or "").strip()
+    model = (body.get("model") or "").strip()
+    if not prompt or not model:
+        raise HTTPException(status_code=400,
+                            detail="prompt and model are required")
+    try:
+        return llm.generate_dsl(
+            prompt, model=model,
+            schema=_dsl.load_schema(), examples=_dsl.EXAMPLES,
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=503,
+                            detail=f"ollama call failed: {exc}")
+
+
+@app.post("/dsl/run")
+def post_dsl_run(body: dict):
+    dsl = body.get("dsl") or {}
+    errors = _dsl.validate(dsl)
+    if errors:
+        raise HTTPException(status_code=400,
+                            detail={"validation_errors": errors})
+    spec = _dsl.dsl_to_runspec(dsl)
+    run_id = uuid.uuid4().hex
+    _registry.add(run_id, spec)
+    return {"run_id": run_id}
+
+
+@app.post("/dsl/verbalize")
+def post_dsl_verbalize(body: dict):
+    model = (body.get("model") or "").strip()
+    prompt = body.get("original_prompt") or ""
+    observations = body.get("observations") or {}
+    if not model:
+        raise HTTPException(status_code=400, detail="model is required")
+    try:
+        return {"text": llm.verbalize(observations, model=model,
+                                       original_prompt=prompt)}
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=503,
+                            detail=f"ollama call failed: {exc}")
+
+
+@app.get("/dsl/export/{run_id}")
+def get_dsl_export(run_id: str):
+    spec = _registry.get(run_id)
+    if spec is None:
+        raise HTTPException(status_code=404, detail="run not found")
+    return _dsl.runspec_to_dsl(spec)
