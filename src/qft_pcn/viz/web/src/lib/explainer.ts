@@ -348,4 +348,33 @@ export const EXPLAINERS: Record<string, ExplainerSpec> = {
     ],
     references: [{ label: 'Architecture §2.1, §3.1', href: '../../QFT_PCN_ARCHITECTURE.md' }],
   },
+
+  'pcn-dynamics': {
+    title: 'PCN Dynamics — Free Energy + Per-Layer Trajectories',
+    oneLine: 'Total variational free energy F and its per-layer contributions over time.',
+    what: [
+      'A QFT-PCN network minimises a single scalar objective: the variational free energy F summed across all PCN layers. This panel surfaces the live total F plus its per-layer decomposition so the user can see WHICH layer is dominating the cost at any moment.',
+      'Each layer contributes a precision-weighted squared error (½ Π E²), an entropy correction (−½ log Π), and a curvature-coupling term (κR). The time-series strip on total F is the master "is the network learning?" readout.',
+    ],
+    elements: [
+      { name: 'total F readout', meaning: 'sum of per-layer free energies; should decrease monotonically under successful learning.', code: 'snapshot_pcn_dynamics:total_free_energy' },
+      { name: 'per-layer F row', meaning: 'free-energy contribution of layer l; isolates which layer is hot.', code: 'snapshot_pcn_dynamics:per_layer_free_energy[l]' },
+      { name: 'per-layer ‖E‖₂', meaning: 'Frobenius norm of the layer-l prediction-error field — drives the ½ Π E² term.', code: 'snapshot_pcn_dynamics:per_layer_e_norm[l]' },
+      { name: 'per-layer mean Π', meaning: 'average precision in layer l; rises as the layer becomes confident.', code: 'snapshot_pcn_dynamics:per_layer_pi_mean[l]' },
+      { name: 'depth readout', meaning: 'number of PCN layers currently contributing.' },
+      { name: 'MetricsStrip (total F)', meaning: 'time series of total F across the run — the primary convergence diagnostic.' },
+    ],
+    math: [
+      { tex: 'F = \\sum_l \\int_M \\bigl[\\tfrac12 \\Pi_l(x) E_l(x)^2 - \\tfrac12 \\log \\Pi_l(x) + \\kappa R(x)\\bigr] \\sqrt{|g|}\\, d^2x', caption: 'Variational free energy: per-layer precision-weighted error + entropy correction + curvature-coupling (§3.1).' },
+      { tex: 'F_l = \\tfrac12 \\langle \\Pi_l E_l^2 \\rangle - \\tfrac12 \\langle \\log \\Pi_l \\rangle + \\kappa \\langle R \\rangle', caption: 'Per-layer free-energy decomposition surfaced as a row in the panel table.' },
+      { tex: '\\dot F = \\sum_l \\bigl(\\partial_{\\Phi_l} F\\, \\dot\\Phi_l + \\partial_{\\Pi_l} F\\, \\dot\\Pi_l\\bigr) \\le 0', caption: 'Belief/precision flow is gradient descent on F — the relaxation invariant.' },
+    ],
+    watch: [
+      { label: 'total F decreases monotonically under successful learning', readout: 'total_free_energy' },
+      { label: 'Per-layer F rows reveal which layer is the current bottleneck (largest contribution)' },
+      { label: '‖E‖₂ should decay as predictions improve; mean Π should rise where E shrinks' },
+      { label: 'depth readout matches the configured PCN stack height', readout: 'depth' },
+    ],
+    references: [{ label: 'Architecture §3.1', href: '../../QFT_PCN_ARCHITECTURE.md' }],
+  },
 };
