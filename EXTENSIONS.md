@@ -453,3 +453,50 @@ it unblocks.
 - No-regression: `test_decoder_forall_fix.py` +
   `test_mera_forall_protected.py` (Gap C + I-Task-10 #5) still pass;
   `test_mera_reduction.py` + `test_mera_roundtrip.py` unchanged (16/16).
+
+## Missing dependency: post-promotion stale leaves break decoder trailing-PAD check (Gap E)
+
+- Where: surfaces in `src/qft_pcn/logic/decoder.py::parse_kind_stream`
+  trailing-PAD loop (lines ~315-321). After
+  `mera_imaginary_evolve_state` proves the §10.10 composite
+  `forall x:Nat. Eq (add x Zero) x`, node 0 stays `KIND_FORALL`,
+  node 1 promotes from `KIND_EQ` to `KIND_BOOL` (the load-bearing
+  R-Eq-Refl result), but the ORIGINAL Eq subtree's descendants
+  (node 2 = the `+ x Zero` Bin, node 3 = the bound `Var x`,
+  node 4 = `Zero`, node 5 = the second `Var x`) are NOT erased to
+  `KIND_PAD` by the promotion. They survive as stale residue with
+  unit marginal mass (Var p=1.000, etc., as verified at K-8
+  diagnosis).
+- Effect: `decode_mera` parses Forall(BoolLit(True)) consuming
+  nodes 0..1, then enters the trailing-PAD loop and rejects with
+  `DecodeError("site 3 not PAD after AST parse (kind=1)")`.
+  `composition.lemma_library.register_lemma` wraps this through
+  the totality try/except (per 3950e69) and surfaces it as
+  `RegistrationResult(False, ..., 'validation_failed:decode_error:site 3 not PAD after AST parse (kind=1)')`.
+  The K-5 integrator refuses the clamp; the orchestrator exhausts
+  its MAX_REVISIONS + 1 retries and `solve_goal_graph` returns
+  `SolveResult(solved=False, proof_tree=None, failure_report={...})`.
+- Need: one of
+  (a) extend the §6.1 / I-Task-7 promotion machinery so that when
+      a parent node's kind flips to one that consumes fewer
+      children (e.g. `KIND_EQ` -> `KIND_BOOL`, which is a leaf
+      term), the orphaned subtree's nodes are co-projected onto
+      `KIND_PAD` as part of the same promotion step; or
+  (b) widen `parse_kind_stream`'s trailing-PAD policy to tolerate
+      stale descendants of a promoted-to-leaf node when the
+      surviving structural parse is otherwise complete (more
+      lenient decoder; preserves "single ground state, one AST"
+      invariant by treating below-promoted-leaf sites as
+      structurally dead).
+  Option (a) is preferred (it keeps decoder strict and matches the
+  §1.1 architecture-soul: the substrate IS the proof, so the
+  substrate's site layout must mirror the proved AST exactly).
+- Pinned by: `test_orchestrator_refusal_diagnostic_pins_substrate_seam`
+  and `test_orchestrator_blocked_on_lemma_persistence_substrate_gap`
+  in `src/qft_pcn/composition/tests/test_cross_level_acceptance.py`
+  (K-8 retry, this entry). Substrate-level proof remains green
+  (`test_substrate_level_inductive_theorem_proves_end_to_end`):
+  R-AddZero/R-Eq-Refl residuals relax, Eq node promotes to
+  `KIND_BOOL` + `VALUE_TRUE` -- the substrate IS proving the
+  theorem; only the orchestrator's lemma-persistence handoff is
+  blocked by the stale-descendant residue.

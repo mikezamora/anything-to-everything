@@ -15,29 +15,34 @@ Brief context (from the K-8 retry directive):
   which is the validated I-10 load-bearing composite (M2 reduction
   layer test ``test_eqrefl_addzero_composite``).
 
-What the retry uncovered are **two further substrate gaps** that prevent
-the orchestrator's end-to-end pipeline from closing on this theorem
-even with Blocker A resolved. Both are documented in EXTENSIONS.md
-and diagnosed by the assertions below:
+What the retry uncovered, after Gap C (decoder Forall/Fix branches) and
+Gap D (`_meta_to_json` set + Ty serializer `nested_type_index`) BOTH
+closed, is a NEW substrate gap (Gap E) that still prevents the
+orchestrator's end-to-end pipeline from closing on this theorem.
+Documented in EXTENSIONS.md ("post-promotion stale leaves break
+trailing-PAD check") and diagnosed by the assertions below:
 
-  **Gap C** (decoder Part-2)
-      ``logic/decoder.py::parse_one`` raises ``DecodeError`` on
-      ``KIND_FORALL`` / ``KIND_FIX`` ("Forall/Fix binder decoding is
-      Part-2 scope"). ``composition.lemma_library.register_lemma`` wraps
-      this in a totality try/except (per 3950e69) and surfaces it as
-      ``RegistrationResult(False, ..., 'validation_failed:decode_error:...')``.
-      Effect: no Forall-rooted child state can be registered as a lemma
-      through the K-5 result-integrator; the integrator refuses the
-      clamp and the orchestrator exhausts its revisions.
+  **Gap E** (post-promotion stale leaves: decoder trailing-PAD)
+      ``decoder.parse_kind_stream`` enforces that every site BEYOND the
+      parsed AST is ``KIND_PAD``. The §10.10 imaginary-time evolution
+      successfully promotes the ``Eq(add x Zero, x)`` body to
+      ``BoolLit(True)`` -- node 1 flips from KIND_EQ to KIND_BOOL --
+      but the original Eq subtree's descendant leaves (the Bin/+, two
+      Vars, Zero) are NOT erased to PAD by the promotion. They survive
+      under nodes 3-5 as stale VAR/PAD residue. The decoder consumes
+      Forall->BoolLit (nodes 0, 1) and then expects PAD at node 2..N
+      but finds VAR at node 3, raising
+      ``DecodeError("site 3 not PAD after AST parse (kind=1)")``.
+      ``register_lemma`` surfaces this as
+      ``RegistrationResult(False, ..., 'validation_failed:decode_error:site N not PAD ...')``.
+      Effect: no Forall-rooted child state whose body promotes to a
+      shallower form can be registered as a lemma; the integrator
+      refuses the clamp and the orchestrator exhausts its revisions.
 
-  **Gap D** (meta JSON: set not serializable)
-      ``composition.lemma_library._meta_to_json`` does not handle the
-      I-10-added ``MeraEncodingMeta.forall_protected_leaves: set[int]``
-      field. Even for a non-Forall AST the meta carries an (empty) set
-      that ``json.dumps`` rejects with ``TypeError``. Effect: no lemma
-      can be persisted to a real ``LemmaLibrary`` while this field is
-      a ``set``; this short-circuits register_lemma even when Gap C
-      does not apply.
+  (Gap C and Gap D are RESOLVED at 40cbbee+2c21972 and
+   98e2999+9285446+a31d6f6 respectively; this file's previous pin on
+   "validation_failed:decode_error:Forall/Fix" or "set is not JSON
+   serializable" has been retargeted onto Gap E.)
 
 This file therefore ships:
 
@@ -270,8 +275,9 @@ def lemma_lib(tmp_path):
 def test_orchestrator_blocked_on_lemma_persistence_substrate_gap(lemma_lib):
     """The orchestrator drives the §10.10 composite through a real
     child runner; the K-5 integrator invokes the real I-7
-    ``register_lemma``; persistence fails on a documented substrate
-    gap (Gap C or Gap D in this module's docstring + EXTENSIONS.md).
+    ``register_lemma``; persistence fails on Gap E (post-promotion
+    stale leaves break the decoder's trailing-PAD check; see module
+    docstring + EXTENSIONS.md).
 
     This test pins the current behaviour: the orchestrator must NEVER
     fabricate a proof for a child whose lemma cannot be registered;
@@ -285,13 +291,12 @@ def test_orchestrator_blocked_on_lemma_persistence_substrate_gap(lemma_lib):
       the spec's MAX_REVISIONS + 1 attempts before giving up, never
       a silent loop).
 
-    When the substrate gaps are fixed (decoder Part-2 + meta JSON
-    set-handling), this test must FLIP: ``result.solved`` becomes
+    When Gap E is fixed (post-promotion projector erases the orphan
+    subtree to PAD, or the decoder tolerates stale descendants of a
+    promoted node), this test must FLIP: ``result.solved`` becomes
     ``True`` and the diagnostic-failure assertion below will fail
     loudly, signalling to the next K-8 retry that the orchestrator
-    end-to-end pipeline now closes. See EXTENSIONS.md "Missing
-    dependency: decoder.parse_one rejects Forall/Fix" and "Missing
-    dependency: _meta_to_json does not handle set fields".
+    end-to-end pipeline now closes.
     """
     pstate, pmeta = encode_mera(_ast_theorem())
 
@@ -332,10 +337,11 @@ def test_orchestrator_refusal_diagnostic_pins_substrate_seam(
     the orchestrator's retry loop so a future fix can target the named
     gap.
 
-    The assertion below names the substrate gap by its `register_lemma`
-    reason string. When the substrate fix lands the reason changes (or
-    becomes None because the registration succeeds), forcing the next
-    K-8 retry to update this pin.
+    The assertion below names Gap E (post-promotion stale leaves break
+    the decoder's trailing-PAD check) by its `register_lemma` reason
+    string. When the Gap E fix lands the reason changes (or becomes
+    None because the registration succeeds), forcing the next K-8
+    retry to update this pin.
     """
     from src.qft_pcn.composition.goal_graph import Node, Status
     from src.qft_pcn.composition.result_integrator import integrate_child
@@ -367,22 +373,24 @@ def test_orchestrator_refusal_diagnostic_pins_substrate_seam(
         "appears fixed; flip this test to assert outcome.integrated "
         "is True and inspect the registered lemma in lemma_lib"
     )
-    # Diagnostic exposes the substrate seam: either decoder Part-2
-    # (Gap C) or _meta_to_json set-handling (Gap D) per the module
-    # docstring + EXTENSIONS.md.
+    # Diagnostic exposes the substrate seam: Gap E (post-promotion
+    # stale leaves break the decoder's trailing-PAD check) per the
+    # module docstring + EXTENSIONS.md. Gap C / Gap D are RESOLVED.
     reason = outcome.reason
     assert "lemma registration failed" in reason, (
         f"unexpected refusal reason -- diagnose before pinning: {reason}"
     )
-    # Pin on the exact substrate seam string. The choice of which gap
-    # short-circuits first depends on validation ordering inside
-    # ``register_lemma`` -- we accept either named seam.
-    matches_gap_c = "validation_failed:decode_error" in reason
-    matches_gap_d = ("set is not JSON serializable" in reason
-                     or "Object of type set" in reason)
-    assert matches_gap_c or matches_gap_d, (
-        f"refusal reason did not match Gap C (decoder Part-2) or "
-        f"Gap D (_meta_to_json set): {reason}"
+    # Pin on the Gap E substrate seam: ``validation_failed:decode_error``
+    # carrying the trailing-PAD violation. If the reason no longer
+    # matches, the substrate has moved and the next K-8 retry must
+    # re-diagnose before flipping.
+    assert "validation_failed:decode_error" in reason, (
+        f"refusal reason did not surface a decode_error -- substrate "
+        f"seam may have moved beyond Gap E: {reason}"
+    )
+    assert "not PAD after AST parse" in reason, (
+        f"refusal reason did not match Gap E (post-promotion stale "
+        f"leaves break trailing-PAD check): {reason}"
     )
 
     # The near-misses log captured the same diagnostic -- the
@@ -391,8 +399,7 @@ def test_orchestrator_refusal_diagnostic_pins_substrate_seam(
     near_log = lemma_lib.root / "near_misses.log"
     assert near_log.exists(), "near_misses log not written"
     log_text = near_log.read_text()
-    assert ("validation_failed" in log_text
-            or "set" in log_text), (
-        f"near_misses log did not capture the substrate seam: "
+    assert "validation_failed" in log_text, (
+        f"near_misses log did not capture the Gap E substrate seam: "
         f"{log_text}"
     )
