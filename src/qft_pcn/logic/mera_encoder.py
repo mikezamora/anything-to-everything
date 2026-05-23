@@ -522,6 +522,65 @@ def _serialize_child(child: Node, n_nodes_max: int):
     return sites[:n_nodes], type_tags[:n_nodes], n_nodes
 
 
+def _structural_segment_data(ast: Node, n_nodes_max: int):
+    """Compute the structural-hole expansion data for one AST segment.
+
+    Returns a dict with:
+      - n_total: total expanded slot count for this segment
+      - sub_sites, sub_type_tags, n_sub
+      - expanded_slot_of_sub: dict[sub_idx -> expanded slot (segment-local)]
+      - hole_set: set of sub_idx that are holes
+      - region_node_starts: list of expanded-slot starts per hole (segment-local)
+      - regions_in: list[HoleRegion] (the un-expanded input regions)
+      - hole_scopes: list of lex-scope binder lists per hole
+
+    Mirrors steps 1-3 of _encode_with_structural_holes, but does not build
+    leaves / layout / state. Pure layout bookkeeping.
+    """
+    hole_walk = _walk_structural_holes(ast)
+    substituted = _substitute_structural_holes(ast)
+    sub_sites = serialize_preorder(substituted, N=n_nodes_max)
+    sub_type_tags = compute_site_types(substituted, sub_sites)
+    compute_tobl_tags(substituted, sub_sites)
+    n_sub = sum(1 for occ in sub_sites if occ.kind != _ENC_KIND_PAD)
+
+    hole_sub_indices = [idx for idx, _scope, _h in hole_walk]
+    hole_scopes = [scope for _idx, scope, _h in hole_walk]
+    _skel, regions_in = _expand_structural_holes(ast)
+    if len(regions_in) != len(hole_walk):
+        raise RuntimeError(
+            "structural-hole preorder mismatch between scope walk and "
+            "_expand_structural_holes")
+
+    expanded_slot_of_sub: dict[int, int] = {}
+    region_node_starts: list[int] = []
+    shift = 0
+    hole_set = set(hole_sub_indices)
+    sub_idx_to_region = {sub_idx: r for r, sub_idx in enumerate(hole_sub_indices)}
+    n_total = 0
+    for sub_idx in range(n_sub):
+        if sub_idx in hole_set:
+            r = sub_idx_to_region[sub_idx]
+            region_node_starts.append(sub_idx + shift)
+            n_total += regions_in[r].n_max
+            shift += regions_in[r].n_max - 1
+        else:
+            expanded_slot_of_sub[sub_idx] = sub_idx + shift
+            n_total += 1
+
+    return {
+        "n_total": n_total,
+        "sub_sites": sub_sites,
+        "sub_type_tags": sub_type_tags,
+        "n_sub": n_sub,
+        "expanded_slot_of_sub": expanded_slot_of_sub,
+        "hole_set": hole_set,
+        "region_node_starts": region_node_starts,
+        "regions_in": regions_in,
+        "hole_scopes": hole_scopes,
+    }
+
+
 def _encode_bundle(bundle: Bundle, n_nodes_max: int,
                    chi_layer: int) -> tuple[MERA, MeraEncodingMeta]:
     """Encode a Bundle of children as one MERA state.
@@ -538,27 +597,56 @@ def _encode_bundle(bundle: Bundle, n_nodes_max: int,
     if len(bundle.children) == 0:
         raise ValueError("Bundle has no children")
 
-    # 1) Serialize each child; rebase var_ref.binder_site to the unified
-    #    pre-order. site_to_path is per-child; we prefix each child's
-    #    ast_path with (child_index,) so paths are globally unique.
+    # Detect a structural-hole sketch in children[0]: it cannot be passed
+    # through the M1 var-hole serializer (which trips on HoleVar inside
+    # `_emit`). For that case we route children[0] through the structural
+    # segment helper (mirroring _encode_with_structural_holes) and pack
+    # the witness children (children[1..]) as concrete segments after it.
+    sketch_is_structural = _has_structural_hole(bundle.children[0])
+
+    # 1) Serialize each child (per its hole kind); rebase var_ref.binder_site
+    #    to the unified pre-order. site_to_path is per-child; we prefix each
+    #    child's ast_path with (child_index,) so paths are globally unique.
+    #    For the structural sketch we capture the segment data dict and
+    #    reconstruct an aligned `sites_segment` / `type_tags_segment` over
+    #    the expanded slots (holes -> placeholder NodeOccupancy with kind
+    #    KIND_PAD so the meta machinery skips them).
+    from ._serialize import VarRef, NodeOccupancy
     per_child_sites: list[list] = []
     per_child_tags: list[list] = []
     child_offsets: list[int] = []
+    sketch_structural_data: dict | None = None
     running = 0
     for ci, child in enumerate(bundle.children):
-        sites, tags, n_nodes = _serialize_child(child, n_nodes_max)
-        # Rebase binder_site indices for VarRefs inside this child.
-        from ._serialize import VarRef
-        for occ in sites:
-            if occ.var_ref is not None:
-                vr = occ.var_ref
-                occ.var_ref = VarRef(
-                    binder_site=vr.binder_site + running,
-                    depth_from_innermost=vr.depth_from_innermost,
-                    candidates=[(bs + running, d) for bs, d in vr.candidates],
-                )
-            # Prefix ast_path with child_index for global uniqueness.
-            occ.ast_path = (ci,) + occ.ast_path
+        if ci == 0 and sketch_is_structural:
+            seg = _structural_segment_data(child, n_nodes_max)
+            sketch_structural_data = seg
+            n_nodes = seg["n_total"]
+            # Build a sites/tags list of length n_nodes for the segment.
+            # Concrete sub_idx -> its expanded slot carries the original
+            # NodeOccupancy (binder_site offset still segment-local = 0 here,
+            # since this is child 0). Hole slots get PAD placeholders.
+            sites = [NodeOccupancy(kind=_ENC_KIND_PAD) for _ in range(n_nodes)]
+            tags = [0 for _ in range(n_nodes)]
+            for sub_idx, new_idx in seg["expanded_slot_of_sub"].items():
+                occ = seg["sub_sites"][sub_idx]
+                # Prefix ast_path with child_index for global uniqueness.
+                occ.ast_path = (ci,) + occ.ast_path
+                sites[new_idx] = occ
+                tags[new_idx] = seg["sub_type_tags"][sub_idx]
+        else:
+            sites, tags, n_nodes = _serialize_child(child, n_nodes_max)
+            # Rebase binder_site indices for VarRefs inside this child.
+            for occ in sites:
+                if occ.var_ref is not None:
+                    vr = occ.var_ref
+                    occ.var_ref = VarRef(
+                        binder_site=vr.binder_site + running,
+                        depth_from_innermost=vr.depth_from_innermost,
+                        candidates=[(bs + running, d) for bs, d in vr.candidates],
+                    )
+                # Prefix ast_path with child_index for global uniqueness.
+                occ.ast_path = (ci,) + occ.ast_path
         per_child_sites.append(sites)
         per_child_tags.append(tags)
         child_offsets.append(running)
@@ -568,6 +656,36 @@ def _encode_bundle(bundle: Bundle, n_nodes_max: int,
     if n_total < 1:
         raise EncodingTooLarge(n_nodes=n_total, N=n_nodes_max)
 
+    # If the sketch is structural, rebase its concrete-node var_refs into
+    # the unified pre-order using child0's expanded slots, then for ci>=1
+    # children, additionally rebase using child_offsets[ci].
+    if sketch_is_structural:
+        # child 0 binder_sites are sub_idx (in sub_sites coordinates).
+        # Map them to expanded segment-local slots.
+        seg = sketch_structural_data
+        eslot = seg["expanded_slot_of_sub"]
+        for new_idx in eslot.values():
+            occ = per_child_sites[0][new_idx]
+            if occ.var_ref is not None:
+                vr = occ.var_ref
+                bs = eslot.get(vr.binder_site, vr.binder_site)
+                occ.var_ref = VarRef(
+                    binder_site=bs,
+                    depth_from_innermost=vr.depth_from_innermost,
+                    candidates=[(eslot.get(b, b), d) for b, d in vr.candidates],
+                )
+        # Children 1+ var_refs need offsetting by child_offsets[ci].
+        for ci in range(1, len(bundle.children)):
+            off = child_offsets[ci]
+            for occ in per_child_sites[ci]:
+                if occ.var_ref is not None:
+                    vr = occ.var_ref
+                    occ.var_ref = VarRef(
+                        binder_site=vr.binder_site + off,
+                        depth_from_innermost=vr.depth_from_innermost,
+                        candidates=[(bs + off, d) for bs, d in vr.candidates],
+                    )
+
     # 2) Concatenate.
     sites_all: list = []
     type_tags_all: list = []
@@ -576,32 +694,85 @@ def _encode_bundle(bundle: Bundle, n_nodes_max: int,
         type_tags_all.extend(t)
 
     layout = compute_layout(n_total)
-    hole_nodes = _hole_nodes(sites_all)
 
-    # 3) Leaf vectors (concrete + PAD padding).
+    # 3) Leaf vectors (concrete + PAD padding). For structural-sketch case,
+    #    hole-region slots are left as PAD here; per-branch overrides will
+    #    fill them.
+    # For structural-sketch bundles, child 0's segment extent is
+    # [0, child_offsets[1]) (when there is at least one witness) or
+    # [0, n_total) (when only the sketch is present). Within that range,
+    # PAD-marked occupancies are hole-region placeholders; they get PAD
+    # leaves here and are overridden per-branch below.
+    if sketch_is_structural:
+        sketch_seg_end = child_offsets[1] if len(child_offsets) > 1 else n_total
+    else:
+        sketch_seg_end = 0
     leaf_vectors: list[np.ndarray] = []
     for node_idx in range(n_total):
-        five = node_leaf_vectors(sites_all[node_idx], type_tags_all[node_idx])
+        occ = sites_all[node_idx]
+        if (sketch_is_structural and node_idx < sketch_seg_end
+                and occ.kind == _ENC_KIND_PAD):
+            five = [_pad_leaf_vector() for _ in range(LEAVES_PER_NODE)]
+        else:
+            five = node_leaf_vectors(occ, type_tags_all[node_idx])
         leaf_vectors.extend(five)
     while len(leaf_vectors) < layout.n_leaves:
         leaf_vectors.append(_pad_leaf_vector())
 
-    # 4) Concrete vs hole path (mirrors encode_mera).
-    if hole_nodes:
-        holes: list[dict] = []
-        for node_idx in hole_nodes:
-            var_ref = sites_all[node_idx].var_ref
-            holes.append({
-                "hole_bid_leaf": layout.leaf_of(node_idx, "bid"),
-                "cand_bid_values": [BID_0 + depth
-                                    for _, depth in var_ref.candidates],
-                "cand_witness_leaves": [
-                    layout.leaf_of(binder_site, "value")
-                    for binder_site, _ in var_ref.candidates],
-            })
-        state = encode_hole_state(leaf_vectors, holes, chi_layer=chi_layer)
+    # 4) State assembly.
+    if sketch_is_structural:
+        # Promote regions to absolute (segment-local already == absolute for
+        # child 0 since it starts at offset 0).
+        seg = sketch_structural_data
+        regions_in = seg["regions_in"]
+        hole_scopes = seg["hole_scopes"]
+        region_node_starts = seg["region_node_starts"]
+        hole_regions_out: list = []
+        for r, region_in in enumerate(regions_in):
+            from .mera_synthesis.encode_ext import HoleRegion
+            hole_regions_out.append(HoleRegion(
+                node_start=region_node_starts[r],
+                n_max=region_in.n_max,
+                candidate_branches=region_in.candidate_branches,
+            ))
+        # Per-region per-branch overrides.
+        per_region_branches: list[list[dict[int, np.ndarray]]] = []
+        for r, region in enumerate(hole_regions_out):
+            branches = structural_hole_branches(
+                region, hole_scopes[r], layout)
+            per_region_branches.append(branches)
+        # Cartesian product across structural holes.
+        branch_choices: list[list[int]] = [[]]
+        for branches in per_region_branches:
+            branch_choices = [c + [j] for c in branch_choices
+                              for j in range(len(branches))]
+        K = len(branch_choices)
+        amp = 1.0 / np.sqrt(K)
+        terms: list[tuple[complex, list[np.ndarray]]] = []
+        for choice in branch_choices:
+            leaves = [v.copy() for v in leaf_vectors]
+            for r, j in enumerate(choice):
+                for leaf_idx, vec in per_region_branches[r][j].items():
+                    leaves[leaf_idx] = vec
+            terms.append((complex(amp), leaves))
+        state = MERA.from_term_superposition(terms, chi_layer=chi_layer)
     else:
-        state = MERA.from_product(leaf_vectors, chi_layer=chi_layer)
+        hole_nodes = _hole_nodes(sites_all)
+        if hole_nodes:
+            holes: list[dict] = []
+            for node_idx in hole_nodes:
+                var_ref = sites_all[node_idx].var_ref
+                holes.append({
+                    "hole_bid_leaf": layout.leaf_of(node_idx, "bid"),
+                    "cand_bid_values": [BID_0 + depth
+                                        for _, depth in var_ref.candidates],
+                    "cand_witness_leaves": [
+                        layout.leaf_of(binder_site, "value")
+                        for binder_site, _ in var_ref.candidates],
+                })
+            state = encode_hole_state(leaf_vectors, holes, chi_layer=chi_layer)
+        else:
+            state = MERA.from_product(leaf_vectors, chi_layer=chi_layer)
     state.normalize()
 
     # 5) Meta bookkeeping.
@@ -644,12 +815,16 @@ def _encode_bundle(bundle: Bundle, n_nodes_max: int,
         end = child_offsets[ci + 1] if ci + 1 < len(child_offsets) else n_total
         witness_node_ranges.append(tuple(range(start, end)))
 
+    hole_regions_meta = (
+        hole_regions_out if sketch_is_structural else []
+    )
     meta = MeraEncodingMeta(
         n_nodes=n_total, n_leaves=layout.n_leaves, L=layout.L,
         leaf_dim=MERA_LEAF_DIM,
         species_of_leaf=layout.species_of_leaf,
         node_of_leaf=layout.node_of_leaf,
-        site_to_ast_path={k: sites_all[k].ast_path for k in range(n_total)},
+        site_to_ast_path={k: sites_all[k].ast_path for k in range(n_total)
+                          if sites_all[k].kind != _ENC_KIND_PAD},
         binder_leaves=binder_leaves,
         use_to_binder=use_to_binder,
         nested_type_index=nested_type_index,
@@ -657,5 +832,6 @@ def _encode_bundle(bundle: Bundle, n_nodes_max: int,
         children_of_node=children_of_node,
         n_nodes_max=n_nodes_max,
         witness_node_ranges=witness_node_ranges,
+        hole_regions=hole_regions_meta,
     )
     return state, meta

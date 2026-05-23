@@ -190,6 +190,12 @@ def _witness_augmented_ast(sketch: Node, examples: tuple) -> Node:
     # The witness wraps the sketch in App-applications of the example
     # inputs. To make the witness encodable as a closed term, RefVar is
     # rewritten to a Var bound by the sketch's outermost Lam param.
+    # If there are no examples, there is nothing to bundle — return the
+    # sketch unwrapped so the encoder dispatches on the sketch's own shape
+    # (e.g. structural-hole path) rather than the Bundle path.
+    if len(examples) == 0:
+        return sketch
+
     sketch_param: str | None = None
     if isinstance(sketch, Lam):
         sketch_param = sketch.param
