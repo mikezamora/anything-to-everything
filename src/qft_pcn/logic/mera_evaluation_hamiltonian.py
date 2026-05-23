@@ -190,6 +190,76 @@ class MeraEvalHamiltonian:
                 terms.append(MeraEvalTerm(rule, n, 2))
         return terms
 
+    def _node_leaves(self, node: int):
+        meta = self.meta
+        return [meta.layout.leaf_of(node, sp)
+                for sp in ("kind", "type", "bid", "value", "tobl")]
+
+    def term_affected_leaves(self, term: MeraEvalTerm) -> frozenset:
+        """Conservative footprint of leaves this term may READ or WRITE.
+
+        Per the redex-presence cache used by ``mera_trotter_step``: a term
+        that emitted no gates last step can be skipped this step IF none of
+        its potentially-read/written leaves were touched by another term's
+        gate application. The set returned here over-approximates that
+        footprint (false positives — pessimistic re-checks — are safe; a
+        false negative would silently freeze a redex). Includes:
+          - the node's own 5 leaves,
+          - all child nodes' 5 leaves (operands, body, branches),
+          - for BETA: the entire body subtree's leaves and every
+            recursion-use leaf,
+          - for IF: cond and drop subtrees' leaves and the kept-branch
+            root's leaves,
+          - for FIX: the body and every recursion-use leaf.
+        """
+        cache = getattr(self, "_affected_leaves_cache", None)
+        if cache is None:
+            cache = {}
+            self._affected_leaves_cache = cache
+        key = (term.rule_id, term.node)
+        hit = cache.get(key)
+        if hit is not None:
+            return hit
+        meta = self.meta
+        leaves: set[int] = set()
+        node = term.node
+        leaves.update(self._node_leaves(node))
+        kids = meta.children_of_node.get(node, [])
+        for k in kids:
+            leaves.update(self._node_leaves(k))
+        if term.rule_id == RULE_R_BETA and len(kids) >= 2:
+            fn, arg = kids[0], kids[1]
+            leaves.update(self._node_leaves(fn))
+            leaves.update(self._node_leaves(arg))
+            fn_kids = meta.children_of_node.get(fn, [])
+            if fn_kids:
+                body = fn_kids[0]
+                for sub in self._subtree_nodes(body):
+                    leaves.update(self._node_leaves(sub))
+                fn_bid = meta.layout.leaf_of(fn, "bid")
+                for use_bid, binder_bid in meta.use_to_binder.items():
+                    if binder_bid == fn_bid:
+                        use_node = (use_bid - SPECIES_LEAF_OFFSET["bid"]) \
+                            // LEAVES_PER_NODE
+                        leaves.update(self._node_leaves(use_node))
+        elif term.rule_id == RULE_R_IF and len(kids) >= 3:
+            cond, then_b, else_b = kids
+            for sub in self._subtree_nodes(cond):
+                leaves.update(self._node_leaves(sub))
+            for sub in self._subtree_nodes(then_b):
+                leaves.update(self._node_leaves(sub))
+            for sub in self._subtree_nodes(else_b):
+                leaves.update(self._node_leaves(sub))
+        elif term.rule_id == RULE_R_FIX:
+            if kids:
+                body = kids[0]
+                leaves.update(self._node_leaves(body))
+            for use in self._fix_recursion_uses(node):
+                leaves.update(self._node_leaves(use))
+        result = frozenset(leaves)
+        cache[key] = result
+        return result
+
     def _lambda_for(self, rule):
         if rule == RULE_R_BETA:
             return self.lambda_beta

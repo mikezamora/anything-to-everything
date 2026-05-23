@@ -29,7 +29,8 @@ def _leaf_vectors(state: MERA) -> list[np.ndarray]:
 
 def mera_trotter_step(state: MERA, ham, dt: float,
                       imaginary: bool = True,
-                      chi_layer: int | None = None) -> MERA:
+                      chi_layer: int | None = None,
+                      cache: dict | None = None) -> MERA:
     """One Trotter step: apply each term's factored transition gates to a
     copy of `state`'s leaf vectors, rebuild a consistent product MERA,
     and return it (the input is not mutated).
@@ -38,10 +39,30 @@ def mera_trotter_step(state: MERA, ham, dt: float,
     factored form. Single-leaf gates act on the leaf vectors directly;
     the rebuilt MERA's isometries match the new leaves. chi_layer caps
     the rebuilt tree's layer bond dimension.
+
+    Optional ``cache`` is a mutable dict threaded by the evolution driver
+    across Trotter steps within one anneal phase. It carries:
+      * ``"inactive"``: set[id(term)] of terms whose previous call to
+        ``term_gates`` returned [] (no gates emitted);
+      * ``"changed_leaves"``: frozenset[int] of leaf indices the previous
+        step's gates wrote to.
+    A term in ``inactive`` whose ``term.term_affected_leaves`` is disjoint
+    from ``changed_leaves`` cannot have become active (its read/write
+    footprint did not move) and is skipped — eliminating the per-step
+    argmax + guard scan on the ~352-of-360 P3 terms that stay inactive.
+    A miss (the cache lacks the necessary key, or the Hamiltonian has no
+    ``term_affected_leaves`` accessor) falls back to the live re-check;
+    correctness is unchanged, only wall-clock varies.
     """
     if chi_layer is None:
         chi_layer = state.layer_dims[-1] if state.layer_dims else 16
     vecs = _leaf_vectors(state)
+    if cache is None:
+        cache = {}
+    prev_inactive: set = cache.get("inactive", set())
+    prev_changed: frozenset = cache.get("changed_leaves", frozenset())
+    affected_fn = getattr(ham, "term_affected_leaves", None)
+    new_inactive: set = set()
     # Collect all per-term gates BEFORE mutating leaf vectors, then group
     # by target leaf-tuple. Across a Trotter step many terms target the
     # SAME single leaf (e.g. the diagonal damping and the reduction
@@ -59,7 +80,16 @@ def mera_trotter_step(state: MERA, ham, dt: float,
     pair_combined: dict[tuple[int, int], np.ndarray] = {}
     pair_order: list[tuple[int, int]] = []
     for term in ham.terms:
+        # Redex-presence cache: a term that emitted no gates last step is
+        # skipped IFF none of its read/write footprint leaves changed.
+        if affected_fn is not None and id(term) in prev_inactive:
+            footprint = affected_fn(term)
+            if footprint.isdisjoint(prev_changed):
+                new_inactive.add(id(term))
+                continue
         gates = ham.term_gates(state, term, dt, imaginary)
+        if not gates and affected_fn is not None:
+            new_inactive.add(id(term))
         for leaves, gate in gates:
             if len(leaves) == 1:
                 k = leaves[0]
@@ -105,6 +135,17 @@ def mera_trotter_step(state: MERA, ham, dt: float,
             vecs[k] = vecs[k] / nrm
     out = MERA.from_product(vecs, chi_layer=chi_layer)
     out.normalize()
+    # Record what changed this step so the next step's redex-presence
+    # filter can skip terms whose footprint did not move. Single-leaf
+    # gates touch one leaf each; two-leaf gates touch their ordered pair.
+    changed: set[int] = set()
+    for k in single_order:
+        changed.add(k)
+    for (l0, l1) in pair_order:
+        changed.add(l0)
+        changed.add(l1)
+    cache["inactive"] = new_inactive
+    cache["changed_leaves"] = frozenset(changed)
     return out
 
 
@@ -128,8 +169,13 @@ def mera_imaginary_evolve_state(state: MERA, ham, dt: float, steps: int,
     MERA state. Returns (trajectory, final_state)."""
     cur = state.copy()
     traj = [ham.total_energy(cur)]
+    # Threaded redex-presence cache (see mera_trotter_step docstring). The
+    # cache survives across steps within this one phase; phase boundaries
+    # (warmup -> main -> fine) use a fresh driver call and a fresh cache,
+    # which is correct because the Hamiltonian itself differs.
+    cache: dict = {}
     for _ in range(steps):
         cur = mera_trotter_step(cur, ham, dt, imaginary=True,
-                                chi_layer=chi_layer)
+                                chi_layer=chi_layer, cache=cache)
         traj.append(ham.total_energy(cur))
     return traj, cur

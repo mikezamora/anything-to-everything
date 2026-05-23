@@ -242,6 +242,21 @@ class ComposedMeraSynthesisHamiltonian:
         weight = next(w for h, w in self._weighted if h is owner)
         return owner.term_gates(state, term, dt * weight, imaginary)
 
+    def term_affected_leaves(self, term) -> frozenset:
+        """Conservative footprint of leaves the term's gates may read/write.
+
+        Used by ``mera_trotter_step``'s redex-presence cache to skip terms
+        whose footprint is disjoint from the leaves touched in the previous
+        step. Delegates to the owning sub-Hamiltonian for sub-ham terms,
+        and uses the synth term's own ``leaves`` tuple for synth terms
+        (synth gates only touch the single leaf they pin)."""
+        if id(term) in {id(t) for t in self._extra}:
+            return frozenset(term.leaves)
+        owner = self._owner.get(id(term))
+        if owner is None:
+            raise KeyError(f"term {term!r} not in this Hamiltonian")
+        return owner.term_affected_leaves(term)
+
     def residuals(self, state) -> dict:
         out: dict = {}
         # Synth residuals: keyed by term name.

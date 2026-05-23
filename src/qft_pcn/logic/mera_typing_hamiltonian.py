@@ -159,6 +159,17 @@ class MeraTypingHamiltonian:
             raise MeraTermNotFound(term)
         return []
 
+    def term_affected_leaves(self, term: MeraTypingTerm) -> frozenset:
+        """Typing terms never emit a gate (term_gates returns []), so the
+        evolution-loop redex-presence cache can mark them inactive once and
+        skip every subsequent step regardless of which leaves moved. The
+        empty set means "no leaves can ever activate this term"; any
+        ``changed_leaves & frozenset()`` intersection is empty, so the
+        ``mera_trotter_step`` filter skips typing terms forever after the
+        first inactive observation. The typing energy is still summed in
+        ``total_energy`` (which doesn't go through this cache)."""
+        return frozenset()
+
 
 # ---- Window helper ------------------------------------------------------
 
