@@ -26,7 +26,7 @@ from src.qft_pcn.composition.entanglement_spectrum import (
     ProofTopology,
 )
 from src.qft_pcn.logic.ast import (
-    parse, Lam, Var, HoleVar, TInt, TArrow, Bin, IntLit, If, BoolLit, TBool,
+    parse, Lam, HoleVar, TInt, TArrow,
 )
 from src.qft_pcn.logic.mera_encoder import encode_mera
 

@@ -17,7 +17,7 @@ not classical lookup, so equivalence is read off the bond spectrum.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from typing import Union
 

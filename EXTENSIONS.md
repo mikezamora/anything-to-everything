@@ -6,6 +6,26 @@ than left as a TODO or stub. Each entry names the call site, what is
 needed, the workaround currently in tree, and which acceptance criterion
 it unblocks.
 
+## Missing dependency: §12.11 entanglement-spectrum acceptance corpus needs non-product MERA encoding
+
+- Where: `src/qft_pcn/logic/mera_encoder.py::encode_mera` — concrete closed
+  programs (e.g. `\x:Int. x`) collapse to product MERAs (rank-1 Schmidt
+  spectrum), so all such proofs land in the TRIVIAL Li-Haldane class
+  per §12.11.
+- Need: encoder pass (or post-process) that produces non-trivial bond
+  entanglement for the spec §12.11 acceptance corpus
+  (`reverse(reverse xs) = xs`, `length(xs++ys) = length xs + length ys`).
+  Spec line 1928 names these as the acceptance theorems whose spectra
+  should DIFFER class-wise from the trivial ones.
+- Workaround: `test_entanglement_spectrum.py::test_spectrum_differs_for
+  _distinct_theorems` uses hole-bearing rank-≥2 sketches (`\x:Int. ?[x]`
+  vs `\f. \x. ?[f,x]`) where rank-k superposition produces non-product
+  bonds. Faithful to the §12.11 axiom but does not exercise the literal
+  spec corpus.
+- Unblocks: spec §12.11 line 1928 acceptance harness (corpus
+  classification + clustering convergence). Cross-references the open
+  "List arithmetic in encoder substrate" entry that gates reverse/length.
+
 ## RESOLVED — I-Task-10 blocker #1: `relax_program` driver in M3
 
 - Resolution: `src/qft_pcn/logic/mera_synthesis/runner.py` gains a
