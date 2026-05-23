@@ -274,3 +274,80 @@ it unblocks.
 - Unblocks: §6.1 / §8.6 end-to-end clamp via the orchestrator entry
   point (currently only exercised by the unit tests in
   `test_result_integrator.py`).
+
+## Missing dependency: `decoder.parse_one` rejects `KIND_FORALL` / `KIND_FIX`
+
+- Where: `src/qft_pcn/logic/decoder.py:284-286` — `parse_one` raises
+  `DecodeError("site N: Forall/Fix binder decoding is Part-2 scope")`
+  on any encoded site whose kind is `KIND_FORALL` or `KIND_FIX`.
+- Need: a binder-aware decoder branch that reconstructs `Forall(param,
+  param_ty, body)` / `Fix(param, param_ty, body)` from the encoded
+  bid-leaf + body subtree. This is the "Part-2" extension to the
+  decoder; the encoder side (M1) already populates the binder leaves.
+- Workaround: `composition.lemma_library.register_lemma` wraps
+  `decode_mera` in `try/except` per spec §4.5 totality (commit
+  `3950e69`) and surfaces a `RegistrationResult(False, None,
+  "validation_failed:decode_error:...Forall/Fix binder decoding is
+  Part-2 scope")`. The K-5 result-integrator refuses the clamp on this
+  reason; the orchestrator surfaces a structured `failure_report` with
+  `revision_attempts == MAX_REVISIONS + 1`. No fabricated proof tree
+  is ever produced (pinned by
+  `composition/tests/test_cross_level_acceptance.py::
+  test_orchestrator_refusal_diagnostic_pins_substrate_seam`).
+- Unblocks: K-Task-8 §10.10 acceptance end-to-end through the
+  orchestrator on a Forall-rooted theorem. The substrate-level proof
+  of `forall x:Nat. Eq (add x Zero) x` already passes at the M2
+  reduction layer (`test_cross_level_acceptance::
+  test_substrate_level_inductive_theorem_proves_end_to_end`); the
+  remaining gap is purely the binder-decoding seam between M2 and the
+  K-5 lemma-persistence path.
+
+## Missing dependency: `_meta_to_json` does not handle `set` fields
+
+- Where: `src/qft_pcn/composition/lemma_library.py:322-349`
+  (`_meta_to_json`) — falls through the `dict` / `list` / `tuple`
+  branches to `json.dumps(d)` for any other field type, which raises
+  `TypeError: Object of type set is not JSON serializable` on the
+  I-10-added `MeraEncodingMeta.forall_protected_leaves: set[int]`
+  (`src/qft_pcn/logic/mera_encoder.py:51`).
+- Need: a `set` -> sorted-list conversion (or a freeze-to-tuple) in
+  `_meta_to_json`'s field-walk so every meta is round-trippable to
+  JSON. Symmetric handling in `_meta_from_json` to restore the set
+  shape on load.
+- Workaround: none in-tree. Every call to `LemmaLibrary.save(...)`
+  on a current encoder's meta raises before the lemma is persisted.
+  The K-5 integrator's `register_lemma` call therefore cannot
+  complete on any encoded AST today (Forall-rooted or not); the
+  failure mode for non-Forall ASTs surfaces as a `TypeError`
+  bubbling up to `integrate_child`'s `except Exception` guard, while
+  Forall-rooted ASTs short-circuit on the decoder gap above first.
+- Unblocks: K-Task-8 §10.10 acceptance end-to-end (paired with the
+  decoder Part-2 fix above) AND any K-5 / I-7 integration test that
+  exercises a real `LemmaLibrary` via `encode_mera`. Until this gap
+  closes, the lemma-persistence path is exercised only by tests that
+  construct meta objects by hand without `forall_protected_leaves`,
+  or by tests that mock `_meta_to_json` directly.
+
+## Bridge DSL: no `forall` / `Eq` / `Nat` / `List` surface (K-8 Blocker B)
+
+- Where: `src/qft_pcn/bridge/dsl/schema.py` + the bridge DSL parser
+  extension `52e9387` -- the AST gained `forall`, `Eq`, `Nat`, `add`,
+  `Zero`, `Succ`, `NatLit` keywords, but the bridge DSL surface that
+  `bridge.runtime.run_problem` consumes (the dispatcher's default
+  child runner) has not been extended in parallel. There is no `List`
+  surface anywhere yet.
+- Need: bridge DSL schema entries for the extended-calculus
+  vocabulary (`forall`, `Eq`, `Nat`, `add`, `Zero`, `Succ`, `NatLit`
+  at minimum; `List`/`Cons`/`Nil`/`length`/`reverse` to land the
+  spec's literal §10.10 theorem `forall xs : List A. length (reverse
+  xs) = length xs`).
+- Workaround: K-Task-8 acceptance (`test_cross_level_acceptance.py`)
+  drives child runs via `encode_mera` + `mera_imaginary_evolve_state`
+  directly, bypassing the bridge. This is principled for the
+  inductive-theorem PATH (the substrate proof itself does not go
+  through the bridge), but the spec's literal list-induction example
+  is deferred until the bridge DSL grows the `List` surface.
+- Unblocks: K-Task-8 acceptance on the spec's literal theorem (list
+  induction). The §10.10 inductive-theorem PATH itself is exercised
+  by the in-substrate composite `forall x:Nat. Eq (add x Zero) x`
+  per the K-8 retry directive's Step 2 fallback.
