@@ -14,6 +14,7 @@ from .ast import Node
 from .mera_encoder import MeraEncodingMeta
 from .mera_encoding import MERA_LEAF_DIM, LEAVES_PER_NODE
 from .decoder import parse_kind_stream
+from .encoding import DecodeError
 from src.qft_pcn.qft.mera import MERA
 from src.qft_pcn.qft._backend import contract, to_device, to_host, xp as _xp, GPU_ACTIVE
 
@@ -222,7 +223,15 @@ def sample_mera(state: MERA, meta: MeraEncodingMeta,
                 if len(node_idxs) == LEAVES_PER_NODE:
                     per_node.append(tuple(node_idxs))
                     node_idxs = []
-            ast = parse_kind_stream(per_node, meta.nested_type_index)
+            try:
+                ast = parse_kind_stream(per_node, meta.nested_type_index)
+            except DecodeError:
+                # Un-parseable byte stream — record as a failed sample so
+                # the caller (e.g. synthesis runner) can count it via
+                # n_samples_decoded_ok and treat it as a no-completion
+                # rather than raising. Adversarial sketches (P2 empty-var
+                # holes, P8 unsolvable) routinely produce these.
+                continue
             results.append(DecodeResult(ast=ast, residual_norm=0.0))
         return results
 
@@ -240,6 +249,9 @@ def sample_mera(state: MERA, meta: MeraEncodingMeta,
             if len(node_idxs) == LEAVES_PER_NODE:
                 per_node.append(tuple(node_idxs))
                 node_idxs = []
-        ast = parse_kind_stream(per_node, meta.nested_type_index)
+        try:
+            ast = parse_kind_stream(per_node, meta.nested_type_index)
+        except DecodeError:
+            continue
         results.append(DecodeResult(ast=ast, residual_norm=0.0))
     return results
