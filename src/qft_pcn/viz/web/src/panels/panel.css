@@ -66,3 +66,35 @@
 .viz-panel .katex {
   color: #aab6d2;
 }
+
+.viz-panel__badge {
+  margin-left: 8px;
+  background: #6b3a3a;
+  color: #fce0c0;
+  border-radius: 3px;
+  padding: 0 6px;
+  font-size: 10px;
+  text-decoration: none;
+}
+.viz-panel__toolbar { display: flex; gap: 4px; padding: 4px 8px;
+                      border-bottom: 1px solid #1c2233; background: #0d111a; }
+.panel-toolbar-btn { background: #161b29; color: #c8d0e0;
+                     border: 1px solid #2a3450; border-radius: 4px;
+                     padding: 2px 8px; font-size: 11px; cursor: pointer; }
+.panel-toolbar-btn.active { background: #2b3a6b; }
+.panel-toolbar-btn:disabled { opacity: 0.45; cursor: default; }
+.viz-panel__readouts { display: flex; flex-wrap: wrap; gap: 12px;
+                       padding: 4px 8px; border-top: 1px solid #1c2233;
+                       background: #0d111a; font-size: 11px; }
+.panel-readout { display: flex; flex-direction: column; min-width: 70px; }
+.panel-readout-label { color: #7e8aa3; }
+.panel-readout-value { color: #e0e6f3; font-weight: 600; }
+.panel-readout.highlight { background: #2b3a6b; border-radius: 3px;
+                           padding: 0 4px; transition: background 0.4s; }
+.viz-panel__metrics { padding: 4px 8px; border-top: 1px solid #1c2233;
+                      background: #0a0d14; }
+.metrics-strip.empty { color: #5a6377; font-size: 11px; padding: 12px 4px; }
+.metrics-strip-legend { display: flex; gap: 12px; font-size: 10px;
+                        color: #9aa3bb; }
+.metrics-strip-legend .swatch { display: inline-block; width: 8px;
+                                height: 8px; margin-right: 4px; }
