@@ -78,3 +78,56 @@ def test_dispatch_siblings_sets_node_status_and_result():
     assert nodes[0].result is not None
     # status is left for the integrator to finalize; dispatcher marks ACTIVE->done
     assert nodes[0].status in (Status.ACTIVE, Status.PENDING, Status.SOLVED)
+
+
+def test_dispatch_timeout_is_absolute_across_siblings():
+    """Spec §5.4: the batch timeout is absolute, not per-iteration.
+
+    Two children that each take just under ``timeout_s`` must NOT extend
+    the deadline for a slow sibling -- otherwise a straggler could be
+    tolerated up to ``n_siblings * (timeout_s + 1.0)`` instead of the
+    batch-level ``timeout_s + 1.0``.
+    """
+    timeout_s = 0.5
+
+    def stub_runner(sub_goal, ts):
+        name = sub_goal.dsl_spec["g"]
+        if name == "slow":
+            # Far past timeout_s + 1.0 pad -- must be cut off.
+            time.sleep(timeout_s + 5.0)
+        else:
+            # Just under timeout_s/2; two of these back-to-back would
+            # exceed timeout_s if the deadline reset per iteration.
+            time.sleep(timeout_s * 0.4)
+        return ChildResult(goal_id=sub_goal.goal_id, converged=True,
+                           residual_energy=1e-9, ground_state=object(),
+                           solved_ast="ast", run_diagnostic={}, error=None)
+
+    nodes = [
+        Node(goal=_sub("fast1"), status=Status.PENDING),
+        Node(goal=_sub("fast2"), status=Status.PENDING),
+        Node(goal=_sub("slow"),  status=Status.PENDING),
+    ]
+    # Serialize fast1 and fast2 onto a single worker so they complete
+    # sequentially -- this is what would reset a per-iteration deadline.
+    backend = ThreadPoolBackend(max_workers=2)
+    t0 = time.monotonic()
+    results = dispatch_siblings(nodes, backend, runner=stub_runner,
+                                 timeout_s=timeout_s)
+    elapsed = time.monotonic() - t0
+    backend.shutdown()
+
+    # Absolute batch deadline: must be at most (timeout_s + 1.0) + small slack,
+    # NOT 3 * (timeout_s + 1.0). Generous slack for CI scheduling jitter.
+    assert elapsed < timeout_s + 1.0 + 0.4, (
+        f"batch wall-clock {elapsed:.3f}s exceeds absolute deadline "
+        f"{timeout_s + 1.0:.3f}s -- per-iteration reset regression?"
+    )
+
+    by_id = {r.goal_id: r for r in results}
+    slow = by_id[nodes[2].goal.goal_id]
+    assert slow.converged is False
+    assert slow.error == "timeout"
+    assert math.isinf(slow.residual_energy)
+    assert by_id[nodes[0].goal.goal_id].converged is True
+    assert by_id[nodes[1].goal.goal_id].converged is True

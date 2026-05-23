@@ -11,6 +11,7 @@ import math
 import typing
 from concurrent.futures import ThreadPoolExecutor, FIRST_COMPLETED, wait
 from dataclasses import dataclass
+from time import monotonic
 
 from .goal_graph import Node, Status, SubGoal
 
@@ -34,6 +35,15 @@ def run_child(sub_goal: SubGoal, *, chi_max: int = DEFAULT_CHI_MAX,
 
     Consumes bridge.dsl.pipeline.compile_dsl + bridge.runtime evolution;
     adapts RunResult into ChildResult. Never re-implements the runner.
+
+    NOTE on ``timeout_s``: this parameter is *informational only* in the
+    shipped runner. ``run_evolution`` is a synchronous, uninterruptible
+    call from outside its thread, so the dispatcher's outer ``wait`` is
+    what actually bounds the batch. A straggler's pool thread can leak
+    until ``run_evolution`` returns of its own accord; the dispatcher
+    will still surface a timeout ``ChildResult`` to its siblings on
+    schedule. A future runner is free to honour ``timeout_s`` directly
+    (e.g. by passing an iteration budget to ``run_evolution``).
     """
     from src.qft_pcn.bridge.dsl.pipeline import compile_dsl
     from src.qft_pcn.bridge.runtime.evolution import run as run_evolution  # G entry
@@ -99,9 +109,14 @@ def dispatch_siblings(nodes: list[Node], backend: DispatchBackend, *,
 
     results: list[ChildResult] = []
     pending = set(futures)
-    deadline_pad = timeout_s + 1.0
+    # Spec §5.4: the batch deadline is *absolute*, not per-iteration. If we
+    # passed ``timeout_s + 1.0`` to each ``wait`` call, every completed child
+    # would reset the window and a straggler could be tolerated up to
+    # ``n_siblings * (timeout_s + 1.0)``. We anchor the deadline once.
+    deadline = monotonic() + timeout_s + 1.0
     while pending:
-        done, pending = wait(pending, timeout=deadline_pad,
+        done, pending = wait(pending,
+                              timeout=max(0.0, deadline - monotonic()),
                               return_when=FIRST_COMPLETED)
         if not done:                       # nothing finished within the pad
             for fut in list(pending):
