@@ -45,8 +45,9 @@ export const SECTIONS: SectionSpec[] = [
       'Each hierarchical layer compares its downward prediction to the layer below; errors propagate up, predictions propagate down. The variational free energy F = ½ Π E² − ½ log Π + κ R minimizes jointly with respect to beliefs, precisions, and the metric.',
       'Multi-field setups let several field types share one manifold, coupled via learnable Yukawa-style couplings g_ij — correlated fields grow their coupling; uncorrelated fields don\'t.',
     ],
-    layers: ['pcn-fields', 'pcn-dynamics', 'multifield'],
+    layers: ['manifold', 'pcn-fields', 'pcn-dynamics', 'multifield'],
     layerSummaries: [
+      { layer: 'manifold', oneLine: 'Dynamic 2D Riemannian manifold — metric sourced by prediction error; the geometric substrate per §2.1.' },
       { layer: 'pcn-fields', oneLine: 'Φ / E / Π surfaces stacked across the full layer hierarchy.' },
       { layer: 'pcn-dynamics', oneLine: 'Free energy F, per-layer trajectories, learning rates.' },
       { layer: 'multifield', oneLine: 'Multiple field species coupled via learnable g_ij.' },
@@ -62,11 +63,10 @@ export const SECTIONS: SectionSpec[] = [
       'Stress-energy expectations from the QFT side feed back into the classical 2D manifold so geometry and quantum content are bidirectionally coupled — that\'s the load-bearing structural claim of the architecture.',
       'The Logic panel demonstrates the same machinery applied to symbolic reasoning: rule terms encoded as Hamiltonian costs whose ground state corresponds to a well-typed / fully-reduced program.',
     ],
-    layers: ['pcn-coupling', 'qpcn', 'manifold', 'mera_relax', 'bridge', 'logic'],
+    layers: ['pcn-coupling', 'qpcn', 'mera_relax', 'bridge', 'logic'],
     layerSummaries: [
       { layer: 'pcn-coupling', oneLine: 'The bidirectional bridge — stress-energy ↑, expectations ↓.' },
       { layer: 'qpcn', oneLine: 'Belief = MPS; generative model = H; errors drive parameter updates.' },
-      { layer: 'manifold', oneLine: '2D Riemannian manifold whose metric is sourced by prediction error.' },
       { layer: 'mera_relax', oneLine: 'MERA fusion demo — ∀-protected leaves frozen during relaxation (§10.10).' },
       { layer: 'bridge', oneLine: 'Bridge runtime — fuses PCN-emitted RunSpecs into QPCN-executable substrates (§10.5).' },
       { layer: 'logic', oneLine: 'Symbolic-reasoning Hamiltonian — relaxation = reduction.' },
