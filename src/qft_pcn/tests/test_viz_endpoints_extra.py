@@ -41,3 +41,23 @@ def test_pause_resume_step_404_when_not_streaming(client):
     for verb in ("pause", "resume", "step"):
         res = client.post(f"/runs/nonexistent/{verb}")
         assert res.status_code == 404
+
+
+def test_jsonl_export_streams_one_object_per_frame(client):
+    run = client.post("/run", json={"layers": ["manifold"], "steps": 3,
+                                     "grid": 8}).json()
+    run_id = run["run_id"]
+    res = client.get(f"/export/run/{run_id}")
+    assert res.status_code == 200
+    assert res.headers["content-type"].startswith("application/x-ndjson")
+    lines = [ln for ln in res.text.splitlines() if ln.strip()]
+    assert len(lines) == 3
+    for line in lines:
+        obj = json.loads(line)
+        assert "step" in obj
+        assert "layer_states" in obj
+
+
+def test_jsonl_export_404_for_unknown_run(client):
+    res = client.get("/export/run/nope")
+    assert res.status_code == 404

@@ -20,7 +20,7 @@ from pathlib import Path
 from fastapi import (BackgroundTasks, FastAPI, HTTPException, WebSocket,
                       WebSocketDisconnect)
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 
 from .controller import RunController
 from .presets import PARAM_SCHEMA, PRESETS
@@ -191,6 +191,29 @@ def start_export(req: dict, background: BackgroundTasks):
         _export_jobs.pop(next(iter(_export_jobs)))
     background.add_task(_run_export, job_id, spec, layer)
     return job
+
+
+@app.get("/export/run/{run_id}")
+def export_jsonl(run_id: str):
+    """Stream the recorded frames of a run as newline-delimited JSON.
+
+    Re-runs `run_simulation` deterministically (the existing /export pattern)
+    so the dump matches what a fresh WS connection would have seen.
+    """
+    spec = _registry.get(run_id)
+    if spec is None:
+        raise HTTPException(status_code=404, detail="run not found")
+
+    def stream_lines():
+        for frame in run_simulation(spec):
+            yield frame.to_json() + "\n"
+
+    return StreamingResponse(
+        stream_lines(),
+        media_type="application/x-ndjson",
+        headers={"Content-Disposition":
+                 f'attachment; filename="run-{run_id}.jsonl"'},
+    )
 
 
 @app.get("/export/{job_id}")
