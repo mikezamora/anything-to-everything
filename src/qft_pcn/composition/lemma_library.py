@@ -309,7 +309,19 @@ _META_INT_KEY_DICTS = (
 
 
 def _jsonable(v):
-    """Recursively coerce tuples to lists for JSON; pass through scalars."""
+    """Recursively coerce tuples / sets to lists for JSON; pass through scalars.
+
+    Sets serialize as sorted lists (deterministic round-trip); tuples become
+    lists; dicts have str-keyed values recursed. The set branch must precede
+    any iterable handling because Python's `set` is iterable but unordered --
+    sorting keeps the on-disk form stable across processes.
+    """
+    if isinstance(v, set):
+        try:
+            items = sorted(v)
+        except TypeError:
+            items = sorted(v, key=repr)
+        return [_jsonable(x) for x in items]
     if isinstance(v, tuple):
         return [_jsonable(x) for x in v]
     if isinstance(v, list):
@@ -317,6 +329,11 @@ def _jsonable(v):
     if isinstance(v, dict):
         return {str(k): _jsonable(val) for k, val in v.items()}
     return v
+
+
+# MeraEncodingMeta fields that the serializer stores as JSON lists but must
+# be restored to ``set`` on load (Gap D fix). Add new set-typed fields here.
+_META_SET_FIELDS = ("forall_protected_leaves",)
 
 
 def _meta_to_json(meta: MeraEncodingMeta) -> str:
@@ -342,7 +359,7 @@ def _meta_to_json(meta: MeraEncodingMeta) -> str:
             d[f.name] = safe
         elif isinstance(v, dict):
             d[f.name] = {str(k): _jsonable(val) for k, val in v.items()}
-        elif isinstance(v, (list, tuple)):
+        elif isinstance(v, (list, tuple, set)):
             d[f.name] = _jsonable(v)
         else:
             d[f.name] = v
@@ -370,6 +387,14 @@ def _meta_from_json(s: str) -> MeraEncodingMeta:
             tuple(x) if isinstance(x, list) else x
             for x in d["witness_node_ranges"]
         ]
+    # Restore set-typed fields (Gap D): JSON only carries lists, so the
+    # serializer wrote sorted lists -- coerce them back to sets of ints
+    # so callers that depend on ``in``-test / set-algebra semantics
+    # (e.g. evolution drivers consulting forall_protected_leaves) see the
+    # exact type the encoder produced.
+    for key in _META_SET_FIELDS:
+        if key in d and isinstance(d[key], list):
+            d[key] = set(int(x) for x in d[key])
     # layout is reconstructible by consumers from species/node info; set None.
     d["layout"] = None
     return MeraEncodingMeta(**d)

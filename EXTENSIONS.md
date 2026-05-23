@@ -301,7 +301,7 @@ it unblocks.
   Gap D as the surfacing reason; once Gap D lands the orchestrator
   path can persist Forall-rooted proofs end-to-end.
 
-## Missing dependency: `_meta_to_json` does not handle `set` fields
+## Missing dependency: `_meta_to_json` does not handle `set` fields — **RESOLVED**
 
 - Where: `src/qft_pcn/composition/lemma_library.py:322-349`
   (`_meta_to_json`) — falls through the `dict` / `list` / `tuple`
@@ -313,19 +313,18 @@ it unblocks.
   `_meta_to_json`'s field-walk so every meta is round-trippable to
   JSON. Symmetric handling in `_meta_from_json` to restore the set
   shape on load.
-- Workaround: none in-tree. Every call to `LemmaLibrary.save(...)`
-  on a current encoder's meta raises before the lemma is persisted.
-  The K-5 integrator's `register_lemma` call therefore cannot
-  complete on any encoded AST today (Forall-rooted or not); the
-  failure mode for non-Forall ASTs surfaces as a `TypeError`
-  bubbling up to `integrate_child`'s `except Exception` guard, while
-  Forall-rooted ASTs short-circuit on the decoder gap above first.
-- Unblocks: K-Task-8 §10.10 acceptance end-to-end (paired with the
-  decoder Part-2 fix above) AND any K-5 / I-7 integration test that
-  exercises a real `LemmaLibrary` via `encode_mera`. Until this gap
-  closes, the lemma-persistence path is exercised only by tests that
-  construct meta objects by hand without `forall_protected_leaves`,
-  or by tests that mock `_meta_to_json` directly.
+- Resolution: `_jsonable` now coerces `set` -> sorted list as a
+  uniform branch (generic dispatch, not a one-off), `_meta_to_json`
+  treats `set` as an iterable field type, and `_meta_from_json`
+  consults a `_META_SET_FIELDS` registry (today:
+  `forall_protected_leaves`) to restore each list back to `set[int]`
+  on load. Round-trip equality is asserted AS A SET in
+  `composition/tests/test_lemma_library_meta_json.py`. The K-8
+  cross-level pinning suite (`test_cross_level_acceptance.py`) still
+  passes because its diagnostic accepted Gap C OR Gap D as the
+  surfacing reason; with Gap D resolved the orchestrator-blocked
+  diagnostic now isolates to Gap C alone (handled separately).
+  Commit: (this commit).
 
 ## Bridge DSL: no `forall` / `Eq` / `Nat` / `List` surface (K-8 Blocker B)
 
