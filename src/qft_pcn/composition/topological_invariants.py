@@ -1,21 +1,32 @@
-"""§12.2 Topological invariants for exact program equivalence.
+"""§12.2 Wilson-loop fingerprint for program equivalence (partial).
 
 Per the spec, two programs are alpha-beta-eta equivalent iff their string
-diagrams are topologically equivalent, and that topological equivalence is
-*witnessed* by observable expectation values on the tensor network
-encoding — Wilson loops along closed paths through the bond entanglement
-and the Jones polynomial of the binding diagram.
+diagrams are topologically equivalent. The spec's witness is the *Jones
+polynomial* of the binding diagram — a Laurent polynomial in ``t**(1/4)``
+obtained by extracting the braid word from the closed loops of the
+binding diagram, evaluating the Kauffman bracket recursion
+``<L> = A<L_0> + A^{-1}<L_oo>``, and writhe-normalizing.
 
-This module computes those invariants directly from MPS/MERA states (the
-output of ``encode_mera``). The invariants are operator-algebraic
+This module ships only the **Wilson-loop fingerprint** half of that
+program. We compute Wilson-loop expectation values directly from MPS/MERA
+states (the output of ``encode_mera``); these are operator-algebraic
 quantities (§1.1 architecture-soul) — never AST hashes, never variable
 names, never structural fingerprints. Alpha-equivalence invariance is
 inherited from the substrate: bound-variable rename is a no-op on bond
 entanglement, so every Wilson-loop expectation is bitwise identical.
 
-Computational cost per Wilson loop: ``O(N · chi^3)`` on MPS, dominated by
-expectation contractions; same for MERA via causal-cone ascent. Far
-cheaper than symbolic equivalence checking.
+What this module is **not**: it is not the §12.2 Jones polynomial. The
+Wilson-loop signature is a **necessary** but not **sufficient**
+fingerprint — two structurally distinct programs that happen to share
+all Wilson loops would collide. The real Kauffman-bracket evaluation
+(braid-word extraction, recursive bracket, writhe normalization) is
+tracked in ``EXTENSIONS.md`` under "Real Jones polynomial /
+Kauffman-bracket evaluation". Per ``memory/no-placeholders.md`` we do
+not dress the Wilson signature up as a polynomial; we ship the honest
+fingerprint and log the deferred dependency.
+
+Computational cost per Wilson loop: ``O(N * chi^3)`` on MPS, dominated
+by expectation contractions; same for MERA via causal-cone ascent.
 """
 
 from __future__ import annotations
@@ -30,7 +41,7 @@ from src.qft_pcn.qft.mps import MPS
 
 State = Union[MERA, MPS]
 
-# Numerical tolerance for comparing two topological signatures. Wilson-loop
+# Numerical tolerance for comparing two Wilson-loop signatures. Wilson-loop
 # expectations live in [-1, 1] (Pauli-like observables); 1e-9 separates
 # alpha-equivalent programs (bitwise identical bond entanglement) from
 # distinct programs (different entanglement, hence different expectation
@@ -53,9 +64,7 @@ def _pauli_x(d: int) -> np.ndarray:
 
     X|k> = |(k+1) mod d>. Unitary and Hermitian only for d=2; for general d
     it is unitary, and its expectation value is a well-defined complex
-    Wilson-loop observable. We take its real part for the signature so the
-    invariant is a real number (matching the TQFT convention where Wilson
-    loops on real manifolds yield real invariants).
+    Wilson-loop observable.
     """
     X = np.zeros((d, d), dtype=complex)
     for k in range(d):
@@ -138,134 +147,82 @@ def compute_wilson_loops(state: State) -> dict[str, complex]:
     return loops
 
 
-# ---- §12.2 Jones polynomial ------------------------------------------------
+# ---- §12.2 Wilson-loop signature -------------------------------------------
 
 
 @dataclass(frozen=True)
-class Polynomial:
-    """A polynomial in a formal variable ``t`` with complex coefficients.
+class LoopSignature:
+    """Canonical Wilson-loop fingerprint of a program state.
 
-    Stored as ``coeffs[k]`` = coefficient of ``t**k``. Equality on
-    polynomials is term-wise to ``_SIGNATURE_TOL``; this is the
-    operator-algebraic equality the Jones-polynomial-as-invariant requires
-    (small floating-point noise from MERA contractions must not split
-    alpha-equivalent programs).
+    Stores all Wilson loops as a tuple of ``(loop_name, complex_value)``
+    pairs in **lexicographic key order** (no sort-by-magnitude — if bond
+    entanglement is faithful per §1.1, alpha-rename leaves the unsorted
+    vector bitwise identical, so no "symmetrization" is needed).
+
+    This is **not** the §12.2 Jones polynomial. It is a necessary but
+    not sufficient fingerprint; see module docstring and ``EXTENSIONS.md``
+    entry "Real Jones polynomial / Kauffman-bracket evaluation".
     """
-    coeffs: tuple[complex, ...]
+    loops: tuple[tuple[str, complex], ...]
 
-    def __call__(self, t: complex) -> complex:
-        v = 0.0 + 0.0j
-        for k, c in enumerate(self.coeffs):
-            v += c * (t ** k)
-        return v
-
-    def degree(self) -> int:
-        return len(self.coeffs) - 1
-
-    def approx_equal(self, other: "Polynomial",
+    def approx_equal(self, other: "LoopSignature",
                      tol: float = _SIGNATURE_TOL) -> bool:
-        a, b = self.coeffs, other.coeffs
-        n = max(len(a), len(b))
-        for k in range(n):
-            ak = a[k] if k < len(a) else 0.0 + 0.0j
-            bk = b[k] if k < len(b) else 0.0 + 0.0j
-            if abs(ak - bk) > tol:
+        if len(self.loops) != len(other.loops):
+            return False
+        for (k1, v1), (k2, v2) in zip(self.loops, other.loops):
+            if k1 != k2:
+                return False
+            if abs(v1 - v2) > tol:
                 return False
         return True
 
 
-def compute_jones_polynomial(state: State) -> Polynomial:
-    """Jones polynomial of the binding diagram of a program state.
+def compute_wilson_loop_signature(state: State) -> LoopSignature:
+    """Canonical Wilson-loop fingerprint of a program state.
 
-    Construction. The MPS/MERA spine carries a natural braid structure:
-    leaf ``i`` is a strand, and the bond entanglement between leaves
-    ``i, i+1`` is the over/under crossing data of a braid generator
-    ``sigma_i``. The Kauffman-bracket / Jones-polynomial recipe replaces
-    each crossing by a Laurent polynomial in the loop variable ``t``
-    whose coefficients are determined by the crossing's expectation
-    values.
+    Construction. Compute every Wilson loop via ``compute_wilson_loops``
+    and pack into a frozen, lex-sorted tuple. **No** magnitude-sort: the
+    spec's §1.1 binding-as-entanglement principle guarantees that
+    alpha-equivalent programs encode to bitwise-identical bond
+    entanglement, so the raw unsorted loop dict already agrees pointwise.
+    If a test fails without sort-by-magnitude, that exposes a substrate
+    bug worth surfacing — not a reason to launder it through a sort.
 
-    For our 1-D substrate the operator-algebraic Jones polynomial reduces
-    to::
-
-        V(t) = sum_{i=0}^{N-1} c_i · t**i
-
-    where ``c_0 = <psi|psi>/<psi|psi> = 1`` (the unknot normalization)
-    and ``c_i`` for ``i >= 1`` is the i-th Wilson-loop expectation in a
-    canonical ordering: leaf-Z loops first (sorted by magnitude), then
-    bond ZZ loops (sorted), then leaf-X loops, then bond XX loops. The
-    sort-by-magnitude step is what makes the polynomial invariant under
-    the leaf-permutation induced by alpha-rename — equivalent strands of
-    the braid are interchangeable, exactly as Reidemeister-2 demands.
-
-    The polynomial is a topological invariant because:
-      1. Every coefficient is an operator expectation on the *physical*
-         state, not a property of the AST. Alpha-equivalent programs
-         encode to bitwise-identical MERAs (the encoder canonicalizes
-         binders by de-Bruijn-like substitution), so the unsorted loop
-         vectors already agree; the sort is a defensive symmetrization.
-      2. Distinct programs have distinct entanglement structures and
-         therefore distinct loop expectations and distinct polynomials.
-
-    The full Kauffman-bracket recursion for higher-genus diagrams is left
-    to a future Reshetikhin-Turaev extension (§12.2 risk table).
+    The signature is a necessary but not sufficient invariant for §12.2
+    program equivalence. Two programs whose Wilson loops disagree are
+    definitely inequivalent; two programs whose Wilson loops agree are
+    *probably* equivalent but the real Jones polynomial (Kauffman-bracket
+    on the braid word from the binding diagram) is required to certify
+    equivalence on beta/eta-equivalent pairs. See ``EXTENSIONS.md``.
     """
     loops = compute_wilson_loops(state)
-    # Group keys by family and sort by |value| (descending) so the
-    # polynomial is invariant under leaf-permutations that preserve
-    # entanglement.
-    z_vals = sorted(
-        (v for k, v in loops.items() if k.startswith("Z[")),
-        key=lambda c: -abs(c),
-    )
-    zz_vals = sorted(
-        (v for k, v in loops.items() if k.startswith("ZZ[")),
-        key=lambda c: -abs(c),
-    )
-    x_vals = sorted(
-        (v for k, v in loops.items() if k.startswith("X[")),
-        key=lambda c: -abs(c),
-    )
-    xx_vals = sorted(
-        (v for k, v in loops.items() if k.startswith("XX[")),
-        key=lambda c: -abs(c),
-    )
-    coeffs: list[complex] = [1.0 + 0.0j]          # unknot normalization
-    coeffs.extend(z_vals)
-    coeffs.extend(zz_vals)
-    coeffs.extend(x_vals)
-    coeffs.extend(xx_vals)
-    # Snap real/imag parts to a tolerance grid so floating-point churn
-    # below _SIGNATURE_TOL does not split equivalent programs.
-    return Polynomial(coeffs=tuple(complex(c) for c in coeffs))
+    items = tuple(sorted(loops.items()))  # lex order on keys, not magnitudes
+    return LoopSignature(loops=items)
 
 
-# ---- §12.2 program-equivalence oracle --------------------------------------
+# ---- §12.2 program-equivalence oracle (partial) ----------------------------
 
 
 @dataclass(frozen=True)
 class TopologicalSignature:
-    """The full topological signature of a program: Wilson loops + Jones.
+    """Wilson-loop fingerprint of a program state, with shape metadata.
 
-    Two programs with matching signatures (within ``_SIGNATURE_TOL``) are
-    declared equivalent per §12.2. The signature is a complete invariant
-    for linear-typed STLC programs (modulo Reidemeister-3); for richer
-    type systems it is a strong necessary condition.
+    Two programs with matching signatures (within ``_SIGNATURE_TOL``) share
+    the Wilson-loop half of the §12.2 invariant. This is **necessary** but
+    not **sufficient** for program equivalence — the real Jones polynomial
+    (deferred per ``EXTENSIONS.md``) is needed to certify beta/eta-equivalent
+    pairs.
     """
     n_leaves: int
     d_local: int
-    wilson: tuple[tuple[str, complex], ...]
-    jones: Polynomial
+    signature: LoopSignature
 
     @staticmethod
     def of(state: State) -> "TopologicalSignature":
-        loops = compute_wilson_loops(state)
-        items = tuple(sorted(loops.items()))
         return TopologicalSignature(
             n_leaves=_state_N(state),
             d_local=_state_d(state),
-            wilson=items,
-            jones=compute_jones_polynomial(state),
+            signature=compute_wilson_loop_signature(state),
         )
 
     def matches(self, other: "TopologicalSignature",
@@ -274,24 +231,20 @@ class TopologicalSignature:
             return False
         if self.d_local != other.d_local:
             return False
-        if len(self.wilson) != len(other.wilson):
-            return False
-        # Same keys in same order (we sorted in .of()); compare by value.
-        for (k1, v1), (k2, v2) in zip(self.wilson, other.wilson):
-            if k1 != k2:
-                return False
-            if abs(v1 - v2) > tol:
-                return False
-        return self.jones.approx_equal(other.jones, tol=tol)
+        return self.signature.approx_equal(other.signature, tol=tol)
 
 
 def programs_equivalent(p1_state: State, p2_state: State,
                         tol: float = _SIGNATURE_TOL) -> bool:
-    """Decide program equivalence by topological-signature match (§12.2).
+    """Decide Wilson-loop-fingerprint match for two program states (§12.2 partial).
 
-    Returns True iff the two states' Wilson-loop expectations and Jones
-    polynomials agree within ``tol``. This is the §12.2 oracle: a
-    measurement on the MPS/MERA, not a symbolic reduction or AST walk.
+    Returns True iff the two states' Wilson-loop expectations agree within
+    ``tol``. This is a **necessary** condition for §12.2 program
+    equivalence; the **sufficient** condition (real Jones polynomial via
+    Kauffman-bracket evaluation) is deferred per ``EXTENSIONS.md``.
+
+    A True return does not certify equivalence; a False return does
+    certify inequivalence.
     """
     s1 = TopologicalSignature.of(p1_state)
     s2 = TopologicalSignature.of(p2_state)
