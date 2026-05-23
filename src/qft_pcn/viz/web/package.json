@@ -10,10 +10,14 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@monaco-editor/react": "^4.7.0",
     "@react-three/drei": "^9.114.0",
     "@react-three/fiber": "^8.17.10",
+    "ajv": "^8.20.0",
+    "ajv-formats": "^3.0.1",
     "d3": "^7.9.0",
     "katex": "^0.16.11",
+    "monaco-editor": "^0.55.1",
     "plotly.js-dist-min": "^2.35.2",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
