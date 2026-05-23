@@ -58,12 +58,11 @@ def fingerprint_of(rho: np.ndarray, ast_size: int,
 
 
 def _node_aligned_intervals(meta) -> list[tuple[int, int, int]]:
-    """Yield (leaf0, leaf_hi, ast_size) for every MERA-tree block whose AST
-    size lies in [S_MIN, S_MAX]. A block is a width-2^d leaf interval aligned
-    to a 2^d boundary (a sub-MERA-tree); ast_size counts only AST nodes that
-    the block FULLY contains (every leaf of the node lies inside [lo,hi)).
-    Partial-node leaves and PAD leaves are tolerated at the block edges — the
-    boundary bond's reduced density is still well-defined regardless.
+    """Yield (leaf0, leaf_hi, ast_size) for every node-aligned MERA-tree block
+    whose AST size lies in [S_MIN, S_MAX]. A block is a width-2^d leaf interval
+    aligned to a 2^d boundary; a block is mined only if it splits no AST node
+    (spec §4.4; plan lines 505-532). A split node would yield a boundary RDM
+    of a leaf interval rather than of a sub-MERA-tree (architecture §10.9).
     """
     n_leaves = meta.n_leaves
     nol = meta.node_of_leaf
@@ -82,10 +81,14 @@ def _node_aligned_intervals(meta) -> list[tuple[int, int, int]]:
             hi = lo + w
             touched = {nol[i] for i in range(lo, hi)}
             touched.discard(-1)
-            full = [nd for nd in touched
-                    if leaves_of[nd] and leaves_of[nd][0] >= lo
-                    and leaves_of[nd][-1] < hi]
-            s = len(full)
+            # node-aligned: every leaf of each touched node lies inside [lo,hi)
+            split = any(
+                leaves_of[nd][0] < lo or leaves_of[nd][-1] >= hi
+                for nd in touched
+            )
+            if split:
+                continue
+            s = len(touched)
             if S_MIN <= s <= S_MAX:
                 out.append((lo, hi, s))
         d += 1

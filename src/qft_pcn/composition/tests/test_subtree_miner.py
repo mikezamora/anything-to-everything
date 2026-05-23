@@ -20,20 +20,30 @@ def _encode(src: str):
 
 
 def test_mine_returns_node_aligned_subtrees_in_size_band():
-    state, meta = _encode(r"(\x:Int. (\y:Int. x + y)(3))(4)")
+    # 6-AST-node program: App + Lam + Bin + Var + IntLit + IntLit.
+    # Yields at least one in-band candidate under the strict no-split rule.
+    state, meta = _encode(r"(\x:Int. x + 1)(2)")
     cands = mine_subtrees(state, meta, source_id="p1")
     assert cands, "expected at least one mined subtree"
+    n_leaves = meta.n_leaves
     for c in cands:
         assert S_MIN <= c.ast_size <= S_MAX
         lo, hi = c.leaf_interval
-        # node-aligned: interval width covers whole AST nodes (5 leaves each)
-        assert (hi - lo) % 5 == 0 or _covers_pad(meta, lo, hi)
-
-
-def _covers_pad(meta, lo, hi):
-    # node-aligned check tolerant of PAD leaves at the interval edge
-    return all(meta.node_of_leaf[i] == -1
-               for i in range(lo, hi) if meta.node_of_leaf[i] == -1)
+        # Strict spec invariant: candidate window splits no AST node.
+        touched: set[int] = set()
+        for leaf in range(lo, hi):
+            nd = meta.node_of_leaf[leaf]
+            if nd >= 0:
+                touched.add(nd)
+        for nd in touched:
+            node_leaves = [i for i in range(n_leaves)
+                           if meta.node_of_leaf[i] == nd]
+            assert min(node_leaves) >= lo and max(node_leaves) < hi, (
+                f"candidate {lo}:{hi} splits AST node {nd} "
+                f"with leaves {node_leaves}"
+            )
+        # ast_size equals count of (fully-contained) touched nodes
+        assert c.ast_size == len(touched)
 
 
 def test_mined_densities_are_valid():
@@ -72,9 +82,9 @@ def test_bucket_groups_identical_fingerprints():
 
 
 def test_mine_rejects_invalid_mera():
-    # Use a program guaranteed to yield in-band candidates so the validator
-    # actually runs on a reduced density (cf. test_mine_returns_...).
-    state, meta = _encode(r"(\x:Int. (\y:Int. x + y)(3))(4)")
+    # Use a program guaranteed to yield in-band candidates under the strict
+    # no-split rule so the validator actually runs on a reduced density.
+    state, meta = _encode(r"(\x:Int. x + 1)(2)")
     # `_layer_density` is built from `self.leaves`; scale a leaf in place so
     # the layer-0 reduced density is no longer unit-trace. (`mera.py` exposes
     # no public layer mutator; the plan permits substituting an un-normalized
