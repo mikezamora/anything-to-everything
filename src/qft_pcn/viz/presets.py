@@ -151,6 +151,16 @@ PRESETS: list[Preset] = [
         spec_overrides={"steps": 10, "seed": 0,
                         "params": {"qpcn": {"species": ["A", "B"]}}},
     ),
+    # ---- logic ------------------------------------------------------------
+    Preset(
+        id="logic.beta-reduce",
+        layer="logic",
+        label="β-reduce — superposition relaxation",
+        description="Imaginary-time relaxation of a logic-encoded MPS under "
+                    "EvalHamiltonian; watch per-term residuals decay.",
+        spec_overrides={"steps": 30, "seed": 0,
+                        "params": {"logic": {"N": 6, "chi_max": 8}}},
+    ),
     # ---- mera -------------------------------------------------------------
     Preset(
         id="mera.vacuum-small",
@@ -225,6 +235,17 @@ PARAM_SCHEMA: dict[str, dict] = {
             "chi_layer": {"type": "integer", "default": 4,
                           "minimum": 2, "maximum": 16,
                           "description": "Per-layer bond dimension."},
+        },
+    },
+    "logic": {
+        "type": "object",
+        "properties": {
+            "N": {"type": "integer", "default": 6,
+                  "minimum": 2, "maximum": 16,
+                  "description": "Number of MPS sites for the logic chain."},
+            "chi_max": {"type": "integer", "default": 8,
+                        "minimum": 1, "maximum": 16,
+                        "description": "MPS bond-dimension cap for relaxation."},
         },
     },
 }

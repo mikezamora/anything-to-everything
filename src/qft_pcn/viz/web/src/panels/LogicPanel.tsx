@@ -32,6 +32,8 @@ interface LogicState {
   lambda_beta?: number | null;
   lambda_arith?: number | null;
   lambda_if?: number | null;
+  residuals?: number[] | null;
+  total_energy?: number | null;
 }
 
 // Stable colour per rule family, so the same rule reads the same everywhere.
@@ -236,6 +238,7 @@ export function LogicPanel({
   const st = (frame.layer_states.logic ?? {}) as LogicState;
   const hasData = (st.n_sites ?? 0) > 0;
   const nTerms = st.terms?.length ?? 0;
+  const energy = st.total_energy;
 
   return (
     <PanelShell
@@ -245,13 +248,15 @@ export function LogicPanel({
         hasData
           ? `${st.n_sites} sites · ${
               nTerms > 0 ? nTerms : st.term_count ?? 0
-            } terms`
+            } terms${
+              energy != null && Number.isFinite(energy)
+                ? ` · ⟨H⟩ = ${energy.toExponential(2)}`
+                : ''
+            }`
           : undefined
       }
       hasData={hasData}
-      isExtension={!hasData}
-      extensionAnchor="#logic-live-relaxation-panel"
-      emptyMessage="logic is currently fixture-only — see EXTENSIONS.md."
+      emptyMessage="No logic substrate active — start a run with the 'logic' layer."
     >
       {hasData && <LogicDiagram st={st} />}
     </PanelShell>

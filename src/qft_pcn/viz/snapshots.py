@@ -282,7 +282,7 @@ def snapshot_vqc(vqc: Any) -> dict:
 
 # ---- logic encoder -----------------------------------------------------------
 
-def snapshot_logic(enc: Any) -> dict:
+def snapshot_logic(enc: Any, state: Any = None) -> dict:
     """Snapshot a logic Hamiltonian (e.g. `EvalHamiltonian`).
 
     These classes expose the site count as `N` and the rule-term list as
@@ -291,6 +291,10 @@ def snapshot_logic(enc: Any) -> dict:
     Each `EvalTerm` in `enc.terms` is a frozen dataclass with `rule_id`
     (str), `site` (int) and `arity` (int) fields; we emit those verbatim as
     JSON-ready dicts so a panel can lay out the real AST/term structure.
+
+    When `state` is supplied, the per-term `residuals` list (one float per
+    term, parallel to `terms`) and the scalar `total_energy` are emitted so
+    the panel can show relaxation progress.
     """
     def _terms() -> list:
         out = []
@@ -302,6 +306,17 @@ def snapshot_logic(enc: Any) -> dict:
             })
         return out
 
+    residuals: list[float] | None = None
+    total_energy: float | None = None
+    if state is not None:
+        try:
+            res = enc.residuals(state)
+            residuals = [float(res[(t.rule_id, t.site)]) for t in enc.terms]
+            total_energy = float(sum(residuals))
+        except (AttributeError, KeyError, ValueError, TypeError):
+            residuals = None
+            total_energy = None
+
     return {
         "n_sites": _safe(lambda: int(enc.N)),
         "term_count": _safe(lambda: len(enc.terms)),
@@ -309,4 +324,6 @@ def snapshot_logic(enc: Any) -> dict:
         "lambda_beta": _safe(lambda: float(enc.lambda_beta)),
         "lambda_arith": _safe(lambda: float(enc.lambda_arith)),
         "lambda_if": _safe(lambda: float(enc.lambda_if)),
+        "residuals": residuals,
+        "total_energy": total_energy,
     }

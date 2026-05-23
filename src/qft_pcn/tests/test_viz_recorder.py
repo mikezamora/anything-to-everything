@@ -284,3 +284,26 @@ def test_snapshot_logic_contents():
         assert isinstance(t["rule_id"], str) and t["rule_id"]
         assert isinstance(t["site"], int) and 0 <= t["site"] < snap["n_sites"]
         assert isinstance(t["arity"], int) and t["arity"] == 2
+    # When `state` is omitted, residuals / total_energy come back None.
+    assert snap["residuals"] is None
+    assert snap["total_energy"] is None
+
+
+def test_snapshot_logic_with_state_emits_residuals():
+    """When a live state is supplied, residuals (parallel to terms) and
+    total_energy are emitted so a panel can render relaxation progress."""
+    from src.qft_pcn.logic.ast import parse
+    from src.qft_pcn.logic.encoder import encode
+    N = 6
+    state, _ = encode(parse("2 + 3"), N=N, chi_max=8)
+    enc = EvalHamiltonian(N=N)
+    snap = snapshot_logic(enc, state)
+    assert snap["residuals"] is not None
+    assert isinstance(snap["residuals"], list)
+    assert len(snap["residuals"]) == len(snap["terms"])
+    for r in snap["residuals"]:
+        assert isinstance(r, float)
+    assert snap["total_energy"] is not None
+    assert isinstance(snap["total_energy"], float)
+    # total_energy should match sum of residuals.
+    assert abs(snap["total_energy"] - sum(snap["residuals"])) < 1e-9

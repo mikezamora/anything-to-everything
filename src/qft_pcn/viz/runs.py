@@ -84,6 +84,9 @@ _MAX_STEPS = 500
 _QPCN_SITES = 4
 _QPCN_CHI = 8
 _MERA_LEAVES = 4
+_LOGIC_SITES = 6
+_LOGIC_CHI = 8
+_LOGIC_DEFAULT_EXPR = "2 + 3"
 
 
 def _build_network(spec: RunSpec) -> QFTPCNNetwork:
@@ -135,6 +138,26 @@ def _build_mera(spec: RunSpec) -> MERA:
     return MERA.vacuum(leaves, d_local=2, chi_layer=chi)
 
 
+def _build_logic(spec: RunSpec):
+    """Build a real `EvalHamiltonian` + a logic-encoded MPS for relaxation.
+
+    Honours `spec.params["logic"]` keys: `N` (sites), `chi_max`, `expr`
+    (lambda-source program string; defaults to a small arithmetic example).
+    Returns ``(H, state, chi_max)``.
+    """
+    from ..logic.ast import parse
+    from ..logic.encoder import encode
+    from ..logic.evaluation_hamiltonian import EvalHamiltonian
+    p = dict(spec.params.get("logic") or {})
+    N = int(p.get("N", _LOGIC_SITES))
+    chi_max = int(p.get("chi_max", _LOGIC_CHI))
+    expr = str(p.get("expr", _LOGIC_DEFAULT_EXPR))
+    state, _meta = encode(parse(expr), N=N, chi_max=chi_max)
+    state.normalize()
+    H = EvalHamiltonian(N=N)
+    return H, state, chi_max
+
+
 def _build_multifield(spec: RunSpec) -> MultiFieldNetwork:
     """Build a two-field `MultiFieldNetwork` on a shared manifold.
 
@@ -178,17 +201,23 @@ def run_simulation(spec: RunSpec) -> Iterator[Frame]:
     want_multifield = "multifield" in requested
     want_qpcn = bool(requested & {"mps", "qpcn", "hamiltonian"})
     want_mera = "mera" in requested
+    want_logic = "logic" in requested
 
     # Fall back to the manifold substrate if nothing recognised was asked for,
     # so a stream always yields content rather than silently producing zero
     # frames.
-    if not (want_network or want_multifield or want_qpcn or want_mera):
+    if not (want_network or want_multifield or want_qpcn or want_mera
+            or want_logic):
         want_network = True
 
     net = _build_network(spec) if want_network else None
     multifield = _build_multifield(spec) if want_multifield else None
     qpcn = _build_qpcn(spec) if want_qpcn else None
     mera = _build_mera(spec) if want_mera else None
+    logic_H = logic_state = None
+    logic_chi = _LOGIC_CHI
+    if want_logic:
+        logic_H, logic_state, logic_chi = _build_logic(spec)
 
     observation = None
     if net is not None:
@@ -256,5 +285,12 @@ def run_simulation(spec: RunSpec) -> Iterator[Frame]:
             # MERA has no time dynamics here; re-snapshot the static tree so
             # the layer still receives a Frame on every step.
             snaps["mera"] = snapshots.snapshot_mera(mera)
+
+        if logic_H is not None and logic_state is not None:
+            from ..logic.factored_evolution import factored_trotter_step
+            factored_trotter_step(logic_state, logic_H, dt=0.1,
+                                  imaginary=True, chi_max=logic_chi)
+            logic_state.normalize()
+            snaps["logic"] = snapshots.snapshot_logic(logic_H, logic_state)
 
         yield recorder.capture(**snaps)
