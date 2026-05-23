@@ -166,6 +166,43 @@ def test_unsolved_theorem_surfaces_goldstone_mode():
     )
 
 
+def test_node_field_matches_redex_position():
+    """The dominant Goldstone candidate must localize on the actual AST
+    position of the redex, not just match the rule_id. For ``2 + 3``
+    the redex is the Bin node at preorder index 0 (the root); the
+    R-Arith term carrying the Goldstone amplitude must report
+    ``node == 0`` so the diagnostic can be consumed as an
+    (AST-position, rule) signature by downstream lemma-search code
+    (spec §12.6 "localization on specific sites").
+    """
+    from src.qft_pcn.logic._serialize import serialize_preorder
+    from src.qft_pcn.logic.encoding import KIND_BIN
+
+    state, meta, H = _redex_program()
+    # Confirm fixture invariant: the Bin redex sits at preorder index 0
+    # for the program ``2 + 3``. If the encoder's preorder convention
+    # ever shifts, this gives a clearer failure than a bare integer.
+    sites = serialize_preorder(parse(r"2 + 3"), N=meta.n_nodes_max)
+    bin_nodes = [i for i, s in enumerate(sites) if s.kind == KIND_BIN]
+    assert bin_nodes, "fixture invariant: 2+3 must contain a Bin node"
+    expected_bin_node = bin_nodes[0]
+
+    diag = diagnose_missing_lemma(H, state, k=5)
+    assert diag.has_missing_lemma, (
+        f"unsolved redex did not surface any candidates; "
+        f"spectrum={diag.spectrum}"
+    )
+    top = diag.candidates[0]
+    assert top.rule_id == "R-Arith", (
+        f"precondition: top candidate should be R-Arith, got {top.rule_id}"
+    )
+    assert top.node == expected_bin_node, (
+        f"top Goldstone candidate did not localize on the Bin redex's "
+        f"AST position; expected node={expected_bin_node}, got "
+        f"node={top.node} (full candidate: {top})"
+    )
+
+
 def test_diagnostic_is_deterministic():
     """Same input -> byte-identical diagnostic. The Hessian matrix is
     a pure function of (H, state); eigsh / eigh on a fixed matrix are

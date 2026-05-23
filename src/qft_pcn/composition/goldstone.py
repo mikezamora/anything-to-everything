@@ -12,17 +12,30 @@ energy is a standard Lanczos eigenvalue problem.
 
 This module is an operator-algebraic substrate (NOT an AST walk, NOT a
 heuristic over rule names). The constraint-Hessian matrix M is built
-from real operator expectations:
+from a mix of a real operator expectation (diagonal) and an
+operator-bounded coupling proxy (off-diagonal); see honesty notes
+below.
 
-  - M[i,i] = <psi| H_t_i |psi>  (per-term residual energy, via the
-    real MeraEvalHamiltonian.term_energy — a factored window
-    expectation per spec §7.4).
-  - M[i,j] for i != j: operator-derived coupling sqrt(r_i*r_j) *
-    overlap(L_i, L_j), where L_t is the term's affected-leaf footprint
+  - M[i,i] = <psi| H_t_i |psi>  (per-term FIRST moment, via the real
+    MeraEvalHamiltonian.term_energy — a factored window expectation
+    per spec §7.4). For the true Hessian diagonal one wants the SECOND
+    moment <psi| H_t_i^2 |psi>; the two coincide when H_t_i is
+    projector-like (P^2 = P), which is the case for current
+    MeraEvalTerm terms per §7.4. We use the first moment directly.
+  - M[i,j] for i != j: an **operator-bounded coupling proxy**, NOT a
+    genuine two-operator expectation. Specifically,
+        M[i,j] = sqrt(r_i * r_j) * |L_i ∩ L_j| / max(|L_i|, |L_j|),
+    where r_t = <H_t> and L_t is the term's affected-leaf footprint
     (the entanglement-bond pattern §1.1 — leaves the term reads or
-    writes through its causal cone). Two terms decouple iff they touch
-    disjoint leaf sets (product-MERA factorization of
-    <H_i H_j> = <H_i><H_j>, spec §1.2).
+    writes through its causal cone). The sqrt(r_i*r_j) factor is the
+    Cauchy-Schwarz UPPER BOUND on |<H_i H_j>| under the projector
+    assumption above; the geometric overlap fraction is a heuristic
+    on the magnitude. Disjoint footprints decouple correctly via the
+    product-MERA factorization <H_i H_j> = <H_i><H_j> (spec §1.2),
+    but for overlapping footprints the off-diagonal is a bounded
+    heuristic, not the true Hessian entry. The genuine two-operator
+    expectation <psi|H_i H_j|psi> on the shared causal-cone window is
+    deferred (see EXTENSIONS.md §12.6 entry).
 
 Small eigenvalues of M correspond to Goldstone modes: directions in
 term-space where the constraint energy is nearly flat (massless
@@ -160,12 +173,16 @@ def _build_constraint_matrix(
     M = np.zeros((n, n), dtype=float)
     for i in range(n):
         M[i, i] = residuals[i]
-    # Off-diagonal: leaf-overlap coupling, gated by sqrt(r_i*r_j).
-    # The sqrt(r_i*r_j) factor is the operator-derived coupling
-    # strength: <H_i H_j> >= sqrt(<H_i^2><H_j^2>) is upper-bounded by
-    # Cauchy-Schwarz, and for projector-like terms <H_t^2> ~ <H_t>
-    # (projectors P satisfy P^2 = P). So sqrt(r_i*r_j) is the natural
-    # coupling-amplitude scale even before invoking factorization.
+    # Off-diagonal: operator-bounded coupling proxy (NOT the true
+    # two-operator expectation). |<H_i H_j>| is upper-bounded by
+    # Cauchy-Schwarz: |<H_i H_j>| <= sqrt(<H_i^2><H_j^2>); under the
+    # projector assumption (P^2 = P, true for current MeraEvalTerm
+    # terms per §7.4) <H_t^2> = <H_t> = r_t, so sqrt(r_i*r_j) is the
+    # Cauchy-Schwarz upper bound. The leaf-overlap fraction is then a
+    # geometric heuristic on the magnitude. Disjoint footprints
+    # decouple correctly (§1.2 factorization); overlapping footprints
+    # carry a bounded heuristic, not the genuine Hessian entry. See
+    # EXTENSIONS.md §12.6 for the deferred two-operator primitive.
     for i in range(n):
         Li = footprints[i]
         if not Li or residuals[i] <= 0.0:
@@ -214,9 +231,16 @@ def compute_near_null_subspace(
         rule-name space — the basis is the real Hamiltonian's term
         list.
       * Diagonal entries are real operator expectations
-        (``H.term_energy``), NOT proxies.
-      * Off-diagonal couplings come from leaf-footprint overlap
-        (entanglement-bond pattern §1.1), NOT AST adjacency.
+        (``H.term_energy``), specifically the FIRST moment <H_t>
+        (coincides with the true Hessian diagonal <H_t^2> for the
+        projector-like terms in §7.4).
+      * Off-diagonal couplings are an operator-bounded proxy
+        (Cauchy-Schwarz upper bound × geometric leaf-overlap
+        fraction), NOT the genuine two-operator expectation. Disjoint
+        leaf footprints decouple correctly via §1.2 factorization;
+        overlapping footprints carry a bounded heuristic. See
+        EXTENSIONS.md §12.6 entry for the deferred true-Hessian
+        primitive.
     """
     if k < 1:
         raise ValueError(f"k must be >= 1, got {k}")

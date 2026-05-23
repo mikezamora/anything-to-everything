@@ -33,6 +33,23 @@ it unblocks.
 - Workaround: chained traversal in `bidirectional_evolve` exercises the substrate's negative-dt path correctly and validates §1.1 entanglement preservation across both legs. Sufficient for §17-row-2 immediate-win; insufficient for §12.13 headline acceptance.
 - Unblocks: spec §12.13 full acceptance corpus (whatever proves the meet-in-the-middle capability operationally).
 
+## Missing dependency: §12.6 genuine two-operator constraint Hessian
+
+- Where: `src/qft_pcn/composition/goldstone.py::compute_near_null_subspace`
+  uses Cauchy-Schwarz upper-bound × geometric overlap as off-diagonal
+  M[i,j]. Genuine Hessian requires computed `<ψ|H_i H_j|ψ>` two-operator
+  expectations on the shared causal-cone window for each non-disjoint
+  term pair.
+- Need: two-term expectation primitive on MERA (one shared causal-cone
+  window per (i,j) with overlapping footprints). Disjoint footprints
+  keep their existing fast-path zero coupling per §1.2.
+- Workaround: current heuristic is PSD by construction, decouples on
+  disjoint footprints (correct §1.2 factorization), and produces
+  meaningful Goldstone localization on solved/unsolved theorems.
+  Insufficient for §12.6 "principled Hessian" claim.
+- Unblocks: §12.6 substrate completeness (line 1582 "standard numerical
+  linear algebra" of the actual Hessian).
+
 ## RESOLVED — I-Task-10 blocker #1: `relax_program` driver in M3
 
 - Resolution: `src/qft_pcn/logic/mera_synthesis/runner.py` gains a
