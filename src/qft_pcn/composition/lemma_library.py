@@ -294,3 +294,239 @@ def structural_fingerprint(state: MERA) -> np.ndarray:
 def fingerprint_distance(a: np.ndarray, b: np.ndarray) -> float:
     """L1 (trace-distance-style) distance between fingerprints (spec §4.3)."""
     return float(np.sum(np.abs(np.asarray(a) - np.asarray(b))))
+
+
+import json
+import hashlib
+from dataclasses import asdict, fields
+from src.qft_pcn.composition.errors import LemmaHashCollision, LemmaNotFound
+
+
+_META_INT_KEY_DICTS = (
+    "site_to_ast_path", "binder_leaves", "use_to_binder",
+    "nested_type_index", "children_of_node",
+)
+
+
+def _jsonable(v):
+    """Recursively coerce tuples to lists for JSON; pass through scalars."""
+    if isinstance(v, tuple):
+        return [_jsonable(x) for x in v]
+    if isinstance(v, list):
+        return [_jsonable(x) for x in v]
+    if isinstance(v, dict):
+        return {str(k): _jsonable(val) for k, val in v.items()}
+    return v
+
+
+def _meta_to_json(meta: MeraEncodingMeta) -> str:
+    """Serialize MeraEncodingMeta to JSON. `layout` is dropped (non-JSON,
+    reconstructible by consumers from species_of_leaf + node_of_leaf via
+    M1 helpers). `nested_type_index` values may be opaque objects; we only
+    persist entries whose values are JSON-safe (empty dict is the common
+    case for hole-free encodings)."""
+    d: dict = {}
+    for f in fields(meta):
+        if f.name == "layout":
+            continue
+        v = getattr(meta, f.name)
+        if f.name == "nested_type_index":
+            # Best-effort: keep only JSON-safe values, key as str.
+            safe = {}
+            for k, val in v.items():
+                try:
+                    json.dumps(val)
+                    safe[str(k)] = val
+                except (TypeError, ValueError):
+                    pass
+            d[f.name] = safe
+        elif isinstance(v, dict):
+            d[f.name] = {str(k): _jsonable(val) for k, val in v.items()}
+        elif isinstance(v, (list, tuple)):
+            d[f.name] = _jsonable(v)
+        else:
+            d[f.name] = v
+    return json.dumps(d)
+
+
+def _meta_from_json(s: str) -> MeraEncodingMeta:
+    d = json.loads(s)
+    # Coerce int-keyed dicts back to int keys.
+    for key in _META_INT_KEY_DICTS:
+        if key in d and isinstance(d[key], dict):
+            coerced: dict = {}
+            for k, val in d[key].items():
+                ik = int(k)
+                if key == "site_to_ast_path":
+                    coerced[ik] = tuple(val)
+                else:
+                    coerced[ik] = val
+            d[key] = coerced
+    # hole_regions / witness_node_ranges are lists-of-tuples in spirit;
+    # JSON gives lists-of-lists. Coerce inner lists back to tuples where
+    # the original carried tuples.
+    if "witness_node_ranges" in d:
+        d["witness_node_ranges"] = [
+            tuple(x) if isinstance(x, list) else x
+            for x in d["witness_node_ranges"]
+        ]
+    # layout is reconstructible by consumers from species/node info; set None.
+    d["layout"] = None
+    return MeraEncodingMeta(**d)
+
+
+def _deriv_from_dict(d: dict) -> DerivationMetadata:
+    return DerivationMetadata(
+        hamiltonian_id=d["hamiltonian_id"],
+        residual_energy=float(d["residual_energy"]),
+        energy_gap=float(d["energy_gap"]),
+        trotter_steps=int(d["trotter_steps"]),
+        assumptions=tuple(d["assumptions"]),
+        lemma_deps=tuple(d["lemma_deps"]),
+        conditional=bool(d["conditional"]),
+        source_run_id=d["source_run_id"],
+    )
+
+
+def _n_leaves_L(lemma: Lemma) -> int:
+    """Logical-leaf count used by cost-tier indexing (spec §4.2).
+
+    Prefers an explicit ``:N`` suffix in the lemma_id if present (so
+    callers can persist multiple sketch widths against the same AST);
+    otherwise falls back to ``5 * n_nodes`` from the encoding meta.
+    """
+    tail = lemma.lemma_id.rsplit(":", 1)[-1]
+    if tail.isdigit():
+        return int(tail)
+    return 5 * lemma.encoding_meta.n_nodes
+
+
+class LemmaLibrary:
+    """File-backed, append-only store of lemmas with three-tier indexing
+    (spec §4): by proposition type, by structural fingerprint, by
+    derivation cost.
+
+    The store persists each lemma as a single `.npz` per lemma_id; the
+    bundle tensors (leaves, intra/inter disentanglers, isometries, top,
+    layer_dims) plus JSON-encoded sidecars for encoding_meta and
+    derivation are bundled together. A `manifest.json` at the library
+    root maps lemma_id -> light index entry for the three-tier lookups
+    (type, cost, fingerprint).
+    """
+
+    def __init__(self, root, eps_compress: float = 1e-9):
+        self.root = Path(root)
+        self.eps_compress = eps_compress
+        (self.root / "lemmas").mkdir(parents=True, exist_ok=True)
+        self._manifest_path = self.root / "manifest.json"
+        self._manifest: dict = {}
+        if self._manifest_path.exists():
+            self._manifest = json.loads(self._manifest_path.read_text())
+
+    def _flush_manifest(self) -> None:
+        self._manifest_path.write_text(json.dumps(self._manifest, indent=2))
+
+    def _path(self, lemma_id: str) -> Path:
+        h = hashlib.sha1(lemma_id.encode()).hexdigest()
+        return self.root / "lemmas" / f"{h}.npz"
+
+    def save(self, lemma: Lemma) -> None:
+        existing = self._manifest.get(lemma.lemma_id)
+        if existing is not None:
+            if existing["proposition_type"] != lemma.proposition_type:
+                raise LemmaHashCollision(
+                    f"{lemma.lemma_id} already maps to a different lemma")
+            return  # append-only: identical re-save is a no-op
+        path = self._path(lemma.lemma_id)
+        b = lemma.mera_tensors
+        if b.top is None:
+            raise ValueError(
+                f"lemma {lemma.lemma_id} bundle.top is None; cannot persist")
+        arrs: dict[str, np.ndarray] = {
+            "n_leaves": np.array(b.n_leaves),
+            "leaf_dim": np.array(b.leaf_dim),
+            "n_layers": np.array(b.n_layers),
+            "n_disent": np.array(len(b.disentanglers)),
+            "n_iso": np.array(len(b.isometries)),
+            "n_inter": np.array(len(b.inter_disentanglers)),
+            "layer_dims": np.array(b.layer_dims, dtype=np.int64),
+            "top": np.asarray(b.top),
+            "fingerprint": np.asarray(lemma.fingerprint),
+            "meta_json": np.array(_meta_to_json(lemma.encoding_meta)),
+            "deriv_json": np.array(json.dumps(asdict(lemma.derivation))),
+            "proposition_type": np.array(lemma.proposition_type),
+        }
+        for i, v in enumerate(b.leaf_vectors):
+            arrs[f"leaf_{i}"] = np.asarray(v)
+        for i, d in enumerate(b.disentanglers):
+            arrs[f"disent_{i}"] = np.asarray(d)
+        for i, w in enumerate(b.isometries):
+            arrs[f"iso_{i}"] = np.asarray(w)
+        for i, u in enumerate(b.inter_disentanglers):
+            arrs[f"inter_{i}"] = np.asarray(u)
+        np.savez_compressed(path, **arrs)
+        self._manifest[lemma.lemma_id] = {
+            "proposition_type": lemma.proposition_type,
+            "trotter_steps": lemma.derivation.trotter_steps,
+            "n_leaves_L": _n_leaves_L(lemma),
+        }
+        self._flush_manifest()
+
+    def load(self, lemma_id: str) -> Lemma:
+        if lemma_id not in self._manifest:
+            raise LemmaNotFound(lemma_id)
+        z = np.load(self._path(lemma_id), allow_pickle=False)
+        n = int(z["n_leaves"])
+        n_disent = int(z["n_disent"])
+        n_iso = int(z["n_iso"])
+        n_inter = int(z["n_inter"])
+        bundle = MeraTensorBundle(
+            n_leaves=n,
+            leaf_dim=int(z["leaf_dim"]),
+            n_layers=int(z["n_layers"]),
+            leaf_vectors=[np.asarray(z[f"leaf_{i}"]) for i in range(n)],
+            disentanglers=[np.asarray(z[f"disent_{i}"]) for i in range(n_disent)],
+            isometries=[np.asarray(z[f"iso_{i}"]) for i in range(n_iso)],
+            inter_disentanglers=[
+                np.asarray(z[f"inter_{i}"]) for i in range(n_inter)
+            ],
+            top=np.asarray(z["top"]),
+            layer_dims=tuple(int(x) for x in z["layer_dims"]),
+        )
+        return Lemma(
+            lemma_id=lemma_id,
+            proposition_type=str(z["proposition_type"]),
+            mera_tensors=bundle,
+            encoding_meta=_meta_from_json(str(z["meta_json"])),
+            derivation=_deriv_from_dict(json.loads(str(z["deriv_json"]))),
+            fingerprint=np.asarray(z["fingerprint"]),
+        )
+
+    def materialize(self, lemma_id: str) -> MERA:
+        return mera_from_bundle(self.load(lemma_id).mera_tensors)
+
+    def all_ids(self) -> list[str]:
+        return list(self._manifest.keys())
+
+    def find_by_type(self, proposition_type: str) -> list[Lemma]:
+        return [self.load(lid) for lid, m in self._manifest.items()
+                if m["proposition_type"] == proposition_type]
+
+    def cheapest_for_type(self, proposition_type: str):
+        cands = [(m["n_leaves_L"], m["trotter_steps"], lid)
+                 for lid, m in self._manifest.items()
+                 if m["proposition_type"] == proposition_type]
+        if not cands:
+            return None
+        cands.sort()
+        return self.load(cands[0][2])
+
+    def find_similar(self, query_fingerprint, max_distance: float = 0.1):
+        out = []
+        for lid in self._manifest:
+            lem = self.load(lid)
+            d = fingerprint_distance(query_fingerprint, lem.fingerprint)
+            if d <= max_distance:
+                out.append((lem, d))
+        out.sort(key=lambda t: t[1])
+        return out
