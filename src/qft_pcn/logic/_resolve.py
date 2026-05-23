@@ -52,7 +52,29 @@ def resolve_binders(
                     return
             raise IllScopedVar(name=node.name)
         if isinstance(node, HoleVar):
+            kind = node.candidate_kind()
+            if kind == "structural":
+                # Structural candidates are Node sub-trees, NOT binder names.
+                # Recurse into each candidate so any Vars inside the sub-trees
+                # resolve against the surrounding lexical scope. The structural
+                # encoder uses HoleRegion.candidate_branches (computed
+                # separately by _expand_structural_holes) — the resolver's
+                # refs list is irrelevant here, so emit an empty list.
+                for cand in node.candidates:
+                    if isinstance(cand, Node):
+                        _walk(cand)
+                on_var(node, [])
+                return
+            # var-hole (kind == "var"): empty candidates means "any in-scope
+            # binder" — expand to one ResolvedRef per binder on the stack,
+            # innermost-first (matching the named-candidate ordering).
             refs: list[ResolvedRef] = []
+            if len(node.candidates) == 0:
+                for offset, lam in enumerate(reversed(stack)):
+                    refs.append(ResolvedRef(
+                        binder=lam, depth_from_innermost=offset))
+                on_var(node, refs)
+                return
             for cand in node.candidates:
                 found = False
                 for offset, lam in enumerate(reversed(stack)):
