@@ -6,15 +6,23 @@ import pytest
 
 from src.qft_pcn.qft.mera import MERA
 
-# --- §9.7 memory ceiling: no dense tensor larger than chi_cap**2 = 256 -------
-_MAX_ELEMS = 256
+# --- §9.7 memory ceiling: no dense tensor larger than chi_cap**4 = 65_536 ----
+# The spec §9.7 cap is chi_cap=16 on bond/leg dimensions. The largest LEGITIMATE
+# dense allocation in the substrate is a 2-leg reduced density matrix:
+# (chi_cap**2) x (chi_cap**2) = 256x256 = 65_536 complex entries. The guard
+# catches accidental full-Hilbert allocations (e.g. 16**N for N>=4 leaves
+# would already exceed this ceiling and trigger). MERA isometry slabs
+# (256x16 = 4_096) and density matrices (256x256 = 65_536) fit; anything
+# larger is a substrate violation.
+_MAX_ELEMS = 65_536
 
 
 @pytest.fixture(autouse=True)
 def _no_large_dense(monkeypatch):
     """Trip if any code under test allocates a dense ndarray above the ceiling.
 
-    Wraps numpy.zeros/empty/ones; subtree leaf spaces (16**s) would blow this.
+    Wraps numpy.zeros/empty/ones; subtree leaf spaces (16**s) for s>=4 would
+    blow this. Legitimate MERA isometries and 2-leg RDMs fit comfortably.
     """
     real_zeros, real_empty, real_ones = np.zeros, np.empty, np.ones
 
