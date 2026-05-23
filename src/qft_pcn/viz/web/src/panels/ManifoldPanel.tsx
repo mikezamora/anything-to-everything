@@ -84,17 +84,38 @@ function Surface({
 
 export function ManifoldPanel({
   frame,
+  baselineFrame,
 }: {
   frame: Frame;
   baselineFrame?: Frame;
 }) {
   const st = (frame.layer_states.manifold ?? {}) as ManifoldState;
+  const bst = (baselineFrame?.layer_states.manifold ?? {}) as ManifoldState;
   const [overlay, setOverlay] = useState<'phi' | 'E' | 'Pi' | null>(null);
   const [channel, setChannel] = useState(0);
 
-  // Base warped grid: height = h_xx, colour = ricci.
+  // Base warped grid: height = h_xx (always from current), colour = ricci.
+  // When a baseline frame is present and its ricci grid shares the same
+  // shape as the current one, colour by (current - baseline) so the panel
+  // renders a diff heatmap. Height stays from current h_xx — subtracting
+  // heights would lose the warped-surface readability.
   const baseHeight = st.metric_h?.h_xx ?? st.ricci ?? null;
-  const baseColor = st.ricci ?? st.metric_h?.h_xx ?? null;
+  const curRicci = st.ricci ?? st.metric_h?.h_xx ?? null;
+  const baseRicci = bst.ricci ?? bst.metric_h?.h_xx ?? null;
+  const baseColor = useMemo<Grid | null>(() => {
+    if (!curRicci) return null;
+    if (
+      !baselineFrame ||
+      !baseRicci ||
+      baseRicci.length !== curRicci.length ||
+      baseRicci[0]?.length !== curRicci[0]?.length
+    ) {
+      return curRicci;
+    }
+    return curRicci.map((row, i) =>
+      row.map((v, j) => v - (baseRicci[i]?.[j] ?? 0)),
+    );
+  }, [curRicci, baseRicci, baselineFrame]);
   const field = st.fields?.[0];
   const nChannels = field?.channels ?? 1;
   const overlayGrid =
@@ -144,6 +165,7 @@ export function ManifoldPanel({
           label: 'mean |R|',
           value:
             st.mean_abs_ricci != null ? st.mean_abs_ricci.toFixed(3) : null,
+          baselineValue: bst.mean_abs_ricci ?? null,
           highlightId: 'mean_abs_ricci',
         },
         { label: 'layers', value: st.fields?.length ?? 0 },

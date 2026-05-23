@@ -275,32 +275,31 @@ it unblocks.
   point (currently only exercised by the unit tests in
   `test_result_integrator.py`).
 
-## Missing dependency: `decoder.parse_one` rejects `KIND_FORALL` / `KIND_FIX`
+## RESOLVED: `decoder.parse_one` rejects `KIND_FORALL` / `KIND_FIX` (Gap C)
 
-- Where: `src/qft_pcn/logic/decoder.py:284-286` — `parse_one` raises
-  `DecodeError("site N: Forall/Fix binder decoding is Part-2 scope")`
-  on any encoded site whose kind is `KIND_FORALL` or `KIND_FIX`.
-- Need: a binder-aware decoder branch that reconstructs `Forall(param,
-  param_ty, body)` / `Fix(param, param_ty, body)` from the encoded
-  bid-leaf + body subtree. This is the "Part-2" extension to the
-  decoder; the encoder side (M1) already populates the binder leaves.
-- Workaround: `composition.lemma_library.register_lemma` wraps
-  `decode_mera` in `try/except` per spec §4.5 totality (commit
-  `3950e69`) and surfaces a `RegistrationResult(False, None,
-  "validation_failed:decode_error:...Forall/Fix binder decoding is
-  Part-2 scope")`. The K-5 result-integrator refuses the clamp on this
-  reason; the orchestrator surfaces a structured `failure_report` with
-  `revision_attempts == MAX_REVISIONS + 1`. No fabricated proof tree
-  is ever produced (pinned by
-  `composition/tests/test_cross_level_acceptance.py::
-  test_orchestrator_refusal_diagnostic_pins_substrate_seam`).
-- Unblocks: K-Task-8 §10.10 acceptance end-to-end through the
-  orchestrator on a Forall-rooted theorem. The substrate-level proof
-  of `forall x:Nat. Eq (add x Zero) x` already passes at the M2
-  reduction layer (`test_cross_level_acceptance::
-  test_substrate_level_inductive_theorem_proves_end_to_end`); the
-  remaining gap is purely the binder-decoding seam between M2 and the
-  K-5 lemma-persistence path.
+- Status: RESOLVED on branch `claude/qft-pcn-hybrid-architecture-ihCIR`
+  (pending commit). The Part-2 stub in `parse_kind_stream._parse_one`
+  has been replaced with proper binder branches that mirror the
+  `KIND_LAM` machinery: push a freshly-named `Forall` / `Fix` onto
+  `binder_stack`, descend into the body, pop, and patch the body.
+  `param_ty` recovery: Fix uses `_extended_type_from_tag(ti, ...)`
+  because a `Fix`'s site type tag IS its `param_ty` tag; Forall
+  defaults to `TNat()` because the site type tag is `TYPE_PROP`
+  (Forall returns Prop), so the param type is not directly recoverable
+  from the leaf — `TNat` is the canonical §10.10 lemma quantifier.
+- Pinned by: `src/qft_pcn/tests/test_decoder_forall_fix.py`
+  (`test_decode_forall_identity_body`, `test_decode_forall_with_eq_body`,
+  `test_decode_fix_nat_body`) — three round-trips through `encode_mera`
+  → `decode_mera` confirm the AST shape and binder-bound `Var`
+  resolution.
+- Downstream effect on the K-8 acceptance pin
+  (`test_orchestrator_refusal_diagnostic_pins_substrate_seam`): the
+  refusal reason flips from `validation_failed:decode_error:...
+  Forall/Fix binder decoding is Part-2 scope` (Gap C) to the
+  `_meta_to_json` `set is not JSON serializable` (Gap D). The pinning
+  test still passes because its assertion accepts either Gap C OR
+  Gap D as the surfacing reason; once Gap D lands the orchestrator
+  path can persist Forall-rooted proofs end-to-end.
 
 ## Missing dependency: `_meta_to_json` does not handle `set` fields
 

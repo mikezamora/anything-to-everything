@@ -186,16 +186,36 @@ function CurvatureMiniMap({ matrix }: { matrix: number[][] }) {
 
 export function HamiltonianPanel({
   frame,
-  baselineFrame: _baselineFrame,
+  baselineFrame,
 }: {
   frame: Frame;
   baselineFrame?: Frame;
 }) {
   const st = (frame.layer_states.hamiltonian ?? {}) as HamiltonianState;
+  const bst = (baselineFrame?.layer_states.hamiltonian ?? {}) as HamiltonianState;
   const curv = st.curvature;
   const matrix = Array.isArray(curv) && Array.isArray(curv[0])
     ? (curv as number[][])
     : null;
+  const baseCurv = bst.curvature;
+  const baseMatrix = Array.isArray(baseCurv) && Array.isArray(baseCurv[0])
+    ? (baseCurv as number[][])
+    : null;
+  // Mini-map matrix: when baseline shares the same shape, render the diff;
+  // otherwise fall back silently to the current matrix.
+  const miniMatrix: number[][] | null = (() => {
+    if (!matrix) return null;
+    if (
+      !baseMatrix ||
+      baseMatrix.length !== matrix.length ||
+      baseMatrix[0]?.length !== matrix[0]?.length
+    ) {
+      return matrix;
+    }
+    return matrix.map((row, i) =>
+      row.map((v, j) => v - (baseMatrix[i]?.[j] ?? 0)),
+    );
+  })();
   const hasData = !!matrix && matrix.length > 0;
   const speciesNames = (st.species as string[] | null) ?? [];
 
@@ -239,7 +259,7 @@ export function HamiltonianPanel({
             marginTop: 6,
           }}
         >
-          {hasData && <CurvatureMiniMap matrix={matrix!} />}
+          {hasData && <CurvatureMiniMap matrix={miniMatrix!} />}
           <div style={{ flex: 1, minWidth: 0 }}>
             {speciesNames.length > 0 && (
               <table

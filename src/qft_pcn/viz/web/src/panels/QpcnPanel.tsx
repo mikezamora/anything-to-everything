@@ -58,13 +58,16 @@ function Chart({
 
 export function QpcnPanel({
   frame,
-  baselineFrame: _baselineFrame,
+  baselineFrame,
 }: {
   frame: Frame;
   baselineFrame?: Frame;
 }) {
   const st = (frame.layer_states.qpcn ?? {}) as QpcnState;
+  const bst = (baselineFrame?.layer_states.qpcn ?? {}) as QpcnState;
   const errors = (st.pred_errors ?? {}) as Record<string, number>;
+  const baseErrors = (bst.pred_errors ?? {}) as Record<string, number>;
+  const hasBaseline = !!baselineFrame;
   const params = (st.params ?? {}) as Record<string, number>;
   const occ = st.occupations ?? [];
   const hasData =
@@ -118,12 +121,37 @@ export function QpcnPanel({
 
   const energyText =
     st.energy != null ? st.energy.toFixed(4) : '(unknown)';
+  const baselineEnergy =
+    hasBaseline && bst.energy != null && Number.isFinite(bst.energy)
+      ? bst.energy
+      : null;
+  const energyDelta =
+    baselineEnergy != null && st.energy != null
+      ? st.energy - baselineEnergy
+      : null;
+  const energyDeltaColor =
+    energyDelta == null
+      ? undefined
+      : energyDelta < 0
+        ? '#9aedc1'
+        : energyDelta > 0
+          ? '#ef9090'
+          : '#7f8bb0';
 
   const readouts = (
     <div className="qpcn-readouts" style={{ display: 'flex', gap: 16 }}>
       <div>
         <span style={{ color: '#7f8bb0', marginRight: 6 }}>energy</span>
         <span style={{ color: '#fbc66a' }}>{energyText}</span>
+        {energyDelta != null && (
+          <small
+            className="qpcn-energy-delta"
+            style={{ color: energyDeltaColor, marginLeft: 4 }}
+          >
+            ({energyDelta >= 0 ? '+' : ''}
+            {energyDelta.toFixed(4)})
+          </small>
+        )}
       </div>
       <table
         className="qpcn-errors"
@@ -133,22 +161,49 @@ export function QpcnPanel({
           <tr>
             <th style={{ textAlign: 'left', paddingRight: 12 }}>obs</th>
             <th style={{ textAlign: 'right' }}>error</th>
+            {hasBaseline && <th style={{ textAlign: 'right', paddingLeft: 12 }}>Δ</th>}
           </tr>
         </thead>
         <tbody>
-          {Object.entries(errors).map(([k, v]) => (
-            <tr key={k}>
-              <td style={{ paddingRight: 12 }}>{k}</td>
-              <td
-                style={{
-                  textAlign: 'right',
-                  color: v >= 0 ? '#ef9090' : '#9aedc1',
-                }}
-              >
-                {v.toFixed(4)}
-              </td>
-            </tr>
-          ))}
+          {Object.entries(errors).map(([k, v]) => {
+            const bv = baseErrors[k];
+            const d = hasBaseline && typeof bv === 'number' && Number.isFinite(bv)
+              ? v - bv
+              : null;
+            const dColor =
+              d == null
+                ? undefined
+                : d < 0
+                  ? '#9aedc1'
+                  : d > 0
+                    ? '#ef9090'
+                    : '#7f8bb0';
+            return (
+              <tr key={k}>
+                <td style={{ paddingRight: 12 }}>{k}</td>
+                <td
+                  style={{
+                    textAlign: 'right',
+                    color: v >= 0 ? '#ef9090' : '#9aedc1',
+                  }}
+                >
+                  {v.toFixed(4)}
+                </td>
+                {hasBaseline && (
+                  <td
+                    className="qpcn-error-delta"
+                    style={{
+                      textAlign: 'right',
+                      paddingLeft: 12,
+                      color: dColor,
+                    }}
+                  >
+                    {d == null ? '—' : `${d >= 0 ? '+' : ''}${d.toFixed(4)}`}
+                  </td>
+                )}
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>

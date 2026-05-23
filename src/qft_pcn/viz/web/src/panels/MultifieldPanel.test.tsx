@@ -31,6 +31,26 @@ describe('MultifieldPanel readouts', () => {
     }
   });
 
+  it('renders a Δ next to mean |g| when a baseline frame is supplied', () => {
+    // multifieldFrame.mean_abs_coupling = 0.35; baseline 0.30 -> +0.050.
+    const baseline = {
+      ...multifieldFrame,
+      layer_states: {
+        ...multifieldFrame.layer_states,
+        multifield: {
+          ...(multifieldFrame.layer_states.multifield as object),
+          mean_abs_coupling: 0.3,
+        },
+      },
+    };
+    const { container } = render(
+      <MultifieldPanel frame={multifieldFrame} baselineFrame={baseline} />,
+    );
+    const deltas = container.querySelectorAll('.panel-readout-delta');
+    expect(deltas.length).toBeGreaterThan(0);
+    expect(deltas[0].textContent).toContain('+0.050');
+  });
+
   it('renders a MetricsStrip path once enough frames are pushed', () => {
     let s = useVizStore.getState();
     s.openRun('A');

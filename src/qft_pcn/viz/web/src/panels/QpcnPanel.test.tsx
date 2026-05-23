@@ -33,6 +33,29 @@ describe('QpcnPanel readouts', () => {
     }
   });
 
+  it('renders an energy Δ and a Δ column in the pred-error table when a baseline frame is supplied', () => {
+    // qpcnFrame.energy = -1.732; baseline -1.5 -> -0.232 (improvement, green).
+    const baseline = {
+      step: 0,
+      layer_states: {
+        qpcn: {
+          energy: -1.5,
+          pred_errors: { phi: 0.3, E: 0.05 },
+          params: {},
+        },
+      },
+    };
+    const { container } = render(
+      <QpcnPanel frame={qpcnFrame} baselineFrame={baseline} />,
+    );
+    const eDelta = container.querySelector('.qpcn-energy-delta') as HTMLElement;
+    expect(eDelta).toBeTruthy();
+    expect(eDelta.textContent).toContain('-0.2320');
+    // pred-error Δ column present.
+    const errDeltas = container.querySelectorAll('.qpcn-error-delta');
+    expect(errDeltas.length).toBeGreaterThan(0);
+  });
+
   it('renders MetricsStrip paths for energy + each learnable param once enough frames are pushed', () => {
     let s = useVizStore.getState();
     s.openRun('A');

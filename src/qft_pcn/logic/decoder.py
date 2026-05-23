@@ -101,6 +101,23 @@ def _argmax_site_basis(state: MPS, site: int
     return (k, t, b, v, o, 1.0 - p_max)
 
 
+def _extended_type_from_tag(tag: int, site: int,
+                            nested_table: dict[int, Ty]) -> Ty:
+    """Recover a Ty from a flat tag, including extended-calculus tags
+    (TYPE_NAT / TYPE_LIST / TYPE_PROP). Used by the Fix binder decoder
+    where the site type tag IS the binder's param_ty tag.
+    """
+    from .mera_encoding import TYPE_NAT, TYPE_LIST, TYPE_PROP
+    from .ast import TNat, TList, TProp
+    if tag == TYPE_NAT:
+        return TNat()
+    if tag == TYPE_LIST:
+        return TList(elem=TNat())
+    if tag == TYPE_PROP:
+        return TProp()
+    return _type_from_tag(tag, site, nested_table)
+
+
 def _type_from_tag(tag: int, site: int,
                    nested_table: dict[int, Ty]) -> Ty:
     if tag in _FLAT_ARROW_TY_FROM_TAG:
@@ -181,6 +198,10 @@ def parse_kind_stream(decoded_sites: list[tuple],
     Shared by the MPS decoder (`decode`) and the MERA decoder
     (`decode_mera`): the structural parse must not be duplicated.
     """
+    # KIND_FORALL / KIND_FIX are extended-calculus kinds defined in
+    # mera_encoding; imported here so the inline binder branches can
+    # dispatch on them (Gap C).
+    from .mera_encoding import KIND_FORALL, KIND_FIX
     if nested_type_index is None:
         nested_type_index = {}
     n_total = len(decoded_sites)
@@ -220,6 +241,33 @@ def parse_kind_stream(decoded_sites: list[tuple],
             binder_stack.pop()
             lam.body = body
             return lam
+        # Forall / Fix are binders; mirror the KIND_LAM machinery (Gap C).
+        # The binder_stack only relies on `.param` for VAR resolution, so
+        # Forall / Fix nodes plug in where Lam did. param_ty recovery:
+        #   - Fix: the site type tag IS the param_ty tag (a Fix's type
+        #     equals its param_ty in _compute_ast_type), so
+        #     _extended_type_from_tag recovers it directly.
+        #   - Forall: the site type tag is TYPE_PROP (Forall returns Prop),
+        #     so param_ty is not directly recoverable; default to TNat()
+        #     since the extended calculus quantifies over Nat in the
+        #     canonical §10.10 lemma surface.
+        if ki in (KIND_FORALL, KIND_FIX):
+            from .ast import Forall as _Forall, Fix as _Fix, TNat as _TNat
+            name = _fresh_name()
+            if ki == KIND_FORALL:
+                param_ty = _TNat()
+                binder = _Forall(param=name, param_ty=param_ty,
+                                 body=Var(name=name))
+            else:
+                param_ty = _extended_type_from_tag(
+                    ti, site_idx, nested_type_index)
+                binder = _Fix(param=name, param_ty=param_ty,
+                              body=Var(name=name))
+            binder_stack.append(binder)
+            body = _parse_one()
+            binder_stack.pop()
+            binder.body = body
+            return binder
         if ki == KIND_APP:
             fn = _parse_one()
             arg = _parse_one()
@@ -281,9 +329,8 @@ def _parse_extended_kind(ki, ti, bi, vi, site_idx, parse_one):
     if ki == KIND_EQ:
         lhs = parse_one(); rhs = parse_one()
         return Eq(lhs=lhs, rhs=rhs)
-    if ki in (KIND_FORALL, KIND_FIX):
-        raise DecodeError(
-            f"site {site_idx}: Forall/Fix binder decoding is Part-2 scope")
+    # KIND_FORALL / KIND_FIX are handled inline in parse_kind_stream's
+    # _parse_one (they need binder_stack access) — Gap C resolved.
     return None
 
 

@@ -23,6 +23,26 @@ describe('MpsPanel readouts', () => {
     expect(screen.getByText('total S')).toBeInTheDocument();
   });
 
+  it('renders a Δ next to total S when a baseline frame is supplied', () => {
+    // mpsFrame.entropies sum ≈ 1.5; baseline frame with sum 1.0 -> +0.500.
+    const baseline = {
+      step: 0,
+      layer_states: {
+        mps: {
+          bond_dims: [1, 2, 4, 4, 2, 1],
+          entropies: [0.0, 0.2, 0.4, 0.3, 0.1],
+          n_sites: 6,
+          d_local: 2,
+        },
+      },
+    };
+    const { container } = render(
+      <MpsPanel frame={mpsFrame} baselineFrame={baseline} />,
+    );
+    const deltas = container.querySelectorAll('.panel-readout-delta');
+    expect(deltas.length).toBeGreaterThan(0);
+  });
+
   it('renders a MetricsStrip path once enough frames are pushed', () => {
     let s = useVizStore.getState();
     s.openRun('A');

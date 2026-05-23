@@ -159,11 +159,13 @@ function EntropyCurve({
 
 export function MpsPanel({
   frame,
+  baselineFrame,
 }: {
   frame: Frame;
   baselineFrame?: Frame;
 }) {
   const st = (frame.layer_states.mps ?? {}) as MpsState;
+  const bst = (baselineFrame?.layer_states.mps ?? {}) as MpsState;
   const bondDims = st.bond_dims ?? [];
   const entropies = st.entropies ?? [];
   const hasData = bondDims.length > 0;
@@ -172,6 +174,12 @@ export function MpsPanel({
     (a: number, v: number | null) => a + (v ?? 0),
     0,
   );
+  const baselineTotalS = baselineFrame
+    ? (bst.entropies ?? []).reduce(
+        (a: number, v: number | null) => a + (v ?? 0),
+        0,
+      )
+    : null;
   const chiMax = bondDims.length > 0 ? Math.max(...bondDims) : null;
 
   const readouts = (
@@ -179,7 +187,11 @@ export function MpsPanel({
       cells={[
         { label: 'N', value: st.n_sites ?? '—' },
         { label: 'd_local', value: st.d_local ?? '—' },
-        { label: 'total S', value: totalS.toFixed(3) },
+        {
+          label: 'total S',
+          value: totalS.toFixed(3),
+          baselineValue: baselineTotalS,
+        },
         { label: 'χ_max', value: chiMax ?? '—' },
       ]}
     />

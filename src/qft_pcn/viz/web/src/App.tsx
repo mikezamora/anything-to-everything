@@ -27,7 +27,7 @@ function PanelArea() {
       ) : !Panel ? (
         <p className="empty">No panel registered for "{selectedLayer}".</p>
       ) : (
-        <Panel frame={frame} baselineFrame={baselineFrame as any} />
+        <Panel frame={frame} baselineFrame={baselineFrame} />
       )}
     </main>
   );

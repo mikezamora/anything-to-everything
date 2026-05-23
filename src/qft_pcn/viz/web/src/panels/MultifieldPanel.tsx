@@ -204,12 +204,15 @@ function CouplingGraph({
 
 export function MultifieldPanel({
   frame,
+  baselineFrame,
 }: {
   frame: Frame;
   baselineFrame?: Frame;
 }) {
   const st = (frame.layer_states.multifield ?? {}) as MultifieldState;
+  const bst = (baselineFrame?.layer_states.multifield ?? {}) as MultifieldState;
   const fields = st.fields ?? {};
+  const baseFields = bst.fields ?? {};
   const names = Object.keys(fields);
   const hasData = names.length > 0;
 
@@ -219,12 +222,19 @@ export function MultifieldPanel({
         {
           label: 'mean |g|',
           value: st.mean_abs_coupling?.toFixed(3),
+          baselineValue: bst.mean_abs_coupling ?? null,
           highlightId: 'mean_abs_coupling',
         },
-        ...names.map((name) => ({
-          label: `‖${name}.Φ‖₂`,
-          value: norm2(fields[name]?.phi).toFixed(3),
-        })),
+        ...names.map((name) => {
+          const baseNorm = baseFields[name]?.phi
+            ? norm2(baseFields[name]!.phi)
+            : null;
+          return {
+            label: `‖${name}.Φ‖₂`,
+            value: norm2(fields[name]?.phi).toFixed(3),
+            baselineValue: baseNorm,
+          };
+        }),
       ]}
     />
   );
