@@ -413,6 +413,7 @@ it unblocks.
 
 - Status: RESOLVED in this branch (`feat(logic/encoder+decoder): Forall
   param_ty + TList elem round-trip via leaf encoding`).
+- Commit: 6a455ad.
 - Mechanism (Option A — no leaf-dim growth, respects §1.3):
   - The encoder already wrote `ty_to_tag(param_ty)` into the **value
     species** (`_mera_leaves.node_leaf_vectors`); the decoder now reads

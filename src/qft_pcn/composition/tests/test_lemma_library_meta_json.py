@@ -17,11 +17,14 @@ from src.qft_pcn.composition.lemma_library import (
     _META_SET_FIELDS,
     _meta_from_json,
     _meta_to_json,
+    _ty_from_json,
+    _ty_to_json,
     bundle_from_mera,
     structural_fingerprint,
 )
 from src.qft_pcn.logic.ast import (
-    Bin, Eq, Forall, TNat, Var, Zero,
+    Bin, BoolLit, Cons, Eq, Forall, Nil, TArrow, TBool, TInt, TList, TNat,
+    TProp, Var, Zero,
 )
 from src.qft_pcn.logic.mera_encoder import MeraEncodingMeta, encode_mera
 
@@ -190,4 +193,109 @@ def test_library_save_load_with_forall_meta(tmp_path):
     ), (
         "Round-tripped forall_protected_leaves diverged from the "
         "encoder's original set"
+    )
+
+
+# ---- Ty (de)serializer unit + regression (silent data-loss) ---------------
+
+
+def test_ty_serializer_round_trip_unit():
+    """``_ty_to_json`` / ``_ty_from_json`` cover the canonical Ty
+    subclasses parked in ``nested_type_index``: TNat, TBool, TInt,
+    TProp, TList, TArrow (recursive on elem and on src/dst)."""
+    cases = [
+        TNat(),
+        TBool(),
+        TInt(),
+        TProp(),
+        TList(elem=TBool()),
+        TList(elem=TList(elem=TArrow(src=TNat(), dst=TBool()))),
+        TArrow(src=TNat(), dst=TArrow(src=TBool(), dst=TInt())),
+    ]
+    for ty in cases:
+        assert _ty_from_json(_ty_to_json(ty)) == ty, (
+            f"Ty round-trip diverged for {ty!r}"
+        )
+
+
+def test_ty_serializer_rejects_unknown_subclass():
+    """Unknown Ty subclass must raise ``TypeError`` (no silent drop).
+
+    Pins the loud-failure contract: a future maintainer adding e.g.
+    ``TRefine`` will see a clear error rather than the prior best-effort
+    ``json.dumps``-then-skip behavior that silently lost data on load.
+    """
+    class _BogusTy:
+        pass
+    with pytest.raises(TypeError, match="unknown Ty subclass"):
+        _ty_to_json(_BogusTy())
+    with pytest.raises(TypeError, match="unknown Ty kind tag"):
+        _ty_from_json({"kind": "TRefine"})
+
+
+def _forall_list_bool_ast() -> Forall:
+    """``forall xs:List Bool. Eq (Cons true Nil) xs`` -- a Forall whose
+    param_ty is the non-flat ``TList(TBool())``. The encoder stores the
+    full Ty in ``nested_type_index`` at the binder site; the silent-skip
+    serializer dropped it, and the decoder fell back to TList(TNat()).
+    """
+    body = Eq(lhs=Cons(head=BoolLit(val=True), tail=Nil()),
+              rhs=Var(name="xs"))
+    return Forall(param="xs", param_ty=TList(elem=TBool()), body=body)
+
+
+def test_meta_to_json_preserves_list_bool_through_nested_type_index(tmp_path):
+    """Round-trip ``forall xs:List Bool`` lemma through ``_meta_to_json``
+    / ``_meta_from_json``; assert decoded ``param_ty.elem`` is ``TBool``,
+    NOT ``TNat``. Pins the silent-data-loss bug surfaced by Forall
+    param_ty spec review (`6a455ad`).
+
+    Pre-fix: ``_meta_to_json`` silently dropped every ``Ty`` value from
+    ``nested_type_index`` (``json.dumps(TList(...))`` raised; the
+    except-pass swallowed it). Cross-session load then defaulted to
+    ``TList(elem=TNat())`` via ``_extended_type_from_tag``'s legacy
+    fallback.
+    """
+    from src.qft_pcn.logic.mera_encoder import encode_mera
+    from src.qft_pcn.logic.mera_decoder import decode_mera
+
+    ast = _forall_list_bool_ast()
+    state, meta = encode_mera(ast)
+
+    # Sanity: encoder did park a TList(TBool) somewhere in the side table.
+    list_bool_sites = [
+        site for site, ty in meta.nested_type_index.items()
+        if isinstance(ty, TList) and isinstance(ty.elem, TBool)
+    ]
+    assert list_bool_sites, (
+        "encoder did not record TList(TBool()) in nested_type_index -- "
+        "this test cannot exercise the silent-data-loss path"
+    )
+
+    # Round-trip the meta through JSON.
+    restored = _meta_from_json(_meta_to_json(meta))
+
+    # The restored side table preserves TList(TBool()) at the same site(s).
+    for site in list_bool_sites:
+        cached = restored.nested_type_index.get(site)
+        assert isinstance(cached, TList), (
+            f"site {site}: TList entry dropped from nested_type_index "
+            f"(silent-data-loss bug); got {cached!r}"
+        )
+        assert isinstance(cached.elem, TBool), (
+            f"site {site}: TList.elem regressed to {cached.elem!r}; "
+            "expected TBool() -- silent fallback to TList(TNat()) means "
+            "the Ty (de)serializer is not wired"
+        )
+
+    # End-to-end: decode_mera against the restored meta gives back a
+    # Forall whose param_ty is TList(TBool()), not TList(TNat()).
+    decoded = decode_mera(state, restored)
+    decoded_ast = getattr(decoded, "ast", decoded)
+    assert isinstance(decoded_ast, Forall)
+    assert isinstance(decoded_ast.param_ty, TList)
+    assert isinstance(decoded_ast.param_ty.elem, TBool), (
+        f"decode_mera produced param_ty={decoded_ast.param_ty!r}; "
+        "expected TList(TBool()) -- silent data loss in lemma_library "
+        "JSON round-trip regressed param_ty.elem to TNat"
     )

@@ -113,6 +113,8 @@ def _extended_type_from_tag(tag: int, site: int,
     if tag == TYPE_NAT:
         return TNat()
     if tag == TYPE_LIST:
+        # Missing nested_table[site] == flat (encoder skipped via nested_binder_ty);
+        # TList(elem=TNat()) is the canonical default for legacy data.
         cached = nested_table.get(site)
         if isinstance(cached, TList):
             return cached

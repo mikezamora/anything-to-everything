@@ -346,27 +346,72 @@ _META_SET_FIELDS: tuple[str, ...] = tuple(
 )
 
 
+def _ty_to_json(ty) -> dict:
+    """Recursive Ty -> JSON-safe dict. Tagged union shape.
+
+    Covers the canonical Ty subclasses the encoder may park in
+    ``nested_type_index``. Unknown subclasses raise loudly so that a
+    future Ty kind cannot silently round-trip as ``None`` (the prior
+    best-effort ``json.dumps`` filter silently dropped every Ty instance,
+    so cross-session ``forall xs:List Bool`` loaded back as
+    ``forall xs:List Nat`` -- a silent data-loss bug).
+    """
+    from src.qft_pcn.logic.ast import (
+        TNat, TBool, TInt, TProp, TList, TArrow,
+    )
+    if isinstance(ty, TNat):
+        return {"kind": "TNat"}
+    if isinstance(ty, TBool):
+        return {"kind": "TBool"}
+    if isinstance(ty, TInt):
+        return {"kind": "TInt"}
+    if isinstance(ty, TProp):
+        return {"kind": "TProp"}
+    if isinstance(ty, TList):
+        return {"kind": "TList", "elem": _ty_to_json(ty.elem)}
+    if isinstance(ty, TArrow):
+        return {"kind": "TArrow",
+                "src": _ty_to_json(ty.src),
+                "dst": _ty_to_json(ty.dst)}
+    raise TypeError(f"unknown Ty subclass: {type(ty).__name__}")
+
+
+def _ty_from_json(d: dict):
+    """Inverse of ``_ty_to_json``. Unknown ``kind`` raises ``TypeError``."""
+    from src.qft_pcn.logic.ast import (
+        TNat, TBool, TInt, TProp, TList, TArrow,
+    )
+    kind = d["kind"]
+    if kind == "TNat":
+        return TNat()
+    if kind == "TBool":
+        return TBool()
+    if kind == "TInt":
+        return TInt()
+    if kind == "TProp":
+        return TProp()
+    if kind == "TList":
+        return TList(elem=_ty_from_json(d["elem"]))
+    if kind == "TArrow":
+        return TArrow(src=_ty_from_json(d["src"]),
+                      dst=_ty_from_json(d["dst"]))
+    raise TypeError(f"unknown Ty kind tag: {kind!r}")
+
+
 def _meta_to_json(meta: MeraEncodingMeta) -> str:
     """Serialize MeraEncodingMeta to JSON. `layout` is dropped (non-JSON,
     reconstructible by consumers from species_of_leaf + node_of_leaf via
-    M1 helpers). `nested_type_index` values may be opaque objects; we only
-    persist entries whose values are JSON-safe (empty dict is the common
-    case for hole-free encodings)."""
+    M1 helpers). `nested_type_index` values are ``Ty`` dataclasses; they
+    are routed through ``_ty_to_json`` so the full type structure
+    survives save/load (prior best-effort ``json.dumps`` filter silently
+    dropped every Ty instance -- see _ty_to_json docstring)."""
     d: dict = {}
     for f in fields(meta):
         if f.name == "layout":
             continue
         v = getattr(meta, f.name)
         if f.name == "nested_type_index":
-            # Best-effort: keep only JSON-safe values, key as str.
-            safe = {}
-            for k, val in v.items():
-                try:
-                    json.dumps(val)
-                    safe[str(k)] = val
-                except (TypeError, ValueError):
-                    pass
-            d[f.name] = safe
+            d[f.name] = {str(k): _ty_to_json(val) for k, val in v.items()}
         elif isinstance(v, dict):
             d[f.name] = {str(k): _jsonable(val) for k, val in v.items()}
         elif isinstance(v, (list, tuple, set)):
@@ -386,6 +431,10 @@ def _meta_from_json(s: str) -> MeraEncodingMeta:
                 ik = int(k)
                 if key == "site_to_ast_path":
                     coerced[ik] = tuple(val)
+                elif key == "nested_type_index":
+                    # Values are tagged-union dicts emitted by _ty_to_json;
+                    # restore the original Ty dataclass.
+                    coerced[ik] = _ty_from_json(val)
                 else:
                     coerced[ik] = val
             d[key] = coerced
