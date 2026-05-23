@@ -187,3 +187,62 @@ class Lemma:
     encoding_meta: MeraEncodingMeta
     derivation: DerivationMetadata
     fingerprint: np.ndarray
+
+
+from typing import Callable
+from src.qft_pcn.composition.errors import CompressionError
+
+
+def compress_bundle(bundle: MeraTensorBundle,
+                    energy_fn: Callable[[MeraTensorBundle], float],
+                    eps_compress: float = 1e-9) -> MeraTensorBundle:
+    """SVD-truncate the bundle's isometry bonds to the smallest bond
+    dimension that keeps energy_fn within eps_compress (spec §4.1).
+
+    energy_fn(bundle) is <Psi|H_L|Psi>; the caller (register_lemma) binds
+    it to the real M2 Hamiltonian. Truncation never grows storage: if no
+    singular value can be dropped, the bundle is returned unchanged.
+
+    The compression operates only on isometries. Other bundle fields
+    (leaf_vectors, disentanglers, inter_disentanglers, top, layer_dims)
+    are carried through unchanged.
+    """
+    base = energy_fn(bundle)
+    isos = [np.asarray(w).copy() for w in bundle.isometries]
+    for k, w in enumerate(isos):
+        mat = w.reshape(w.shape[0], -1)
+        u, s, vh = np.linalg.svd(mat, full_matrices=False)
+        for cut in range(len(s) - 1, 0, -1):
+            trial = u[:, :cut] @ np.diag(s[:cut]) @ vh[:cut, :]
+            cand = list(isos)
+            cand[k] = trial.reshape(w.shape)
+            trial_bundle = MeraTensorBundle(
+                n_leaves=bundle.n_leaves,
+                leaf_dim=bundle.leaf_dim,
+                n_layers=bundle.n_layers,
+                leaf_vectors=bundle.leaf_vectors,
+                disentanglers=bundle.disentanglers,
+                isometries=cand,
+                inter_disentanglers=bundle.inter_disentanglers,
+                top=bundle.top,
+                layer_dims=bundle.layer_dims,
+            )
+            if abs(energy_fn(trial_bundle) - base) < eps_compress:
+                isos[k] = trial.reshape(w.shape)
+            else:
+                break
+    out = MeraTensorBundle(
+        n_leaves=bundle.n_leaves,
+        leaf_dim=bundle.leaf_dim,
+        n_layers=bundle.n_layers,
+        leaf_vectors=bundle.leaf_vectors,
+        disentanglers=bundle.disentanglers,
+        isometries=isos,
+        inter_disentanglers=bundle.inter_disentanglers,
+        top=bundle.top,
+        layer_dims=bundle.layer_dims,
+    )
+    if abs(energy_fn(out) - base) >= eps_compress:
+        raise CompressionError(
+            f"compression drifted energy by >= {eps_compress}")
+    return out
