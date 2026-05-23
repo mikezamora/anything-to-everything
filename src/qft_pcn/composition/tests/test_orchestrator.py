@@ -1,0 +1,272 @@
+"""Orchestrator tests (Task 7, spec §5.3, §6.5, §7, §9.5).
+
+End-to-end of the free-energy-minimizing search loop with a stub runner +
+real LemmaLibrary + real MERA states. The real-QPCN acceptance is the
+Task 8 §10.10 inductive theorem.
+
+K-5 review tightened ``integrate_child`` to use the real
+:func:`lemma_library.register_lemma` + :class:`promoter.Promoter`
+surfaces, so the orchestrator's child runs must return ChildResults with
+real ``meta`` and ``ground_state`` -- the same pattern the K-5 result-
+integrator tests use.
+"""
+from __future__ import annotations
+
+import pytest
+
+from src.qft_pcn.composition.dispatcher import ChildResult, ThreadPoolBackend
+from src.qft_pcn.composition.errors import RevisionExhausted
+from src.qft_pcn.composition.goal_graph import (
+    Status,
+    make_sub_goal,
+)
+from src.qft_pcn.composition.lemma_library import LemmaLibrary
+from src.qft_pcn.composition.orchestrator import (
+    MAX_REVISIONS,
+    SolveResult,
+    solve_goal_graph,
+)
+from src.qft_pcn.logic.ast import parse
+from src.qft_pcn.logic.mera_encoder import encode_mera
+
+
+# ---------------------------------------------------------------------------
+# Fixtures: real LemmaLibrary + real MERA state so integrate_child's
+# register_lemma + Promoter machinery is genuinely exercised.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def lib(tmp_path):
+    """A real, file-backed LemmaLibrary in tmp_path."""
+    return LemmaLibrary(tmp_path)
+
+
+@pytest.fixture
+def child_state_meta():
+    """A real MERA ground state + encoding meta for child runs."""
+    state, meta = encode_mera(parse(r"\x:Int. x"))
+    return state, meta
+
+
+@pytest.fixture
+def parent_state_meta():
+    """A real parent MERA + meta whose species_of_leaf pattern matches the
+    child fixture at indices ``[0, n_leaves)`` -- the natural case for an
+    integrator clamping a child into an isomorphic parent region."""
+    state, meta = encode_mera(parse(r"\x:Int. x"))
+    return state, meta
+
+
+# ---------------------------------------------------------------------------
+# Stub decomposer (same shape as the goal_graph test stub).
+# ---------------------------------------------------------------------------
+
+
+class StubDecomposer:
+    """Maps a goal_prop to a fixed list of child (spec, prop) pairs."""
+
+    def __init__(self, table):
+        self._table = table
+
+    def decompose(self, node):
+        out = []
+        for i, (spec, prop) in enumerate(
+            self._table.get(node.goal.goal_prop, [])
+        ):
+            out.append(make_sub_goal(
+                spec, goal_prop=prop, boundary={}, parent_site=i,
+            ))
+        return out
+
+
+# ---------------------------------------------------------------------------
+# Test 1: three-level end-to-end -- proof tree + monotone F_hierarchy.
+# ---------------------------------------------------------------------------
+
+
+def test_solve_goal_graph_three_levels_with_stub_runner(
+    lib, child_state_meta, parent_state_meta,
+):
+    """End-to-end of the orchestrator with a stub runner + real lemma lib.
+
+    Spec invariants exercised:
+        * parallel sibling dispatch on the two leaf goals (§5.2),
+        * gated integration via the real register_lemma + Promoter (§6.3),
+        * monotone F_hierarchy across the run (§9.5),
+        * proof tree mirrors the SOLVED structure (§4.6).
+    """
+    cstate, cmeta = child_state_meta
+    pstate, pmeta = parent_state_meta
+    table = {
+        "Thm":     [({"g": "ind"}, "IndCase")],
+        "IndCase": [({"g": "L1a"}, "LemmaA"), ({"g": "L1b"}, "LemmaB")],
+    }
+
+    def stub_runner(sub_goal, timeout_s):
+        # Each child returns a real MERA ground state + meta so the
+        # integrator's register_lemma + Promoter pipeline accepts it.
+        return ChildResult(
+            goal_id=sub_goal.goal_id,
+            converged=True,
+            residual_energy=1e-9,
+            ground_state=cstate,
+            solved_ast=f"ast::{sub_goal.goal_prop}",
+            run_diagnostic={"spectral_gap": 1.0},
+            error=None,
+            meta=cmeta,
+            hamiltonian=None,
+            trotter_steps=0,
+        )
+
+    free_energies: list[float] = []
+    result = solve_goal_graph(
+        {"g": "root"}, root_prop="Thm",
+        decomposer=StubDecomposer(table),
+        backend=ThreadPoolBackend(max_workers=4),
+        lemma_library=lib,
+        runner=stub_runner, timeout_s=5.0,
+        on_step=free_energies.append,
+        parent_state=pstate, parent_meta=pmeta,
+    )
+    assert isinstance(result, SolveResult)
+    assert result.solved is True
+    # F_hierarchy monotone non-increasing across the run (spec §9.5).
+    assert all(
+        free_energies[i] >= free_energies[i + 1] - 1e-12
+        for i in range(len(free_energies) - 1)
+    )
+    assert result.proof_tree is not None
+    assert result.proof_tree.root.goal_prop == "Thm"
+    assert result.failure_report is None
+
+
+# ---------------------------------------------------------------------------
+# Test 2: root failure returns a structured report -- never a fabricated proof.
+# ---------------------------------------------------------------------------
+
+
+def test_solve_goal_graph_root_failure_returns_structured_report(lib):
+    """A non-converging runner exhausts revisions -- the orchestrator must
+    surface a structured failure_report (spec §6.5), not a fabricated proof
+    tree."""
+    def failing_runner(sub_goal, timeout_s):
+        return ChildResult(
+            goal_id=sub_goal.goal_id,
+            converged=False,
+            residual_energy=float("inf"),
+            ground_state=None,
+            solved_ast=None,
+            run_diagnostic={},
+            error="diverged",
+            meta=None,
+            hamiltonian=None,
+            trotter_steps=0,
+        )
+
+    result = solve_goal_graph(
+        {"g": "root"}, root_prop="Leaf",
+        decomposer=StubDecomposer({}),   # no decomposition -> leaf goal
+        backend=ThreadPoolBackend(max_workers=1),
+        lemma_library=lib,
+        runner=failing_runner, timeout_s=2.0,
+    )
+    assert isinstance(result, SolveResult)
+    assert result.solved is False
+    assert result.proof_tree is None
+    assert result.failure_report is not None      # structured, not fabricated
+    # The report carries the exhaustion diagnostics so the failure is
+    # diagnosable from logs alone (spec §6.5).
+    assert result.failure_report["revision_attempts"] == MAX_REVISIONS + 1
+    assert result.failure_report["root_status"] in {
+        Status.FAILED.value, Status.PENDING_REVISION.value,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Test 3: RevisionExhausted carries the failing goal_id + attempt count.
+#
+# The orchestrator catches RevisionExhausted internally at the root, but
+# the failure_report MUST preserve the exhaustion metadata (spec §6.5,
+# K Task 6 deferral note in revision.py).
+# ---------------------------------------------------------------------------
+
+
+def test_root_failure_report_carries_revision_exhaustion_metadata(lib):
+    """The structured report exposes the typed-error fields so callers can
+    branch on revision exhaustion specifically."""
+    def failing_runner(sub_goal, timeout_s):
+        return ChildResult(
+            goal_id=sub_goal.goal_id, converged=False,
+            residual_energy=float("inf"), ground_state=None,
+            solved_ast=None, run_diagnostic={}, error="diverged",
+            meta=None, hamiltonian=None, trotter_steps=0,
+        )
+
+    result = solve_goal_graph(
+        {"g": "root"}, root_prop="Leaf",
+        decomposer=StubDecomposer({}),
+        backend=ThreadPoolBackend(max_workers=1),
+        lemma_library=lib,
+        runner=failing_runner, timeout_s=2.0,
+    )
+    assert result.solved is False
+    report = result.failure_report
+    assert report is not None
+    # The exhausted goal_id is carried so a caller can locate the failing
+    # sub-tree in the parent's bookkeeping.
+    assert "exhausted_goal_id" in report
+    assert isinstance(report["exhausted_goal_id"], str)
+    # MAX_REVISIONS retries + 1 initial attempt = MAX_REVISIONS + 1.
+    assert report["revision_attempts"] == MAX_REVISIONS + 1
+
+
+# ---------------------------------------------------------------------------
+# Test 4: a RevisionExhausted under a non-root subtree still surfaces as a
+# root-level structured report. The orchestrator must never silently loop
+# (anti-shortcut: silent infinite retry is the §6.5 antipattern).
+# ---------------------------------------------------------------------------
+
+
+def test_subtree_revision_exhaustion_bubbles_into_root_failure_report(
+    lib, child_state_meta,
+):
+    cstate, cmeta = child_state_meta
+
+    def failing_runner(sub_goal, timeout_s):
+        # Every child diverges -- a sub-goal under the root will exhaust
+        # its revision budget; that exhaustion bubbles up as a typed error
+        # that the root wrapper catches into the structured report.
+        return ChildResult(
+            goal_id=sub_goal.goal_id, converged=False,
+            residual_energy=float("inf"), ground_state=None,
+            solved_ast=None, run_diagnostic={}, error="diverged",
+            meta=None, hamiltonian=None, trotter_steps=0,
+        )
+
+    table = {"Thm": [({"g": "child"}, "ChildLeaf")]}
+    result = solve_goal_graph(
+        {"g": "root"}, root_prop="Thm",
+        decomposer=StubDecomposer(table),
+        backend=ThreadPoolBackend(max_workers=1),
+        lemma_library=lib,
+        runner=failing_runner, timeout_s=2.0,
+    )
+    assert result.solved is False
+    assert result.failure_report is not None
+    # The orchestrator never raised to the caller -- exhaustion is captured.
+    assert "exhausted_goal_id" in result.failure_report
+
+
+# ---------------------------------------------------------------------------
+# Test 5: RevisionExhausted is a real, typed error -- the orchestrator
+# imports it from composition.errors (not a string sentinel). This anchors
+# the §6.5 typed-error contract.
+# ---------------------------------------------------------------------------
+
+
+def test_revision_exhausted_is_a_typed_error_from_composition_errors():
+    e = RevisionExhausted(goal_id="g_test", attempts=4)
+    assert e.goal_id == "g_test"
+    assert e.attempts == 4
+    assert isinstance(e, Exception)
