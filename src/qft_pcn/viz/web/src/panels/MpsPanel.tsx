@@ -12,6 +12,8 @@ import Plotly from 'plotly.js-dist-min';
 import type { Data as PlotData, Layout as PlotLayout } from 'plotly.js-dist-min';
 import type { Frame } from '../lib/types';
 import { PanelShell } from './PanelShell';
+import { PanelReadouts } from './PanelReadouts';
+import { MetricsStrip } from './MetricsStrip';
 import { useSize } from './common';
 
 interface MpsState {
@@ -155,11 +157,53 @@ function EntropyCurve({
   return <div ref={ref} style={{ width: '100%', height: '100%' }} />;
 }
 
-export function MpsPanel({ frame }: { frame: Frame }) {
+export function MpsPanel({
+  frame,
+}: {
+  frame: Frame;
+  baselineFrame?: Frame;
+}) {
   const st = (frame.layer_states.mps ?? {}) as MpsState;
   const bondDims = st.bond_dims ?? [];
   const entropies = st.entropies ?? [];
   const hasData = bondDims.length > 0;
+
+  const totalS = (st.entropies ?? []).reduce(
+    (a: number, v: number | null) => a + (v ?? 0),
+    0,
+  );
+  const chiMax = bondDims.length > 0 ? Math.max(...bondDims) : null;
+
+  const readouts = (
+    <PanelReadouts
+      cells={[
+        { label: 'N', value: st.n_sites ?? '—' },
+        { label: 'd_local', value: st.d_local ?? '—' },
+        { label: 'total S', value: totalS.toFixed(3) },
+        { label: 'χ_max', value: chiMax ?? '—' },
+      ]}
+    />
+  );
+
+  const metricsStrip = (
+    <MetricsStrip
+      layer="mps"
+      metrics={[
+        {
+          key: 'totalS',
+          label: 'total S',
+          color: '#9aedc1',
+          select: (ls) => {
+            const ents = (ls.entropies ?? []) as (number | null)[];
+            return ents.reduce(
+              (a: number, v: number | null) => a + (v ?? 0),
+              0,
+            );
+          },
+        },
+      ]}
+    />
+  );
 
   return (
     <PanelShell
@@ -171,6 +215,8 @@ export function MpsPanel({ frame }: { frame: Frame }) {
           : undefined
       }
       hasData={hasData}
+      readouts={readouts}
+      metricsStrip={metricsStrip}
     >
       <div
         style={{ display: 'flex', flexDirection: 'column', height: '100%' }}
