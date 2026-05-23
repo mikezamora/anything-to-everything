@@ -49,7 +49,7 @@ from src.qft_pcn.composition.dispatcher import (
     ChildResult,
     ThreadPoolBackend,
 )
-from src.qft_pcn.composition.goal_graph import make_sub_goal
+from src.qft_pcn.composition.goal_graph import ProofTree, make_sub_goal
 from src.qft_pcn.composition.lemma_library import LemmaLibrary
 from src.qft_pcn.composition.orchestrator import (
     SolveResult,
@@ -303,8 +303,8 @@ def test_orchestrator_solves_inductive_theorem_end_to_end(lemma_lib):
         f"-- substrate seam may have re-opened. "
         f"failure_report={result.failure_report}"
     )
-    assert result.proof_tree is not None, (
-        "result.solved is True but proof_tree is None -- §6.5 "
+    assert isinstance(result.proof_tree, ProofTree), (
+        "result.solved is True but proof_tree is not a ProofTree -- §6.5 "
         "exactly-one-non-None invariant violated"
     )
     assert result.failure_report is None, (
