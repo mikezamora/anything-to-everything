@@ -261,22 +261,28 @@ it unblocks.
   [...])` for non-trivial decomposers (J-Task / decomposer follow-on)
   now has the canonical leaf tuple to consume.
 
-## Missing dependency: orchestrator does not own a parent MERA
+## RESOLVED: orchestrator does not own a parent MERA
 
-- Where: `src/qft_pcn/composition/orchestrator.py:85-86` (`parent_state`,
-  `parent_meta` default to `None`) and the resulting
-  `integrate_child(None, None, ...)` call.
-- Need: the orchestrator should own (or accept) a parent MERA + meta so
-  every integrated child's lemma is genuinely clamped into the parent's
-  tensor network -- the §6.1 acceptance.
-- Workaround: `integrate_child` registers the lemma (real I-Task-7
-  surface) and marks the node SOLVED, but skips the
-  `Promoter.apply_init_clamp` step when `parent_state is None`. The
-  orchestrator's existing tests rely on this graceful skip; promoting
-  the orchestrator to own a parent MERA is its own follow-on.
-- Unblocks: §6.1 / §8.6 end-to-end clamp via the orchestrator entry
-  point (currently only exercised by the unit tests in
-  `test_result_integrator.py`).
+- Status: RESOLVED. `solve_goal_graph(..., parent_state, parent_meta,
+  ...)` now requires both arguments (Option A from the gap directive
+  -- the orchestrator is a solver over an EXISTING workspace, so the
+  caller hands in a pre-built parent MERA + meta). A `None` for
+  either raises `TypeError` immediately at the entry point; the
+  `if parent_state is None` graceful-skip path inside
+  `result_integrator.integrate_child` is now unreachable from the
+  orchestrator. Every solved SubGoal's lemma fires
+  `Promoter.apply_init_clamp` against the parent network -- the §1.1
+  entanglement-binding clamp the workaround had silently skipped.
+- Pinned by:
+  `src/qft_pcn/composition/tests/test_orchestrator_parent_workspace.py`
+  -- `test_orchestrator_clamps_lemma_into_parent_mera` (parent leaves
+  at the clamped window are bitwise-overwritten with the cached child
+  tensor at strength 1.0); `test_orchestrator_refuses_without_parent_workspace`
+  (TypeError raised, no silent degradation);
+  `test_orchestrator_preserves_unclamped_leaves` (sentinel host leaf
+  outside `parent_leaves` is bitwise-unchanged -- §1.3 factored op).
+  The five pre-existing `test_orchestrator.py` tests migrated to
+  pass `parent_state=pstate, parent_meta=pmeta` and all still pass.
 
 ## RESOLVED: `decoder.parse_one` rejects `KIND_FORALL` / `KIND_FIX` (Gap C)
 
