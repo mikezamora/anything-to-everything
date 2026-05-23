@@ -45,28 +45,33 @@ def run_child(sub_goal: SubGoal, *, chi_max: int = DEFAULT_CHI_MAX,
               timeout_s: float) -> ChildResult:
     """Package sub_goal as a DSL spec and run it through G's bridge.
 
-    Consumes bridge.dsl.pipeline.compile_dsl + bridge.runtime evolution;
-    adapts RunResult into ChildResult. Never re-implements the runner.
+    Consumes bridge.runtime.run_problem (which itself calls
+    bridge.dsl.pipeline.compile_dsl + evolve_with_clamps); adapts
+    RunResult into ChildResult. Never re-implements the runner.
 
     NOTE on ``timeout_s``: this parameter is *informational only* in the
-    shipped runner. ``run_evolution`` is a synchronous, uninterruptible
+    shipped runner. ``run_problem`` is a synchronous, uninterruptible
     call from outside its thread, so the dispatcher's outer ``wait`` is
     what actually bounds the batch. A straggler's pool thread can leak
-    until ``run_evolution`` returns of its own accord; the dispatcher
+    until ``run_problem`` returns of its own accord; the dispatcher
     will still surface a timeout ``ChildResult`` to its siblings on
     schedule. A future runner is free to honour ``timeout_s`` directly
-    (e.g. by passing an iteration budget to ``run_evolution``).
+    (e.g. by passing an iteration budget through ``search``).
     """
-    from src.qft_pcn.bridge.dsl.pipeline import compile_dsl
-    from src.qft_pcn.bridge.runtime.evolution import run as run_evolution  # G entry
+    from src.qft_pcn.bridge.runtime import run_problem  # G entry
 
     spec = dict(sub_goal.dsl_spec)
     # parent-context constraints become the child's boundary conditions
     spec.setdefault("boundary", {})
     spec["boundary"].update(sub_goal.boundary)
+    # ``chi_max`` is consumed by ``run_problem`` via ``spec['search']``;
+    # the dispatcher's default supplies the spec §10.10 acceptance value
+    # unless the caller already set one in the DSL spec.
+    search = dict(spec.get("search") or {})
+    search.setdefault("chi_max", chi_max)
+    spec["search"] = search
 
-    compiled = compile_dsl(spec)
-    run_result = run_evolution(compiled, chi_max=chi_max)
+    run_result = run_problem(spec)
     return ChildResult(
         goal_id=sub_goal.goal_id,
         converged=bool(run_result.converged),
@@ -75,6 +80,9 @@ def run_child(sub_goal: SubGoal, *, chi_max: int = DEFAULT_CHI_MAX,
         solved_ast=getattr(run_result, "solved_ast", None),
         run_diagnostic=run_result.to_dict(),
         error=None,
+        meta=getattr(run_result, "meta", None),
+        hamiltonian=getattr(run_result, "hamiltonian", None),
+        trotter_steps=int(getattr(run_result, "trotter_steps", 0) or 0),
     )
 
 

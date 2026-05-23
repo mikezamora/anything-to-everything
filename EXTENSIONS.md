@@ -18,11 +18,17 @@ it unblocks.
   remain `None` here and are the MERA-runner's responsibility (see the
   K-8 §10.10 path: a caller that owns `encode_mera`/`decode_mera` can
   populate the same fields end-to-end).
-  `composition/dispatcher.py::run_child` already reads the new fields via
-  `getattr`, so no dispatcher change is required.
+  `composition/dispatcher.py::run_child` reads the new fields via
+  `getattr` and now wires through `bridge.runtime.run_problem` directly
+  (previously imported a non-existent `run` symbol from
+  `bridge.runtime.evolution`; the broken import was masked because every
+  shipped dispatcher test used stub runners). A real-bridge integration
+  test (`test_run_child_invokes_real_bridge_pipeline`) locks in the
+  contract.
 - Tests: `src/qft_pcn/tests/test_bridge_result_enrichment.py` (5 cases:
   legacy default, round-trip, end-to-end population, trotter-step
-  fidelity, and the dispatcher's `getattr` access pattern).
+  fidelity, and the dispatcher's `getattr` access pattern) plus
+  `src/qft_pcn/composition/tests/test_dispatcher.py::test_run_child_invokes_real_bridge_pipeline`.
 - Unblocks: K-5 acceptance (real lemma registration on every solved
   child), §8.6 / §8.11 promotion acceptance via the dispatcher path,
   K-8 §10.10 acceptance.

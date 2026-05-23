@@ -7,6 +7,7 @@ from src.qft_pcn.composition.goal_graph import make_sub_goal, Node, Status
 from src.qft_pcn.composition.dispatcher import (
     ChildResult, ThreadPoolBackend, dispatch_siblings, run_child,
 )
+from src.qft_pcn.bridge.runtime.hamiltonian import BridgeHamiltonian
 
 
 def _sub(name, prop="P"):
@@ -131,3 +132,52 @@ def test_dispatch_timeout_is_absolute_across_siblings():
     assert math.isinf(slow.residual_energy)
     assert by_id[nodes[0].goal.goal_id].converged is True
     assert by_id[nodes[1].goal.goal_id].converged is True
+
+
+@pytest.fixture
+def _no_large_dense():
+    """Override conftest's §9.7 MERA-memory guard for the real-bridge test.
+
+    The bridge MPS path legitimately allocates 16x16+ matrices for
+    imaginary-time evolution (cutoff=4, 2 sites -> d=16 product space);
+    that ceiling is a MERA-side invariant and does not apply here.
+    """
+    yield
+
+
+def test_run_child_invokes_real_bridge_pipeline(_no_large_dense):
+    """run_child must go through bridge.runtime.run_problem end-to-end.
+
+    Locks in the import-correctness invariant the stub-runner tests above
+    cannot exercise: any future regression that breaks the live bridge
+    wiring (e.g. another missing symbol) will fail here loudly.
+    """
+    # A simple boundary-pinned problem the bridge converges quickly;
+    # mirrors the converged-flag fixture in test_bridge_runtime_run.py.
+    dsl_spec = {
+        "fields": [{"name": "x", "cutoff": 4}],
+        "sites": 2,
+        "constraints": [
+            {"kind": "local", "site": 0, "term": "x == 0", "weight": 5.0},
+        ],
+        "observables": [{"site": 0, "field": "x", "op": "n"}],
+        "search": {"method": "imag_time", "steps": 50, "chi_max": 4,
+                   "dt": 0.05},
+    }
+    sub_goal = make_sub_goal(dsl_spec, goal_prop="X_pinned",
+                              boundary={}, parent_site=0)
+
+    result = run_child(sub_goal, timeout_s=60.0)
+
+    assert isinstance(result, ChildResult)
+    assert result.error is None
+    # Real bridge pipeline -- not a stub.
+    assert result.converged is True
+    # RunResult.ground_state must propagate through (EXTENSIONS#1).
+    assert result.ground_state is not None
+    # MPS path: hamiltonian + trotter_steps populated; meta / solved_ast None.
+    assert isinstance(result.hamiltonian, BridgeHamiltonian)
+    assert result.trotter_steps == 50
+    # run_diagnostic carries the RunResult.to_dict() payload.
+    assert result.run_diagnostic["converged"] is True
+    assert "energy" in result.run_diagnostic
