@@ -410,10 +410,18 @@ def encode_mera(ast: Node, n_nodes_max: int = 32,
     # Nested-arrow type side table, keyed by node index — exactly what the
     # MPS meta.nested_type_index carries, so the shared structural parse
     # can recover a Lam's higher-order param type.
+    # Extended (Forall/Fix non-flat param_ty, Nil/Cons non-Nat elem): also
+    # record the binder's full param_ty / list-elem Ty so the decoder
+    # round-trips `forall xs:List Bool` etc. rather than collapsing to TNat.
+    from ._mera_leaves import nested_binder_ty as _nested_binder_ty
     nested_type_index: dict[int, object] = {}
     for node_idx in range(n_nodes):
         if type_tags[node_idx] == TYPE_ARR_NESTED and sites[node_idx].ty is not None:
             nested_type_index[node_idx] = sites[node_idx].ty
+        else:
+            extra = _nested_binder_ty(sites[node_idx])
+            if extra is not None:
+                nested_type_index[node_idx] = extra
 
     # children_of_node: parent AST node index -> child node indices.
     # A node c is a child of node p iff c's ast_path == p's ast_path + (j,)
@@ -611,11 +619,16 @@ def _encode_with_type_holes(ast: Node, n_nodes_max: int,
             binder_node = occ.var_ref.binder_site
             use_to_binder[use_leaf] = layout.leaf_of(binder_node, "bid")
 
+    from ._mera_leaves import nested_binder_ty as _nested_binder_ty
     nested_type_index: dict[int, object] = {}
     for node_idx in range(n_nodes):
         if (type_tags[node_idx] == TYPE_ARR_NESTED
                 and sites[node_idx].ty is not None):
             nested_type_index[node_idx] = sites[node_idx].ty
+        else:
+            extra = _nested_binder_ty(sites[node_idx])
+            if extra is not None:
+                nested_type_index[node_idx] = extra
 
     children_of_node: dict[int, list[int]] = {i: [] for i in range(n_nodes)}
     path_to_node: dict[tuple, int] = {}
@@ -877,6 +890,7 @@ def _encode_with_structural_holes(ast: Node, n_nodes_max: int,
             if binder_new is not None:
                 use_to_binder[use_leaf] = layout.leaf_of(binder_new, "bid")
 
+    from ._mera_leaves import nested_binder_ty as _nested_binder_ty
     nested_type_index: dict[int, object] = {}
     for sub_idx in range(n_sub):
         if sub_idx in hole_set:
@@ -885,6 +899,10 @@ def _encode_with_structural_holes(ast: Node, n_nodes_max: int,
         if (sub_type_tags[sub_idx] == TYPE_ARR_NESTED
                 and sub_sites[sub_idx].ty is not None):
             nested_type_index[new_idx] = sub_sites[sub_idx].ty
+        else:
+            extra = _nested_binder_ty(sub_sites[sub_idx])
+            if extra is not None:
+                nested_type_index[new_idx] = extra
 
     # children_of_node by expanded-slot ast_path (concrete nodes only).
     children_of_node: dict[int, list[int]] = {i: [] for i in range(n_total)}
@@ -1226,11 +1244,16 @@ def _encode_bundle(bundle: Bundle, n_nodes_max: int,
             use_to_binder[use_leaf] = layout.leaf_of(
                 occ.var_ref.binder_site, "bid")
 
+    from ._mera_leaves import nested_binder_ty as _nested_binder_ty
     nested_type_index: dict[int, object] = {}
     for node_idx in range(n_total):
         if (type_tags_all[node_idx] == TYPE_ARR_NESTED
                 and sites_all[node_idx].ty is not None):
             nested_type_index[node_idx] = sites_all[node_idx].ty
+        else:
+            extra = _nested_binder_ty(sites_all[node_idx])
+            if extra is not None:
+                nested_type_index[node_idx] = extra
 
     children_of_node: dict[int, list[int]] = {i: [] for i in range(n_total)}
     path_to_node: dict[tuple, int] = {}

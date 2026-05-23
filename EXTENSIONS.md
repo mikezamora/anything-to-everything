@@ -241,22 +241,25 @@ it unblocks.
 - Unblocks: K-5 acceptance (real lemma registration on every solved
   child), §8.6 / §8.11 promotion acceptance via the dispatcher path.
 
-## Missing dependency: SubGoal.parent_site is a single int, not a leaf tuple
+## RESOLVED: `SubGoal.parent_site` widened to `parent_leaves: tuple[int, ...]`
 
-- Where: `src/qft_pcn/composition/goal_graph.py:36` (`SubGoal.parent_site:
-  int | None`) and `result_integrator._resolve_host_leaves`.
-- Need: a parent-aware decomposer that publishes the *full* host-leaf
-  window the child lemma is meant to occupy, e.g. `parent_leaves:
-  tuple[int, ...]`. The current single-int field underspecifies the
-  clamp: lemma footprints span `n_leaves > 1` host sites.
-- Workaround: `_resolve_host_leaves` extends `parent_site` to the
-  contiguous window `[parent_site, parent_site + child_meta.n_leaves)`.
-  This is the principled one-shot expansion for a child that decomposed
-  out of an isomorphic parent region and is what the integrator tests
-  exercise; a non-contiguous or species-permuted layout would need the
-  richer SubGoal field.
+- Where: `src/qft_pcn/composition/goal_graph.py` (`SubGoal.parent_leaves`)
+  and `result_integrator._resolve_host_leaves`.
+- Mechanism: `SubGoal.parent_site: int | None` replaced with the
+  canonical wire-format field `parent_leaves: tuple[int, ...]` (default
+  `()` for the root sentinel). Non-contiguous / species-permuted
+  layouts are first-class: the decomposer publishes the explicit leaf
+  tuple and `_resolve_host_leaves` returns it verbatim -- no extension
+  from `child_meta.n_leaves`, no rebuild from a single base int. A
+  convenience constructor `make_contiguous_sub_goal(base, n_leaves)`
+  builds the contiguous window for isomorphic decomposers. All callers
+  (`build_goal_graph`, `revision.HeuristicReviser`, `revise` LLM path,
+  every composition test) migrated. Cited in `_resolve_host_leaves`
+  docstring + new test
+  `composition/tests/test_subgoal_parent_leaves.py`.
 - Unblocks: integrator's call to `Promoter.compile_constraint(... leaves=
-  [...])` for non-trivial decomposers (J-Task / decomposer follow-on).
+  [...])` for non-trivial decomposers (J-Task / decomposer follow-on)
+  now has the canonical leaf tuple to consume.
 
 ## Missing dependency: orchestrator does not own a parent MERA
 
@@ -399,21 +402,27 @@ it unblocks.
 - Unblocks: K-Task-8 acceptance on the spec's literal §10.10
   theorem `forall xs:List A. length (reverse xs) = length xs`.
 
-## Missing dependency: Forall param_ty recovery limited to TNat; TList elem limited to TNat
+## RESOLVED: Forall param_ty recovery limited to TNat; TList elem limited to TNat
 
-- Where: `src/qft_pcn/logic/decoder.py` — `_parse_one` `KIND_FORALL` branch
-  defaults `param_ty=TNat()` because the Forall's site type tag IS
-  `TYPE_PROP` (Forall returns Prop, not its param's type). Symmetrically,
-  `_extended_type_from_tag` returns `TList(elem=TNat())` for `TYPE_LIST`
-  because a flat type tag carries no element type.
-- Need: an auxiliary encoding slot (e.g. the `bid` species on Forall sites,
-  currently unused except as the binder ID) to carry the param_ty tag.
-  Symmetric slot for TList element type.
-- Workaround: TNat default is faithful to §10.10's canonical Nat-centric
-  inductive lemmas (`forall x:Nat. ...`). Every test today uses Nat
-  quantifiers. Non-Nat quantifiers (`forall b:Bool. ...`,
-  `forall xs:List Bool. ...`) would round-trip with wrong param_ty.
-- Unblocks: K-Task-? and any §12 physics extension whose lemmas use
-  non-Nat quantifiers. The §10.10 inductive path proven at substrate
-  (`test_cross_level_acceptance.py`) uses Nat, so this is not blocking
-  current acceptance.
+- Status: RESOLVED in this branch (`feat(logic/encoder+decoder): Forall
+  param_ty + TList elem round-trip via leaf encoding`).
+- Mechanism (Option A — no leaf-dim growth, respects §1.3):
+  - The encoder already wrote `ty_to_tag(param_ty)` into the **value
+    species** (`_mera_leaves.node_leaf_vectors`); the decoder now reads
+    that species (`vi`) in the `KIND_FORALL` branch via
+    `_extended_type_from_tag(vi, ...)` instead of defaulting to TNat.
+  - For non-flat param_ty (TList with non-Nat elem, nested TArrow) the
+    encoder additionally records the full Ty in
+    `nested_type_index[site_idx]` via the new helper
+    `_mera_leaves.nested_binder_ty(occ)`. This reuses the existing
+    side-table mechanism already used for `TYPE_ARR_NESTED` Lam sites,
+    so the decoder reconstructs `TList(elem=TBool())` rather than the
+    legacy `TList(elem=TNat())` default.
+  - Symmetric treatment of Nil / Cons sites (their `elem` is also
+    written via `nested_binder_ty`).
+- Tests: `src/qft_pcn/tests/test_decoder_forall_non_nat.py`
+  (`forall b:Bool`, `forall x:Int`, `forall xs:List Nat`,
+  `forall xs:List Bool`, Nat no-regression — 5 cases all green).
+- No-regression: `test_decoder_forall_fix.py` +
+  `test_mera_forall_protected.py` (Gap C + I-Task-10 #5) still pass;
+  `test_mera_reduction.py` + `test_mera_roundtrip.py` unchanged (16/16).

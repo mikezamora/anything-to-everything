@@ -30,10 +30,15 @@ def encode(ast: Node, N: int = 32, chi_max: int = 32
     state = MPS(tensors=tensors)
     state.normalize()
 
+    from ._mera_leaves import nested_binder_ty as _nested_binder_ty
     nested: dict[int, Ty] = {}
     for k, occ in enumerate(sites):
         if type_tags[k] == TYPE_ARR_NESTED and occ.ty is not None:
             nested[k] = occ.ty
+        else:
+            extra = _nested_binder_ty(occ)
+            if extra is not None:
+                nested[k] = extra
 
     nested_tobl: dict[int, Ty] = {}
     for k, occ in enumerate(sites):

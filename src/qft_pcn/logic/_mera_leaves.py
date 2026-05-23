@@ -16,6 +16,40 @@ from .mera_encoding import (
 from ._types import ty_to_tag
 
 
+def nested_binder_ty(occ: NodeOccupancy):
+    """For Forall / Fix / Nil / Cons sites, return the *full* ``param_ty``
+    (for binders) or ``elem`` (for Nil/Cons) when it is non-flat — i.e.
+    when ``ty_to_tag`` would collapse it to a single tag and lose
+    structural information.
+
+    The encoder records the returned Ty in ``nested_type_index[site_idx]``
+    so the decoder can reconstruct, e.g., ``forall xs:List Bool`` rather
+    than defaulting to ``TList(elem=TNat())``. Returns ``None`` for flat
+    types (TNat / TInt / TBool / TProp / TList(elem=TNat()) / etc.) where
+    the leaf encoding alone suffices.
+    """
+    from .ast import TList as _TList, TArrow as _TArrow, TNat as _TNat
+    if occ.kind in (KIND_FORALL, KIND_FIX):
+        if occ.binder_ref is None:
+            return None
+        pty = occ.binder_ref.lam_node.param_ty
+    elif occ.kind in (KIND_NIL, KIND_CONS):
+        pty = getattr(occ.ty, "elem", None)
+    else:
+        return None
+    if pty is None:
+        return None
+    # A nested TArrow always needs the side table (matches the existing
+    # TYPE_ARR_NESTED mechanism).
+    if isinstance(pty, _TArrow):
+        return pty
+    # A TList whose elem is anything other than TNat (the legacy default
+    # baked into ``_extended_type_from_tag``) needs the side table.
+    if isinstance(pty, _TList) and not isinstance(pty.elem, _TNat):
+        return pty
+    return None
+
+
 def _one_hot(index: int) -> np.ndarray:
     v = np.zeros(MERA_LEAF_DIM, dtype=complex)
     v[index] = 1.0

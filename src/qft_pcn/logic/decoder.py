@@ -113,6 +113,9 @@ def _extended_type_from_tag(tag: int, site: int,
     if tag == TYPE_NAT:
         return TNat()
     if tag == TYPE_LIST:
+        cached = nested_table.get(site)
+        if isinstance(cached, TList):
+            return cached
         return TList(elem=TNat())
     if tag == TYPE_PROP:
         return TProp()
@@ -247,16 +250,30 @@ def parse_kind_stream(decoded_sites: list[tuple],
         # Forall / Fix nodes plug in where Lam did. param_ty recovery:
         #   - Fix: the site type tag IS the param_ty tag (a Fix's type
         #     equals its param_ty in _compute_ast_type), so
-        #     _extended_type_from_tag recovers it directly.
+        #     _extended_type_from_tag recovers it directly from ti.
         #   - Forall: the site type tag is TYPE_PROP (Forall returns Prop),
-        #     so param_ty is not directly recoverable; default to TNat()
-        #     since the extended calculus quantifies over Nat in the
-        #     canonical §10.10 lemma surface.
+        #     so param_ty is recovered from the *value* species (vi),
+        #     which the encoder overrides with ``ty_to_tag(param_ty)`` in
+        #     ``_mera_leaves.node_leaf_vectors``. For nested param_ty
+        #     (TList with non-Nat elem, higher-order TArrow), the full Ty
+        #     is keyed by site in ``nested_type_index``.
         if ki in (KIND_FORALL, KIND_FIX):
-            from .ast import Forall as _Forall, Fix as _Fix, TNat as _TNat
+            from .ast import Forall as _Forall, Fix as _Fix
             name = _fresh_name()
             if ki == KIND_FORALL:
-                param_ty = _TNat()
+                from .ast import TNat as _TNat
+                # vi == TYPE_NONE (0) means the value species was not
+                # written with a param_ty tag (legacy or hole-bearing
+                # paths) — fall back to TNat (the §10.10 canonical
+                # surface) rather than misdecoding to TInt.
+                if vi == TYPE_NONE:
+                    param_ty = _TNat()
+                else:
+                    try:
+                        param_ty = _extended_type_from_tag(
+                            vi, site_idx, nested_type_index)
+                    except DecodeError:
+                        param_ty = _TNat()
                 binder = _Forall(param=name, param_ty=param_ty,
                                  body=Var(name=name))
             else:
