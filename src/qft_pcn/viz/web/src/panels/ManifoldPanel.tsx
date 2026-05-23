@@ -13,6 +13,9 @@ import { OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
 import type { Frame } from '../lib/types';
 import { PanelShell } from './PanelShell';
+import { PanelToolbar, type ToolbarItem } from './PanelToolbar';
+import { PanelReadouts } from './PanelReadouts';
+import { MetricsStrip } from './MetricsStrip';
 import { diverging, normGrid } from './common';
 
 type Grid = number[][];
@@ -79,14 +82,21 @@ function Surface({
   );
 }
 
-export function ManifoldPanel({ frame }: { frame: Frame }) {
+export function ManifoldPanel({
+  frame,
+}: {
+  frame: Frame;
+  baselineFrame?: Frame;
+}) {
   const st = (frame.layer_states.manifold ?? {}) as ManifoldState;
   const [overlay, setOverlay] = useState<'phi' | 'E' | 'Pi' | null>(null);
+  const [channel, setChannel] = useState(0);
 
   // Base warped grid: height = h_xx, colour = ricci.
   const baseHeight = st.metric_h?.h_xx ?? st.ricci ?? null;
   const baseColor = st.ricci ?? st.metric_h?.h_xx ?? null;
   const field = st.fields?.[0];
+  const nChannels = field?.channels ?? 1;
   const overlayGrid =
     overlay === 'phi'
       ? field?.phi
@@ -98,6 +108,64 @@ export function ManifoldPanel({ frame }: { frame: Frame }) {
 
   const hasData = !!baseHeight && !!baseColor;
 
+  const toolbarItems: ToolbarItem[] = (['phi', 'E', 'Pi'] as const).map((k) => ({
+    key: k,
+    label: k,
+    active: overlay === k,
+    onToggle: () => setOverlay((cur) => (cur === k ? null : k)),
+    disabled: !field,
+  }));
+
+  const toolbar = (
+    <>
+      <PanelToolbar items={toolbarItems} />
+      <label style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+        channel
+        <select
+          aria-label="channel"
+          value={channel}
+          onChange={(e) => setChannel(Number(e.target.value))}
+        >
+          {Array.from({ length: nChannels }, (_, i) => (
+            <option key={i} value={i}>
+              {i}
+            </option>
+          ))}
+        </select>
+      </label>
+    </>
+  );
+
+  const gridSize = st.metric_h?.h_xx?.length;
+  const readouts = (
+    <PanelReadouts
+      cells={[
+        {
+          label: 'mean |R|',
+          value:
+            st.mean_abs_ricci != null ? st.mean_abs_ricci.toFixed(3) : null,
+          highlightId: 'mean_abs_ricci',
+        },
+        { label: 'layers', value: st.fields?.length ?? 0 },
+        { label: 'grid', value: gridSize ? `${gridSize}²` : '—' },
+      ]}
+    />
+  );
+
+  const metricsStrip = (
+    <MetricsStrip
+      layer="manifold"
+      metrics={[
+        {
+          key: 'mar',
+          label: 'mean|R|',
+          color: '#6cd0ff',
+          select: (ls) => ls.mean_abs_ricci as number,
+        },
+      ]}
+    />
+  );
+
   return (
     <PanelShell
       title="Manifold — warped metric grid"
@@ -108,38 +176,11 @@ export function ManifoldPanel({ frame }: { frame: Frame }) {
           : undefined
       }
       hasData={hasData}
+      toolbar={toolbar}
+      readouts={readouts}
+      metricsStrip={metricsStrip}
     >
       <div style={{ position: 'absolute', inset: 0 }}>
-        <div
-          style={{
-            position: 'absolute',
-            zIndex: 2,
-            top: 8,
-            left: 8,
-            display: 'flex',
-            gap: 4,
-          }}
-        >
-          {(['phi', 'E', 'Pi'] as const).map((k) => (
-            <button
-              key={k}
-              type="button"
-              onClick={() => setOverlay((cur) => (cur === k ? null : k))}
-              style={{
-                background: overlay === k ? '#2b3a6b' : '#161b29',
-                color: '#c8d0e0',
-                border: '1px solid #2a3450',
-                borderRadius: 4,
-                padding: '2px 8px',
-                fontSize: 11,
-                cursor: 'pointer',
-              }}
-              disabled={!field}
-            >
-              {k}
-            </button>
-          ))}
-        </div>
         {hasData && (
           <Canvas camera={{ position: [3.5, 3.5, 3.5], fov: 50 }}>
             <color attach="background" args={['#0b0e14']} />
