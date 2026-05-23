@@ -42,8 +42,9 @@ from src.qft_pcn.logic.ast import (
     parse,
 )
 from src.qft_pcn.logic.encoding import VALUE_TRUE
+from src.qft_pcn.logic.mera_decoder import decode_mera
 from src.qft_pcn.logic.mera_encoder import encode_mera
-from src.qft_pcn.logic.mera_encoding import KIND_BOOL
+from src.qft_pcn.logic.mera_encoding import KIND_BOOL, KIND_CONS, KIND_NIL
 from src.qft_pcn.logic.mera_evaluation_hamiltonian import (
     MeraEvalHamiltonian,
     RULE_R_ADD_ZERO,
@@ -173,7 +174,7 @@ def test_parses_list_nat_type_in_forall():
 # ---------------------------------------------------------------------------
 
 
-def test_run_problem_with_forall_nat_theorem():
+def test_forall_nat_theorem_via_parse_encode_evolve():
     """End-to-end: parse the §10.10 composite from the textual surface,
     encode it as a MERA state with Forall-protected leaves, evolve under
     the real evaluation Hamiltonian, and verify the Eq node promotes to
@@ -242,6 +243,63 @@ def test_run_problem_with_forall_nat_theorem():
     )
     assert post_val[VALUE_TRUE] > 0.99, (
         f"Eq node value leaf did not promote to VALUE_TRUE: {post_val}"
+    )
+
+
+def test_cons_nil_round_trip_through_encoder():
+    """Encode a small Cons/Nil AST and assert structural invariants on the
+    encoded leaves -- pins K-8 Blocker B's structural claim that Cons/Nil
+    flow through ``encode_mera`` unchanged.
+
+    §1.1 architecture-soul check: we never inspect the parsed AST
+    classically to satisfy the assertion -- the Cons / Nil presence is
+    read off the kind-leaf marginals of the encoded MERA state (the
+    operator-algebraic surface), and the decoder walk reconstructs an
+    AST from the same kind leaves. If the encoder rewrote Cons/Nil to
+    something else, the kind-leaf argmax populations would shift away
+    from ``KIND_CONS`` / ``KIND_NIL`` and this test would fail.
+    """
+    ast = parse("Cons Zero (Cons (Succ Zero) Nil)")
+    assert isinstance(ast, Cons)
+    state, meta = encode_mera(ast)
+
+    # Encoder-side kind-leaf marginal check: read every node's kind leaf
+    # and confirm KIND_CONS and KIND_NIL both appear in the argmax stream.
+    kind_argmaxes: list[int] = []
+    for node_idx in range(meta.n_nodes):
+        w = _leaf_weights(state, _kind_leaf(meta, node_idx))
+        kind_argmaxes.append(int(w.argmax()))
+    assert KIND_CONS in kind_argmaxes, (
+        f"no node carries KIND_CONS in its kind-leaf argmax: "
+        f"{kind_argmaxes}"
+    )
+    assert KIND_NIL in kind_argmaxes, (
+        f"no node carries KIND_NIL in its kind-leaf argmax: "
+        f"{kind_argmaxes}"
+    )
+
+    # Decoder round-trip: walk the decoded AST and assert at least one
+    # Cons + one Nil subnode appears. Decoder supports Cons/Nil via
+    # ``decoder.parse_extended_node`` (`decoder.py` §332-346).
+    result = decode_mera(state, meta)
+    decoded = result.ast
+
+    def _walk(node):
+        yield node
+        for attr in ("head", "tail", "arg", "fn", "lhs", "rhs",
+                     "body", "param_ty", "elem", "left", "right"):
+            child = getattr(node, attr, None)
+            if child is not None and hasattr(child, "__class__"):
+                # Skip plain strings (e.g. Var.name) and primitives.
+                if child.__class__.__module__.endswith("logic.ast"):
+                    yield from _walk(child)
+
+    nodes = list(_walk(decoded))
+    assert any(isinstance(n, Cons) for n in nodes), (
+        f"decoded AST has no Cons subnode: {decoded}"
+    )
+    assert any(isinstance(n, Nil) for n in nodes), (
+        f"decoded AST has no Nil subnode: {decoded}"
     )
 
 
