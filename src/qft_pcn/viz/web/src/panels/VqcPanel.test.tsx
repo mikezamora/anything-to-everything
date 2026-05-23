@@ -12,7 +12,7 @@ it('mounts with an empty layer state', () => {
   render(<VqcPanel frame={emptyFrame} />);
 });
 
-it('renders an extension-pending badge when the layer state is empty', () => {
+it('renders an empty-state message when no vqc layer is in the frame', () => {
   render(<VqcPanel frame={{ step: 0, layer_states: {} } as any} />);
-  expect(screen.getByText(/extension pending/i)).toBeInTheDocument();
+  expect(screen.getByText(/no vqc substrate active/i)).toBeInTheDocument();
 });

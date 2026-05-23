@@ -87,6 +87,8 @@ _MERA_LEAVES = 4
 _LOGIC_SITES = 6
 _LOGIC_CHI = 8
 _LOGIC_DEFAULT_EXPR = "2 + 3"
+_VQC_QUBITS = 3
+_VQC_LAYERS = 2
 
 
 def _build_network(spec: RunSpec) -> QFTPCNNetwork:
@@ -136,6 +138,23 @@ def _build_mera(spec: RunSpec) -> MERA:
     if leaves not in (2, 4, 8):
         leaves = _MERA_LEAVES
     return MERA.vacuum(leaves, d_local=2, chi_layer=chi)
+
+
+def _build_vqc(spec: RunSpec):
+    """Build a real `QuantumGenerativeMap`. Lazy-imports qiskit so the viz
+    server doesn't pull it in unless a `vqc` run is requested."""
+    try:
+        from ..quantum import QuantumGenerativeMap
+    except ImportError as exc:  # pragma: no cover - depends on env
+        raise RuntimeError(
+            "the 'vqc' layer requires qiskit; install the 'viz' extra "
+            "(pip install -e '.[viz]') to enable it"
+        ) from exc
+    p = dict(spec.params.get("vqc") or {})
+    n_qubits = int(p.get("n_qubits", _VQC_QUBITS))
+    n_layers = int(p.get("n_layers", _VQC_LAYERS))
+    rng = np.random.default_rng(0 if spec.seed is None else spec.seed)
+    return QuantumGenerativeMap(n_qubits=n_qubits, n_layers=n_layers, rng=rng)
 
 
 def _build_logic(spec: RunSpec):
@@ -202,12 +221,13 @@ def run_simulation(spec: RunSpec) -> Iterator[Frame]:
     want_qpcn = bool(requested & {"mps", "qpcn", "hamiltonian"})
     want_mera = "mera" in requested
     want_logic = "logic" in requested
+    want_vqc = "vqc" in requested
 
     # Fall back to the manifold substrate if nothing recognised was asked for,
     # so a stream always yields content rather than silently producing zero
     # frames.
     if not (want_network or want_multifield or want_qpcn or want_mera
-            or want_logic):
+            or want_logic or want_vqc):
         want_network = True
 
     net = _build_network(spec) if want_network else None
@@ -218,6 +238,13 @@ def run_simulation(spec: RunSpec) -> Iterator[Frame]:
     logic_chi = _LOGIC_CHI
     if want_logic:
         logic_H, logic_state, logic_chi = _build_logic(spec)
+    vqc = _build_vqc(spec) if want_vqc else None
+    vqc_x = vqc_target = None
+    vqc_lr = 0.2
+    if vqc is not None:
+        _vqc_rng = np.random.default_rng(0 if spec.seed is None else spec.seed)
+        vqc_x = _vqc_rng.standard_normal(vqc.n_qubits)
+        vqc_target = np.full(vqc.n_qubits, 0.5)
 
     observation = None
     if net is not None:
@@ -285,6 +312,13 @@ def run_simulation(spec: RunSpec) -> Iterator[Frame]:
             # MERA has no time dynamics here; re-snapshot the static tree so
             # the layer still receives a Frame on every step.
             snaps["mera"] = snapshots.snapshot_mera(mera)
+
+        if vqc is not None:
+            pred = vqc.forward(vqc_x)
+            upstream = pred - vqc_target
+            grad = vqc.parameter_shift_grad(vqc_x, upstream)
+            vqc.theta = vqc.theta - vqc_lr * np.clip(grad, -1.0, 1.0)
+            snaps["vqc"] = snapshots.snapshot_vqc(vqc)
 
         if logic_H is not None and logic_state is not None:
             from ..logic.factored_evolution import factored_trotter_step

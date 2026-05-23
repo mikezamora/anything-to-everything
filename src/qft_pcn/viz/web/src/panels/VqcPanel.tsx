@@ -177,9 +177,7 @@ export function VqcPanel({
           : undefined
       }
       hasData={hasData}
-      isExtension={!hasData}
-      extensionAnchor="#vqc-live-training-panel"
-      emptyMessage="vqc is currently fixture-only — see EXTENSIONS.md."
+      emptyMessage="No VQC substrate active — start a run with the 'vqc' layer."
     >
       <div className="viz-panel__split" style={{ height: '100%' }}>
         <Circuit theta={theta} />

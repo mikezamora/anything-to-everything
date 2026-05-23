@@ -151,6 +151,17 @@ PRESETS: list[Preset] = [
         spec_overrides={"steps": 10, "seed": 0,
                         "params": {"qpcn": {"species": ["A", "B"]}}},
     ),
+    # ---- vqc --------------------------------------------------------------
+    Preset(
+        id="vqc.parameter-shift-train",
+        layer="vqc",
+        label="Parameter-shift training toward ⟨Z⟩ = 0.5",
+        description="Train a small VQC via parameter-shift gradients toward "
+                    "a fixed Z-target; watch theta evolve and Bloch spheres "
+                    "rotate.",
+        spec_overrides={"steps": 20, "seed": 0,
+                        "params": {"vqc": {"n_qubits": 3, "n_layers": 2}}},
+    ),
     # ---- logic ------------------------------------------------------------
     Preset(
         id="logic.beta-reduce",
@@ -235,6 +246,17 @@ PARAM_SCHEMA: dict[str, dict] = {
             "chi_layer": {"type": "integer", "default": 4,
                           "minimum": 2, "maximum": 16,
                           "description": "Per-layer bond dimension."},
+        },
+    },
+    "vqc": {
+        "type": "object",
+        "properties": {
+            "n_qubits": {"type": "integer", "default": 3,
+                         "minimum": 1, "maximum": 4,
+                         "description": "Number of qubits in the VQC."},
+            "n_layers": {"type": "integer", "default": 2,
+                         "minimum": 1, "maximum": 4,
+                         "description": "Number of variational layers."},
         },
     },
     "logic": {
