@@ -257,13 +257,15 @@ def run_simulation(
 
     Layers are grouped by substrate: `manifold` runs on a `QFTPCNNetwork`;
     `multifield` runs on its own real `MultiFieldNetwork`; `mps`/`qpcn`/
-    `hamiltonian` share a `QPCN`; `mera` runs standalone. The `vqc` and
-    `logic` layers are accepted in `spec.layers` (so subscribers receive
-    their key in the WS handshake) but are *not* simulated here — they
-    remain fixture-only pending EXTENSIONS.md follow-up. Every active
-    substrate contributes its snapshot to a single Frame per step via the
-    generic `Recorder.capture`, so one stream can carry several layers at
-    once.
+    `hamiltonian` share a `QPCN`; `mera` runs standalone. The PCN-side
+    extractor layers (`pcn-fields`, `pcn-dynamics`, `pcn-coupling`) read
+    the same `QFTPCNNetwork` used by `manifold` and are auto-built when
+    requested. The `vqc` and `logic` layers are accepted in `spec.layers`
+    (so subscribers receive their key in the WS handshake) but are *not*
+    simulated here — they remain fixture-only pending EXTENSIONS.md
+    follow-up. Every active substrate contributes its snapshot to a single
+    Frame per step via the generic `Recorder.capture`, so one stream can
+    carry several layers at once.
     """
     requested = set(spec.layers)
     recorder = Recorder()
@@ -276,15 +278,22 @@ def run_simulation(
     want_vqc = "vqc" in requested
     want_mera_relax = "mera_relax" in requested
     want_bridge = "bridge" in requested
+    want_pcn_fields = "pcn-fields" in requested
+    want_pcn_dynamics = "pcn-dynamics" in requested
+    want_pcn_coupling = "pcn-coupling" in requested
+    want_any_pcn = want_pcn_fields or want_pcn_dynamics or want_pcn_coupling
 
     # Fall back to the manifold substrate if nothing recognised was asked for,
     # so a stream always yields content rather than silently producing zero
     # frames.
     if not (want_network or want_multifield or want_qpcn or want_mera
-            or want_logic or want_vqc or want_mera_relax or want_bridge):
+            or want_logic or want_vqc or want_mera_relax or want_bridge
+            or want_any_pcn):
         want_network = True
 
     net = _build_network(spec) if want_network else None
+    if want_any_pcn and net is None:
+        net = _build_network(spec)
     multifield = _build_multifield(spec) if want_multifield else None
     qpcn = _build_qpcn(spec) if want_qpcn else None
     mera = _build_mera(spec) if want_mera else None
@@ -368,7 +377,15 @@ def run_simulation(
 
         if net is not None:
             net.step(observation, learn=True)
-            snaps["manifold"] = snapshots.snapshot_network(net)
+            if want_network:
+                snaps["manifold"] = snapshots.snapshot_network(net)
+            if want_pcn_fields:
+                snaps["pcn-fields"] = snapshots.snapshot_pcn_fields(net)
+            if want_pcn_dynamics:
+                snaps["pcn-dynamics"] = snapshots.snapshot_pcn_dynamics(net)
+            if want_pcn_coupling:
+                snaps["pcn-coupling"] = snapshots.snapshot_pcn_coupling(
+                    net, qpcn)
 
         if multifield is not None:
             multifield.step(mf_observations, learn=True)

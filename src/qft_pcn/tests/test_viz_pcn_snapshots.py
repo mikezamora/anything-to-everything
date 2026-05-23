@@ -58,3 +58,15 @@ def test_extractors_defensive_with_missing_attrs():
     assert snapshot_pcn_fields(Empty()) == {"layers": [], "step": None}
     assert snapshot_pcn_dynamics(Empty())["total_free_energy"] is None
     assert snapshot_pcn_coupling(Empty())["kappa_R"] is None
+
+
+from src.qft_pcn.viz.runs import RunSpec, run_simulation
+
+
+def test_run_simulation_emits_pcn_layer_states():
+    spec = RunSpec(layers=["pcn-fields", "pcn-dynamics", "pcn-coupling"],
+                   steps=2, grid=8)
+    frames = list(run_simulation(spec))
+    assert len(frames) == 2
+    for key in ("pcn-fields", "pcn-dynamics", "pcn-coupling"):
+        assert key in frames[0].layer_states
