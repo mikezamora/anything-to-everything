@@ -178,6 +178,17 @@ def _build_bra_cache(state: MERA) -> dict:
         # Wb[A, s_l, s_r] = sum_{a,b} w_b[A,a,b] * u_b[a,b,s_l,s_r]
         Wb0.append(contract('Aab,abst->Ast', w_b, u_b))
     cache["Wb0"] = Wb0
+    # Pre-contract WW0[j][B,K,s,t] = Wb0[j].conj()[B,s,t] * Wb0[j][K,s,t] so
+    # the per-term layer-0 cross matrix collapses from a 4-tensor contract
+    # ('Bst,Kst,s,t->BK') to a 3-tensor ('BKst,s,t->BK'). Both Wb factors are
+    # term-independent at layer 0, so this is the same pre-contract trick as
+    # Wk_higher below — one cuTensorNet path-find amortized over thousands
+    # of per-term invocations.
+    WW0: list = []
+    for j in range(N // 2):
+        Wb = Wb0[j]
+        WW0.append(contract('Bst,Kst->BKst', Wb.conj(), Wb))
+    cache["WW0"] = WW0
     # Diagonal eta_k = leaf.conj() * leaf
     etas_diag: list = []
     for k in range(N):
@@ -197,10 +208,15 @@ def _build_bra_cache(state: MERA) -> dict:
     cross_layers: list = [cross0]
     Wb_higher: list = []  # Wb_higher[ell-1] (for ell in 1..L-2): composed
                           # bra layer-isometries used at layer ell ascent.
+    Wk_higher: list = []  # Wk_higher[ell-1]: non-conjugated composed ket-side
+                          # layer-isometries reused per-term in
+                          # _expectation_with_bra_cache (saves 5000+ redundant
+                          # 'Kxy,xyab->Kab' contracts per total_energy on P3).
     for ell in range(1, L - 1):
         n_above = N // (2 ** (ell + 1))
         prev = cross_layers[-1]
         layer_Wb: list = []
+        layer_Wk: list = []
         layer_cross: list = []
         for j in range(n_above):
             u_b = to_device(state.disentanglers[ell][j])
@@ -216,16 +232,20 @@ def _build_bra_cache(state: MERA) -> dict:
             #   = sum Wb_h[B,a,b] * Wb_h_kbra[K,c,d] * ML[a,c] * MR[b,d]
             # For bra==ket, Wb_h_kbra is the conjugate-transposed form
             # used as Wk (i.e. w_b applied without the .conj() that the
-            # bra branch carries). Mirroring _cross_ascend exactly:
-            Wk_h = contract('Kxy,xyab->Kab',
-                            to_device(state.isometries[ell][j]),
-                            to_device(state.disentanglers[ell][j]))
+            # bra branch carries). Mirroring _cross_ascend exactly.
+            # NB: Wk_h depends ONLY on state.isometries/disentanglers at this
+            # (ell, j) — independent of which leaves are active. Stash it for
+            # _expectation_with_bra_cache below.
+            Wk_h = contract('Kxy,xyab->Kab', w_b, u_b)
+            layer_Wk.append(Wk_h)
             M_new = contract('Bab,Kcd,ac,bd->BK', Wb_h, Wk_h, ML, MR)
             layer_cross.append(M_new)
         Wb_higher.append(layer_Wb)
+        Wk_higher.append(layer_Wk)
         cross_layers.append(layer_cross)
     cache["cross_layers"] = cross_layers
     cache["Wb_higher"] = Wb_higher
+    cache["Wk_higher"] = Wk_higher
     return cache
 
 
@@ -244,9 +264,11 @@ def _expectation_with_bra_cache(state: MERA,
         return _expectation_naive_inner(state, active)
     cache = _bra_cache(state)
     Wb0 = cache["Wb0"]
+    WW0 = cache["WW0"]
     etas_diag = cache["etas_diag"]
     cross_layers = cache["cross_layers"]
     Wb_higher = cache["Wb_higher"]
+    Wk_higher = cache["Wk_higher"]
 
     # Layer-0: compute fresh eta_k for active leaves; reuse diagonal else.
     affected_pairs_0: set[int] = set()
@@ -268,10 +290,12 @@ def _expectation_with_bra_cache(state: MERA,
         r_idx = 2 * j + 1
         eta_l = eta_mod.get(l_idx, etas_diag[l_idx])
         eta_r = eta_mod.get(r_idx, etas_diag[r_idx])
-        Wb = Wb0[j]
         # Bra and ket SHARE this layer's Wb (we modified only the leaves;
-        # the disentangler/isometry are the same for bra and ket).
-        M = contract('Bst,Kst,s,t->BK', Wb.conj(), Wb, eta_l, eta_r)
+        # the disentangler/isometry are the same for bra and ket). The
+        # term-independent 'Wb.conj() * Wb' factor is pre-contracted into
+        # WW0[j] = WW[B,K,s,t] in the bra cache; per-term we just fold in
+        # the two eta vectors.
+        M = contract('BKst,s,t->BK', WW0[j], eta_l, eta_r)
         cur_cross.append(M)
 
     # Higher layers: only pairs whose subtree touched an affected layer-0
@@ -280,6 +304,7 @@ def _expectation_with_bra_cache(state: MERA,
     for ell in range(1, L - 1):
         n_above = N // (2 ** (ell + 1))
         layer_Wb = Wb_higher[ell - 1]
+        layer_Wk = Wk_higher[ell - 1]
         next_cross: list[np.ndarray] = []
         next_affected: set[int] = set()
         for j in range(n_above):
@@ -291,11 +316,11 @@ def _expectation_with_bra_cache(state: MERA,
             ML = cur_cross[below_l]
             MR = cur_cross[below_r]
             Wb_h = layer_Wb[j]
-            # Ket-side composed isometry (same tensors as bra; bra==ket on
-            # tree, only leaves differ).
-            u_b = to_device(state.disentanglers[ell][j])
-            w_b = to_device(state.isometries[ell][j])
-            Wk_h = contract('Kxy,xyab->Kab', w_b, u_b)
+            # Ket-side composed isometry: bra and ket share the MERA tree
+            # tensors (only the leaves differ), so Wk_h depends solely on
+            # state.isometries/disentanglers[ell][j] — already pre-built in
+            # the bra cache. No re-contraction per term.
+            Wk_h = layer_Wk[j]
             M_new = contract('Bab,Kcd,ac,bd->BK', Wb_h, Wk_h, ML, MR)
             next_cross.append(M_new)
             next_affected.add(j)

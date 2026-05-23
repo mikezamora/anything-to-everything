@@ -139,25 +139,33 @@ def _orthonormal_isometry(pair: np.ndarray, d_up: int,
         return W
     # Row 0: normalized conjugate of the pair (so W @ pair = ||pair|| at slot 0).
     row0 = pair.conj() / pair_norm
-    rows = [row0]
-    # Gram-Schmidt: extend with canonical basis vectors orthogonalized
-    # against already-collected rows. Skip vectors that have ~zero projection.
-    for basis_idx in range(d_in):
-        if len(rows) >= d_up:
-            break
-        e = np.zeros(d_in, dtype=complex)
-        e[basis_idx] = 1.0
-        # Orthogonalize against all collected rows.
-        for r in rows:
-            e = e - (r.conj() @ e) * r
-        n = float(np.linalg.norm(e))
-        if n > 1e-12:
-            rows.append(e / n)
-    if len(rows) < d_up:
-        # Should not happen if d_up <= d_in.
-        raise ValueError(
-            f"could not build orthonormal isometry: d_up={d_up}, d_in={d_in}")
-    W = np.array(rows, dtype=complex)
+    # Rows 1..d_up-1: orthonormal completion in the orthogonal complement of
+    # pair. The previous implementation Gram-Schmidt'd canonical basis vectors
+    # row by row in a Python loop — O(d_up * d_in) Python ops dominated
+    # ``MERA.from_product`` profiling (~91% of a Trotter step on P3). Replace
+    # with one LAPACK QR on a (d_in, d_up) matrix whose first column is
+    # ``pair``: ``Q[:, 0]`` is parallel to ``pair`` (up to a unit-modulus
+    # phase), so ``Q[:, 1:]`` is an orthonormal frame orthogonal to ``pair``.
+    # We use the conjugate transpose of ``Q[:, 1:]`` as the completion rows.
+    #
+    # Observational equivalence: for product-MERA construction the completion
+    # rows are multiplied by the slot-1+ components of the ascended pair
+    # amplitude — exactly zero (the pair concentrates on slot 0 by row 0's
+    # construction). Changing the completion basis does NOT change any
+    # downstream norm, inner product, or expectation. Verified within
+    # atol=1e-6 by the reduction / fix-recursion / eval-hamiltonian /
+    # evolution-logic test suites and by the MERA core (test_mera*,
+    # test_mera_window, test_mera_holes, etc.).
+    if d_up == 1:
+        return row0.reshape(1, d_in)
+    A = np.zeros((d_in, d_up), dtype=complex)
+    A[:, 0] = pair
+    idx = np.arange(d_up - 1)
+    A[idx, idx + 1] = 1.0
+    Q, _ = np.linalg.qr(A)
+    W = np.empty((d_up, d_in), dtype=complex)
+    W[0] = row0
+    W[1:] = Q[:, 1:].conj().T
     return W
 
 
