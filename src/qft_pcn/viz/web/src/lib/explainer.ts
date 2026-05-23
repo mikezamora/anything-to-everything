@@ -319,4 +319,33 @@ export const EXPLAINERS: Record<string, ExplainerSpec> = {
     ],
     references: [{ label: 'Architecture: logic section', href: '../../QFT_PCN_ARCHITECTURE.md' }],
   },
+
+  'pcn-fields': {
+    title: 'PCN Fields — Hierarchical Φ / E / Π Stack',
+    oneLine: 'One card per PCN layer: belief Φ, prediction-error E, and precision Π fields.',
+    what: [
+      'A QFT-PCN network is a stack of predictive-coding layers; each layer carries three coupled 2D fields on the same manifold: belief Φ_l, prediction error E_l = Φ_{l-1} − g_l(Φ_l), and precision Π_l (inverse variance).',
+      'This panel renders all layers at once so the user can see hierarchical structure forming: top layers carry coarse / abstract beliefs, bottom layers carry fast-changing error against the data, and precision concentrates where the model trusts itself.',
+    ],
+    elements: [
+      { name: 'Per-layer heatmap', meaning: 'selected field (Φ / E / Π) for layer l, rendered as a diverging-colour-mapped grid; click to expand.', code: 'snapshot_pcn_fields:layers[l].{phi,E,Pi}' },
+      { name: 'Field toggle (Φ / E / Π)', meaning: 'switches which field is plotted across all layer cards.' },
+      { name: 'depth readout', meaning: 'number of PCN layers currently active.' },
+      { name: '‖Φ‖₂ / ‖E‖₂', meaning: 'Frobenius norms summed across layers — global belief / error magnitude.' },
+      { name: 'mean Π', meaning: 'average precision across all layers; rises as the network becomes more confident.' },
+    ],
+    math: [
+      { tex: 'F[\\Phi,E,\\Pi] = \\int_M \\bigl[\\tfrac12 \\Pi(x) E(x)^2 - \\tfrac12 \\log \\Pi(x)\\bigr] \\sqrt{|g|}\\, d^2x', caption: 'Variational free energy minimised by the PCN (§3.1).' },
+      { tex: 'E_l = \\Phi_{l-1} - g_l(\\Phi_l)', caption: 'Layer-l prediction error: bottom-up signal minus top-down prediction.' },
+      { tex: '\\dot\\Phi_l = (J_{g_l})^\\top (\\Pi_l E_l) + D\\, \\Delta_g \\Phi_l + \\text{top-down}', caption: 'Belief flow: error-driven update + Laplace-Beltrami diffusion on the dynamic metric.' },
+      { tex: '\\dot\\Pi_l = \\tfrac{1}{2\\Pi_l} - \\tfrac12 E_l^2 \\;\\;(\\text{fixed pt: } \\Pi_l = 1/E_l^2)', caption: 'Precision tracks inverse error variance.' },
+    ],
+    watch: [
+      { label: 'depth readout matches the configured PCN stack height', readout: 'depth' },
+      { label: '‖E‖₂ should decrease across the run as predictions improve' },
+      { label: 'mean Π should grow in regions where E shrinks (high confidence = high precision)' },
+      { label: 'Top-layer Φ stays smoother / coarser than bottom-layer Φ — the hierarchical signature' },
+    ],
+    references: [{ label: 'Architecture §2.1, §3.1', href: '../../QFT_PCN_ARCHITECTURE.md' }],
+  },
 };
