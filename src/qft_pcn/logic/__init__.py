@@ -102,6 +102,26 @@ from .mera_evaluation_hamiltonian import MeraEvalHamiltonian, MeraEvalTerm
 from .mera_compose import compose_mera_hamiltonians
 from .mera_evolution_logic import mera_trotter_step, mera_imaginary_evolve
 
+# ---- Sub-project M3: MERA-native synthesis -------------------------------
+# Re-exported under mera_-prefixed aliases to avoid shadowing sub-project
+# E's same-named entry points (which remain the stable public surface for
+# MPS-substrate synthesis). The package `qft_pcn.logic.mera_synthesis`
+# provides the unprefixed names for callers explicitly using M3.
+from .mera_synthesis import (
+    synthesize as mera_synthesize,
+    SynthesisProblem as MeraSynthesisProblem,
+    IOExample as MeraIOExample,
+    Completion as MeraCompletion,
+    SynthesisResult as MeraSynthesisResult,
+    HamiltonianWeights as MeraHamiltonianWeights,
+    SynthesisError as MeraSynthesisError,
+    SynthesisProblemError as MeraSynthesisProblemError,
+    SynthesisRuntimeError as MeraSynthesisRuntimeError,
+)
+from .mera_debugger import (
+    NamedMeraTerm, diagnose as mera_diagnose, format_report as mera_format_report,
+)
+
 __all__ = [
     "encode", "decode", "sample", "DecodeResult", "ast_alpha_eq",
     "encode_mera", "decode_mera", "sample_mera", "MeraEncodingMeta",
@@ -151,4 +171,10 @@ __all__ = [
     "MeraEvalHamiltonian", "MeraEvalTerm",
     "compose_mera_hamiltonians",
     "mera_trotter_step", "mera_imaginary_evolve",
+    # Sub-project M3: MERA-native synthesis (mera_-prefixed aliases)
+    "mera_synthesize", "MeraSynthesisProblem", "MeraIOExample",
+    "MeraCompletion", "MeraSynthesisResult", "MeraHamiltonianWeights",
+    "MeraSynthesisError", "MeraSynthesisProblemError",
+    "MeraSynthesisRuntimeError",
+    "NamedMeraTerm", "mera_diagnose", "mera_format_report",
 ]

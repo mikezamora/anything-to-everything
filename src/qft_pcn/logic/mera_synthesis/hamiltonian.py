@@ -208,6 +208,40 @@ class ComposedMeraSynthesisHamiltonian:
             total += w * h.total_energy(state)
         return float(total)
 
+    def term_gates(self, state, term, dt: float, imaginary: bool = True):
+        """Factored imaginary-time gates for one term (M2's substrate
+        contract).
+
+        For synth terms (single-leaf projector P with weight w): emit
+        ``exp(-dt * w * P)`` on the leaf -- a diagonal 16x16 gate that
+        damps amplitude on the penalized basis element.
+
+        For sub-Hamiltonian terms: delegate to the owning Hamiltonian
+        with ``dt`` scaled by the sub-Hamiltonian's weight so the
+        evolution sees ``exp(-w*dt*H_sub_term)``.
+        """
+        # Synth term path.
+        if id(term) in {id(t) for t in self._extra}:
+            if not imaginary:
+                raise NotImplementedError(
+                    "synth-term real-time gates not supported")
+            # term.leaf_ops is {leaf: (16,16) op}; for the current single-
+            # leaf projectors this is exactly one entry, and the op is a
+            # projector (idempotent). Build exp(-dt*w*P) per leaf.
+            gates = []
+            for leaf, op in term.leaf_ops.items():
+                # Diagonal projector — eigenvalues in {0,1}; matrix exp
+                # via direct exponentiation is fine at dim 16.
+                from scipy.linalg import expm
+                gate = expm(-dt * term.weight * op)
+                gates.append(((leaf,), gate))
+            return gates
+        owner = self._owner.get(id(term))
+        if owner is None:
+            raise KeyError(f"term {term!r} not in this Hamiltonian")
+        weight = next(w for h, w in self._weighted if h is owner)
+        return owner.term_gates(state, term, dt * weight, imaginary)
+
     def residuals(self, state) -> dict:
         out: dict = {}
         # Synth residuals: keyed by term name.
