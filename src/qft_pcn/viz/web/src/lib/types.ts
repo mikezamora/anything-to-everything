@@ -1,32 +1,43 @@
-/**
- * Frontend mirror of `src/qft_pcn/viz/schema.py`.
- *
- * A `Frame` is one captured simulation step: a step index plus a mapping from
- * layer name to a plain dict of JSON-ready diagnostic values.
- */
+/** Frontend mirror of `src/qft_pcn/viz/schema.py`. */
 
 export interface Frame {
   step: number;
   layer_states: Record<string, Record<string, unknown>>;
 }
 
-/** Canonical per-layer keys — must stay in sync with `LAYER_KEYS` in schema.py. */
 export const LAYER_KEYS = [
-  'manifold',
-  'multifield',
-  'mps',
-  'hamiltonian',
-  'qpcn',
-  'mera',
-  'vqc',
-  'logic',
+  'manifold', 'multifield', 'mps', 'hamiltonian',
+  'qpcn', 'mera', 'vqc', 'logic',
 ] as const;
-
 export type LayerKey = (typeof LAYER_KEYS)[number];
 
-/** Request body for `POST /run`. */
 export interface RunSpec {
   layers: string[];
   steps: number;
   grid: number;
+  seed?: number | null;
+  params?: Record<string, Record<string, unknown>>;
 }
+
+export interface Preset {
+  id: string;
+  layer: string;
+  label: string;
+  description: string;
+  spec_overrides: Partial<RunSpec> & {
+    params?: Record<string, Record<string, unknown>>;
+  };
+}
+
+export type ParamSchema = Record<string, {
+  type: 'object';
+  properties: Record<string, {
+    type: string | string[];
+    default?: unknown;
+    enum?: unknown[];
+    minimum?: number;
+    maximum?: number;
+    description?: string;
+    items?: { type: string };
+  }>;
+}>;
