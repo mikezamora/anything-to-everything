@@ -27,7 +27,7 @@ from .encoding import (
     KIND_PAD as _ENC_KIND_PAD, KIND_VAR, BID_0, TYPE_ARR_NESTED,
     EncodingTooLarge,
 )
-from .mera_synthesis.encode_ext import _expand_structural_holes
+from .mera_synthesis.encode_ext import _expand_structural_holes, Bundle
 from src.qft_pcn.qft.mera import MERA
 
 
@@ -47,6 +47,7 @@ class MeraEncodingMeta:
     children_of_node: dict[int, list[int]] = field(default_factory=dict)
     n_nodes_max: int = 0      # encoder node budget (R-Fix unfold guard)
     hole_regions: list = field(default_factory=list)   # M3 structural-hole layout
+    witness_node_ranges: list = field(default_factory=list)  # M3 synthesis: per-example witness node-index ranges (tuple of ints)
 
 
 def _binder_kinds() -> set[int]:
@@ -194,6 +195,14 @@ def encode_mera(ast: Node, n_nodes_max: int = 32,
     tree entanglement between the hole and the candidate binders (spec
     §5.3 — the §1.1 binding-as-entanglement principle on the MERA tree).
     """
+    # Bundle path (M3, Task 7): a forest of sketch + witness sub-trees
+    # is encoded as one MERA state via per-child serialization. The
+    # Bundle node itself is never written; its children populate the
+    # virtual pre-order site list.
+    if isinstance(ast, Bundle):
+        return _encode_bundle(ast, n_nodes_max=n_nodes_max,
+                              chi_layer=chi_layer)
+
     # Structural-hole path (M3, spec §5.3): if any HoleVar carries Node
     # candidates, the front-half cannot resolve the candidates as names
     # (the M1 path is for var-holes only). Route to the dedicated
@@ -495,5 +504,158 @@ def _encode_with_structural_holes(ast: Node, n_nodes_max: int,
         children_of_node=children_of_node,
         n_nodes_max=n_nodes_max,
         hole_regions=hole_regions,
+    )
+    return state, meta
+
+
+# --------------------------------------------------------------------------
+# M3 Task 7: Bundle (multi-root forest) encoding
+# --------------------------------------------------------------------------
+
+
+def _serialize_child(child: Node, n_nodes_max: int):
+    """Serialize one Bundle child to (sites, type_tags, n_nodes)."""
+    sites = serialize_preorder(child, N=n_nodes_max)
+    type_tags = compute_site_types(child, sites)
+    compute_tobl_tags(child, sites)
+    n_nodes = sum(1 for occ in sites if occ.kind != _ENC_KIND_PAD)
+    return sites[:n_nodes], type_tags[:n_nodes], n_nodes
+
+
+def _encode_bundle(bundle: Bundle, n_nodes_max: int,
+                   chi_layer: int) -> tuple[MERA, MeraEncodingMeta]:
+    """Encode a Bundle of children as one MERA state.
+
+    Each child is serialized independently in canonical pre-order; the
+    resulting NodeOccupancy lists are concatenated to one virtual
+    pre-order whose total length sizes the MERA layout. Per-child
+    binder/var_ref site indices are rebased to the concatenated index
+    space (M1 var_refs are local to each child's serialization). The
+    witness sub-trees occupy children[1:]; their node-index ranges are
+    recorded in meta.witness_node_ranges so the synthesis Hamiltonian
+    can locate witness roots and exclude witness nodes from H_size.
+    """
+    if len(bundle.children) == 0:
+        raise ValueError("Bundle has no children")
+
+    # 1) Serialize each child; rebase var_ref.binder_site to the unified
+    #    pre-order. site_to_path is per-child; we prefix each child's
+    #    ast_path with (child_index,) so paths are globally unique.
+    per_child_sites: list[list] = []
+    per_child_tags: list[list] = []
+    child_offsets: list[int] = []
+    running = 0
+    for ci, child in enumerate(bundle.children):
+        sites, tags, n_nodes = _serialize_child(child, n_nodes_max)
+        # Rebase binder_site indices for VarRefs inside this child.
+        from ._serialize import VarRef
+        for occ in sites:
+            if occ.var_ref is not None:
+                vr = occ.var_ref
+                occ.var_ref = VarRef(
+                    binder_site=vr.binder_site + running,
+                    depth_from_innermost=vr.depth_from_innermost,
+                    candidates=[(bs + running, d) for bs, d in vr.candidates],
+                )
+            # Prefix ast_path with child_index for global uniqueness.
+            occ.ast_path = (ci,) + occ.ast_path
+        per_child_sites.append(sites)
+        per_child_tags.append(tags)
+        child_offsets.append(running)
+        running += n_nodes
+
+    n_total = running
+    if n_total < 1:
+        raise EncodingTooLarge(n_nodes=n_total, N=n_nodes_max)
+
+    # 2) Concatenate.
+    sites_all: list = []
+    type_tags_all: list = []
+    for s, t in zip(per_child_sites, per_child_tags):
+        sites_all.extend(s)
+        type_tags_all.extend(t)
+
+    layout = compute_layout(n_total)
+    hole_nodes = _hole_nodes(sites_all)
+
+    # 3) Leaf vectors (concrete + PAD padding).
+    leaf_vectors: list[np.ndarray] = []
+    for node_idx in range(n_total):
+        five = node_leaf_vectors(sites_all[node_idx], type_tags_all[node_idx])
+        leaf_vectors.extend(five)
+    while len(leaf_vectors) < layout.n_leaves:
+        leaf_vectors.append(_pad_leaf_vector())
+
+    # 4) Concrete vs hole path (mirrors encode_mera).
+    if hole_nodes:
+        holes: list[dict] = []
+        for node_idx in hole_nodes:
+            var_ref = sites_all[node_idx].var_ref
+            holes.append({
+                "hole_bid_leaf": layout.leaf_of(node_idx, "bid"),
+                "cand_bid_values": [BID_0 + depth
+                                    for _, depth in var_ref.candidates],
+                "cand_witness_leaves": [
+                    layout.leaf_of(binder_site, "value")
+                    for binder_site, _ in var_ref.candidates],
+            })
+        state = encode_hole_state(leaf_vectors, holes, chi_layer=chi_layer)
+    else:
+        state = MERA.from_product(leaf_vectors, chi_layer=chi_layer)
+    state.normalize()
+
+    # 5) Meta bookkeeping.
+    binder_kinds = _binder_kinds()
+    binder_leaves: dict[int, int] = {}
+    use_to_binder: dict[int, int] = {}
+    for node_idx in range(n_total):
+        occ = sites_all[node_idx]
+        if occ.kind in binder_kinds:
+            binder_leaves[node_idx] = layout.leaf_of(node_idx, "bid")
+        if occ.var_ref is not None:
+            use_leaf = layout.leaf_of(node_idx, "bid")
+            use_to_binder[use_leaf] = layout.leaf_of(
+                occ.var_ref.binder_site, "bid")
+
+    nested_type_index: dict[int, object] = {}
+    for node_idx in range(n_total):
+        if (type_tags_all[node_idx] == TYPE_ARR_NESTED
+                and sites_all[node_idx].ty is not None):
+            nested_type_index[node_idx] = sites_all[node_idx].ty
+
+    children_of_node: dict[int, list[int]] = {i: [] for i in range(n_total)}
+    path_to_node: dict[tuple, int] = {}
+    for node_idx in range(n_total):
+        path_to_node[sites_all[node_idx].ast_path] = node_idx
+    for node_idx in range(n_total):
+        path = sites_all[node_idx].ast_path
+        if len(path) >= 1:
+            parent = path_to_node.get(path[:-1])
+            if parent is not None and parent != node_idx:
+                children_of_node[parent].append(node_idx)
+    for k in children_of_node:
+        children_of_node[k].sort()
+
+    # Witness node ranges: children[1..]; each is a tuple of the node
+    # indices that child contributed in the unified pre-order.
+    witness_node_ranges: list[tuple[int, ...]] = []
+    for ci in range(1, len(bundle.children)):
+        start = child_offsets[ci]
+        end = child_offsets[ci + 1] if ci + 1 < len(child_offsets) else n_total
+        witness_node_ranges.append(tuple(range(start, end)))
+
+    meta = MeraEncodingMeta(
+        n_nodes=n_total, n_leaves=layout.n_leaves, L=layout.L,
+        leaf_dim=MERA_LEAF_DIM,
+        species_of_leaf=layout.species_of_leaf,
+        node_of_leaf=layout.node_of_leaf,
+        site_to_ast_path={k: sites_all[k].ast_path for k in range(n_total)},
+        binder_leaves=binder_leaves,
+        use_to_binder=use_to_binder,
+        nested_type_index=nested_type_index,
+        layout=layout,
+        children_of_node=children_of_node,
+        n_nodes_max=n_nodes_max,
+        witness_node_ranges=witness_node_ranges,
     )
     return state, meta
