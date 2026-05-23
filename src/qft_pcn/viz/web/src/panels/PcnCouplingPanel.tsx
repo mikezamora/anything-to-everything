@@ -79,13 +79,14 @@ export function PcnCouplingPanel({ frame, baselineFrame: _baselineFrame }: {
         <text x={200} y={75} textAnchor="middle"
               fill="#9aa3bb" fontSize="11">T_μν</text>
 
-        {/* QFT -> PCN (bottom arrow): operator expectations */}
+        {/* QFT -> PCN (bottom arrow): variational energy ⟨H⟩ (proxy for
+            per-observable feedback; see explainer for the §3.4 caveat). */}
         <line data-testid="arrow-qft-to-pcn"
               x1={260} y1={130} x2={140} y2={130}
               stroke="#fbc66a" strokeWidth={downWidth}
               markerEnd="url(#arrowhead-down)" />
         <text x={200} y={155} textAnchor="middle"
-              fill="#9aa3bb" fontSize="11">⟨O⟩</text>
+              fill="#9aa3bb" fontSize="11">⟨H⟩</text>
 
         <defs>
           <marker id="arrowhead-up" markerWidth="8" markerHeight="8"

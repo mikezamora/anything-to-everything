@@ -75,7 +75,10 @@ describe('PcnCouplingPanel', () => {
     expect(screen.getByText('κ_R')).toBeInTheDocument();
     expect(screen.getByText('mean |T|')).toBeInTheDocument();
     expect(screen.getByText('mean |R|')).toBeInTheDocument();
-    expect(screen.getByText('⟨H⟩')).toBeInTheDocument();
+    // ⟨H⟩ appears twice: as a readout cell label AND as the down-arrow
+    // SVG label (D-11 fix renamed the arrow from ⟨O⟩ to ⟨H⟩ to match the
+    // actual driver = q._last_energy).
+    expect(screen.getAllByText('⟨H⟩').length).toBeGreaterThanOrEqual(1);
   });
 
   it('renders a MetricsStrip path once enough frames are pushed', () => {
