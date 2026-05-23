@@ -641,6 +641,17 @@ def _validate_decoded(decoded_ast, hamiltonian) -> tuple[bool, str]:
     residual gate carries the weight, and tests monkeypatch this function
     to drive the rejection branch. See plan §I.7 — the
     "no-checker-available" fallback.
+
+    ANTI-SHORTCUT (§1.6 operator-algebraic /
+    memory:anti-shortcut-directive): the temptation here is to add a
+    Python-side AST typecheck pass and call register_lemma "validated".
+    Don't. The §1.6 contract is that lemma admission is gated by the
+    *residual energy* of the converged state under the Hamiltonian, not
+    by a classical type tree walk. The residual gate
+    (``eps_register``, §4.5 step 1) IS the principled check; this
+    function is intentionally a tautology until a tensor-network-side
+    typechecker lands. Record any planned classical checker as an
+    EXTENSIONS.md entry first; do not inline a syntactic AST walk here.
     """
     return True, "no-checker-available"
 

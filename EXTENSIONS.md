@@ -627,3 +627,65 @@ Original failure narrative (kept for historical context):
   + `Promoter.apply_init_clamp` + `LemmaLibrary` pipeline (no
   stubs, no mocks). The §10.10 induction theorem path is
   end-to-end operational through the orchestrator.
+
+---
+
+## §9.7 dense-tensor ceiling — composition/tests baseline failures (K-9)
+
+The `src/qft_pcn/composition/tests/conftest.py::_no_large_dense`
+autouse fixture enforces a strict 256-element ceiling on any 2D+
+``np.zeros``/``np.empty``/``np.ones`` allocation — a deliberate §9.7
+guard to flag accidental dense-tensor materialisation in unit tests.
+With M2/K-* widening the real MERA paths (`_orthonormal_isometry`
+allocates 256x16=4096-element blocks; cross-level acceptance traces
+through `mera_from_bundle` reconstructions that also exceed the cap),
+most composition-tier integration tests now trip this guard during
+fixture setup.
+
+**Empirically verified baseline** at parent `289757d`:
+``composition/tests/`` — 46 failed / 98 passed / 8 errors.
+**Current HEAD** `3454ab4 + K-9 markers`: 44 failed / 110 passed
+/ 8 errors. No regression introduced by K-* work; the failures are
+the §9.7 cap firing against legitimate-size MERA tensors. The cap
+was calibrated for the original M2-toy unit harness and no longer
+matches the real-MERA workload these tests now exercise.
+
+**Resolution path (not in scope for K-9):** raise the cap to the
+actual M2/K acceptance working ceiling (chi_max=32 → 1024 for a
+single isometry block; real cross-level reaches 4096), or re-scope
+the guard to flag only paths that ARE supposed to remain
+dense-tensor-free (abstraction / mining / fingerprint, NOT
+encode/evolve/clamp). Deleting the guard is rejected per §1.6:
+the cap IS the visible signal that the substrate is
+operator-algebraic. A follow-up M3-perf task should re-instrument
+the guard with per-path scoping.
+
+Pinned by: composition/tests full failure list at K-9 HEAD. The
+`composition/tests/test_cross_level_acceptance.py` 3/3 K-8 pass
+clears the guard via pytest mark / direct fixture bypass; the
+other suites share the autouse fixture and trip uniformly.
+
+## test_decoder_forall_protected_trailing.py — perf timeout (K-9)
+
+`test_decode_mera_post_eqrefl_succeeds` (end-to-end Gap F
+regression: encode + 40-step `mera_imaginary_evolve_state` at
+chi=32 + decode_mera) hits the per-test 60s pytest-timeout.
+Empirically verified at parent `289757d`: same timeout. Not a
+regression from any K-* commit.
+
+**Why it's slow:** the 40-step evolution at chi_layer=32 over the
+§10.10 composite (`forall x:Nat. Eq (add x Zero) x`) is a real
+imaginary-time relaxation; K-8 acceptance runs the same workload
+in `test_cross_level_acceptance.py` but with a more generous
+per-test timeout (240s). The Gap F regression test was written
+before this perf reality and inherits the pytest default. The
+other 3 unit-level tests in the same file (synthetic-stream pins)
+pass within the 60s default.
+
+**Resolution path (not in scope for K-9):** raise the test's
+`@pytest.mark.timeout(...)` to ~240s to match
+`test_cross_level_acceptance.py`. This is a test infrastructure
+fix, not an algorithmic one — the underlying evolution is
+already perf-optimized through the M3 perf path
+(`9aa5b17 perf(qft/mera): share identity disentangler`,
+`b3986fd perf(logic/mera-*): cache inactive term-gate skips`).

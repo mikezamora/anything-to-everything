@@ -142,6 +142,13 @@ class Promoter:
         caller's intent is recorded by the clamp call.
         """
         if self.mode != "init_clamp":
+            # ANTI-SHORTCUT (§1.6 / memory:anti-shortcut-directive): a
+            # projector-mode Promoter MUST NOT be driven through
+            # apply_init_clamp. The two modes are operator-algebraically
+            # distinct -- init_clamp writes leaf tensors (§5.2a), projector
+            # emits ``-W|Psi_L><Psi_L|`` as a Hamiltonian term (§5.2b).
+            # Loud NotImplementedError is the principled path; do NOT
+            # silently re-mode the Promoter or fall back to a tensor copy.
             raise NotImplementedError(
                 "apply_init_clamp requires mode='init_clamp'; "
                 f"this Promoter is in mode={self.mode!r}.")

@@ -150,6 +150,14 @@ def dispatch_siblings(nodes: list[Node], backend: DispatchBackend, *,
             try:
                 res = fut.result(timeout=0)
             except Exception as exc:        # noqa: BLE001 -- isolate one child
+                # ANTI-SHORTCUT (§1.1 / memory:anti-shortcut-directive):
+                # this broad-except is NOT a graceful skip. It captures the
+                # child's failure into a structured ChildResult so the
+                # *integrator* (not the dispatcher) can refuse loudly with
+                # a typed reason. The error string is preserved verbatim --
+                # never collapse it to a generic "child failed" placeholder;
+                # the result_integrator's diagnostic + revision loop needs
+                # the original raise's text to decide whether to revise.
                 res = ChildResult(
                     goal_id=node.goal.goal_id, converged=False,
                     residual_energy=math.inf, ground_state=None,

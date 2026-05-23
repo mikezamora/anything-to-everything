@@ -70,6 +70,18 @@ def _resolve_host_leaves(node: Node, child_meta) -> tuple[int, ...]:
     responsible for publishing the correct tuple. The contiguous case is
     available via :func:`goal_graph.make_contiguous_sub_goal`.
 
+    ANTI-SHORTCUT (§1.1 binding-as-entanglement /
+    memory:anti-shortcut-directive): the host-leaf window is NOT a
+    classical site->index dict lookup. The tuple IS the entanglement
+    footprint -- the indices into the host MERA's leaves[] that the
+    clamp will write into, threaded through the species-pattern check
+    in ``Promoter._check_species`` so the §1.3 locality contract holds
+    bitwise (sentinel leaves outside the window are bitwise unchanged).
+    A future implementer must NOT replace this with
+    ``meta.site_to_leaves_map[base]`` or any classical dispatch keyed
+    by site index -- the binding IS the leaf tuple, not a lookup of
+    one.
+
     ``child_meta`` is accepted for API compatibility (callers pass it),
     but no longer participates in window resolution.
     """
