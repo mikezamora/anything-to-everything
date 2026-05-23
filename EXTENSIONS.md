@@ -6,7 +6,28 @@ than left as a TODO or stub. Each entry names the call site, what is
 needed, the workaround currently in tree, and which acceptance criterion
 it unblocks.
 
-## Missing dependency: bridge RunResult does not surface MeraEncodingMeta / ground_state / solved_ast
+## RESOLVED — bridge RunResult does not surface MeraEncodingMeta / ground_state / solved_ast
+
+- Resolution: `RunResult` now carries additive, default-`None` fields
+  `meta`, `ground_state`, `solved_ast`, `hamiltonian`, and `trotter_steps`
+  (`src/qft_pcn/bridge/runtime/result.py`). The MPS path in
+  `bridge/runtime/__init__.py::run_problem` populates `ground_state` with
+  the final relaxed `MPS`, `hamiltonian` with the composed
+  `BridgeHamiltonian`, and `trotter_steps` with `search.steps`. The MPS
+  path does not synthesise a `MeraEncodingMeta` or a decoded AST -- those
+  remain `None` here and are the MERA-runner's responsibility (see the
+  K-8 §10.10 path: a caller that owns `encode_mera`/`decode_mera` can
+  populate the same fields end-to-end).
+  `composition/dispatcher.py::run_child` already reads the new fields via
+  `getattr`, so no dispatcher change is required.
+- Tests: `src/qft_pcn/tests/test_bridge_result_enrichment.py` (5 cases:
+  legacy default, round-trip, end-to-end population, trotter-step
+  fidelity, and the dispatcher's `getattr` access pattern).
+- Unblocks: K-5 acceptance (real lemma registration on every solved
+  child), §8.6 / §8.11 promotion acceptance via the dispatcher path,
+  K-8 §10.10 acceptance.
+
+## Missing dependency: bridge RunResult does not surface MeraEncodingMeta / ground_state / solved_ast (original entry, retained for history)
 
 - Where: `src/qft_pcn/bridge/runtime/result.py` (RunResult dataclass) and
   `src/qft_pcn/composition/dispatcher.py:32-66` (`run_child`).

@@ -29,6 +29,22 @@ class RunResult:
     final_bond_dimensions: list[int]
     converged: bool
     convergence_history: ConvergenceHistorySummary
+    # --- Composition-layer plumbing (EXTENSIONS.md #1) -------------------
+    # Additive, default-None fields surfaced for ``composition.dispatcher.
+    # run_child``: K-5's ``integrate_child`` needs the live ground state and
+    # the ``MeraEncodingMeta`` it was decoded under to call ``register_lemma``
+    # and feed ``Promoter`` species checks. ``hamiltonian`` carries the
+    # composed M2/bridge Hamiltonian for ``register_lemma``'s compress
+    # branch, and ``trotter_steps`` is provenance for ``DerivationMetadata``.
+    # Typed ``Any`` so the bridge stays free of a logic/ circular import:
+    # the M1 ``MeraEncodingMeta`` and M2 ``MERA`` live in ``logic/`` and
+    # only the composition layer needs to recover their concrete types.
+    # Default ``None``/``0`` keeps every existing caller working unchanged.
+    meta: Any = None
+    ground_state: Any = None
+    solved_ast: Any = None
+    hamiltonian: Any = None
+    trotter_steps: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -45,6 +61,7 @@ class RunResult:
             "convergence_history": {
                 "energy_per_step": self.convergence_history.energy_per_step
             },
+            "trotter_steps": self.trotter_steps,
         }
 
 

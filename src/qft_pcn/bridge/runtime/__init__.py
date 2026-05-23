@@ -120,6 +120,17 @@ def run_problem(dsl: Any) -> RunResult:
         convergence_history=ConvergenceHistorySummary(
             energy_per_step=list(history.energy_per_step)
         ),
+        # EXTENSIONS.md #1: surface the live state + Hamiltonian for the
+        # composition layer's ``run_child`` -> ``integrate_child`` path.
+        # The MPS bridge path doesn't produce a ``MeraEncodingMeta`` or a
+        # decoded AST, so ``meta`` / ``solved_ast`` stay ``None`` here; a
+        # future MERA-based runner can populate them. ``ground_state`` is
+        # the final relaxed MPS, ``hamiltonian`` is the composed
+        # ``BridgeHamiltonian`` under which ``energy`` was measured, and
+        # ``trotter_steps`` is the imaginary-time step count actually run.
+        ground_state=state,
+        hamiltonian=H,
+        trotter_steps=int(cd.search["steps"]),
     )
 
 
