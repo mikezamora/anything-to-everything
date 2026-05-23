@@ -9,46 +9,27 @@ Each entry: **What's needed**, **Why deferred**, **Wire-up when ready**.
 
 ---
 
-<a id="vqc-live-training-panel"></a>
-## vqc — live training panel
+## RESOLVED
 
-- **What's needed:** `_build_vqc(spec)` + `snapshot_vqc(vqc)` re-added to
-  `runs.py` / `snapshots.py`, plus a parameter-shift training step in the
-  per-frame loop.
-- **Why deferred:** Parallel substrate work removed both. `VqcPanel` is now
-  fixture-only and renders an "extension pending" badge.
-- **Wire-up when ready:** Re-add the builder + snapshot + training step,
-  add a `vqc.*` preset to `presets.py`, drop the `isExtension` prop from
-  `VqcPanel`.
+- **vqc — live training panel** (resolved 3e5ec44): `_build_vqc` rebuilds a
+  `QuantumGenerativeMap`; per-step parameter-shift training toward a fixed
+  Z-target drives `theta`. `vqc.parameter-shift-train` preset added.
+- **logic — live relaxation panel** (resolved 974507d): `_build_logic`
+  rebuilds an `EvalHamiltonian` + a logic-encoded MPS; per-step
+  imaginary-time `factored_trotter_step` drives relaxation, and
+  `snapshot_logic(enc, state)` now emits per-term `residuals` plus
+  `total_energy`. `logic.beta-reduce` preset added.
+- **qpcn — live parameter editing during pause** (resolved 254ee0b):
+  `RunController._substrates` captures live substrate handles via a new
+  `run_simulation(on_build=...)` callback; `POST /runs/{id}/params`
+  forwards updates to `Hamiltonian.update_param`. `QpcnPanel` renders
+  sliders for writable params while paused on an active run.
+- **mera — isometry-violation indicator** (resolved aab100d):
+  `snapshot_mera` emits `iso_residuals` (per-layer mean
+  `‖W W† − I‖_F`); `MeraPanel` renders the residual sparkline + an
+  `iso err (max)` readout.
 
-<a id="logic-live-relaxation-panel"></a>
-## logic — live relaxation panel
-
-- **What's needed:** `_build_logic(spec)` + `snapshot_logic(enc, state)`
-  re-added, plus the `factored_trotter_step` call in the per-frame loop.
-- **Why deferred:** Removed alongside vqc.
-- **Wire-up when ready:** Same shape as vqc — rebuild + snapshot + add
-  `logic.*` presets, drop the badge.
-
-<a id="qpcn-live-parameter-editing-during-pause"></a>
-## qpcn — live parameter editing during pause
-
-- **What's needed:** A substrate setter on `Hamiltonian` (e.g.
-  `set_param(name, value)`) and a server route `POST /runs/{id}/params`
-  that mutates the controller's active `QPCN` between steps.
-- **Why deferred:** Snapshot exposes parameter values but no setter.
-- **Wire-up when ready:** Expose `writable=true` for editable keys in
-  `/params/schema`; `QpcnPanel` will show sliders for any key whose schema
-  entry has `writable=true`.
-
-<a id="mera-isometry-violation-indicator"></a>
-## mera — isometry-violation indicator
-
-- **What's needed:** `snapshot_mera` to return per-layer
-  `‖U†U − I‖` (or similar) as `iso_residuals`.
-- **Why deferred:** Not currently computed.
-- **Wire-up when ready:** `MeraPanel` renders the residual sparkline next
-  to the bond-dim readout.
+---
 
 <a id="hamiltonian-term-list-with-active-term-highlighting"></a>
 ## hamiltonian — term list with active-term highlighting
