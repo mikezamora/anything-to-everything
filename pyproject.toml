@@ -33,6 +33,8 @@ viz = [
     # imported lazily, so the server stays importable without it; a `vqc`
     # run fails with a clear error when it is absent.
     "qiskit>=1.0",
+    "jsonschema>=4.0",
+    "httpx>=0.27",
 ]
 viz-manim = ["manim>=0.18"]
 

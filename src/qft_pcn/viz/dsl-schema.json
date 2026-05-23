@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qpcn.local/dsl/v1.json",
+  "type": "object",
+  "required": ["fields", "hamiltonian", "observables"],
+  "properties": {
+    "fields": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "cutoff"],
+        "properties": {
+          "name": { "type": "string" },
+          "cutoff": { "type": "integer", "minimum": 1, "maximum": 8 },
+          "bare_mass": { "type": "number", "default": 1.0 },
+          "kinetic": { "type": "number", "default": 0.5 }
+        }
+      }
+    },
+    "hamiltonian": {
+      "type": "object",
+      "properties": {
+        "terms": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["kind"],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": ["mass", "kinetic", "quartic", "yukawa",
+                         "density", "curvature_coupling"]
+              },
+              "site": { "type": "integer" },
+              "species": { "type": "string" },
+              "coefficient": { "type": "number" }
+            }
+          }
+        }
+      }
+    },
+    "observables": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["operator"],
+        "properties": {
+          "operator": { "type": "string", "enum": ["n", "phi", "phi2"] },
+          "site": { "type": "integer" },
+          "species": { "type": "string" },
+          "target": { "type": ["number", "null"] }
+        }
+      }
+    },
+    "run": {
+      "type": "object",
+      "properties": {
+        "steps": { "type": "integer", "default": 30, "maximum": 500 },
+        "chi_max": { "type": "integer", "default": 8, "maximum": 16 },
+        "seed": { "type": ["integer", "null"], "default": null }
+      }
+    }
+  }
+}

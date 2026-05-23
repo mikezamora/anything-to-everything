@@ -529,6 +529,8 @@ deepspeed = [
 ]
 viz = [
     { name = "fastapi" },
+    { name = "httpx" },
+    { name = "jsonschema" },
     { name = "qiskit" },
     { name = "uvicorn", extra = ["standard"] },
     { name = "websockets" },
@@ -552,9 +554,11 @@ requires-dist = [
     { name = "fastapi", marker = "extra == 'viz'", specifier = ">=0.110" },
     { name = "fastrlock", specifier = "==0.8.2" },
     { name = "gradio", specifier = ">=4.0.0" },
+    { name = "httpx", marker = "extra == 'viz'", specifier = ">=0.27" },
     { name = "indextts", editable = "lib/index-tts" },
     { name = "indextts", extras = ["deepspeed"], marker = "extra == 'deepspeed'", editable = "lib/index-tts" },
     { name = "jsonschema", specifier = ">=4.0,<5" },
+    { name = "jsonschema", marker = "extra == 'viz'", specifier = ">=4.0" },
     { name = "lxml", specifier = ">=4.9.0" },
     { name = "manim", marker = "extra == 'viz-manim'", specifier = ">=0.18" },
     { name = "numpy", specifier = ">=1.26,<2" },
