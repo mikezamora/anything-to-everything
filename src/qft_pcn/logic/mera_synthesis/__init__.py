@@ -17,6 +17,7 @@ __all__ = [
     "SynthesisProblem", "IOExample", "Completion", "SynthesisResult",
     "HamiltonianWeights", "synthesize",
     "SynthesisError", "SynthesisProblemError", "SynthesisRuntimeError",
+    "relax_program", "RelaxResult",
 ]
 
 
@@ -24,5 +25,11 @@ def __getattr__(name):
     if name == "synthesize":
         from .runner import synthesize
         return synthesize
+    if name == "relax_program":
+        from .runner import relax_program
+        return relax_program
+    if name == "RelaxResult":
+        from .runner import RelaxResult
+        return RelaxResult
     raise AttributeError(
         f"module {__name__!r} has no attribute {name!r}")
