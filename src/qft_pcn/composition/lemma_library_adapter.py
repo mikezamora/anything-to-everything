@@ -28,14 +28,15 @@ the new lemma and registers the (old_id -> new_id) pointer in
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Callable, Iterator
+from typing import Callable
 
 from src.qft_pcn.composition._abstraction_const import LibraryContractError
 from src.qft_pcn.composition.abstraction import CanonicalPrimitive
 from src.qft_pcn.composition.lemma_library import (
     DerivationMetadata, Lemma, LemmaLibrary, MeraTensorBundle,
-    bundle_from_mera, register_lemma, structural_fingerprint,
+    _content_id, bundle_from_mera, register_lemma, structural_fingerprint,
 )
+from src.qft_pcn.logic.mera_encoder import MeraEncodingMeta
 
 
 def _primitive_deriv(primitive: CanonicalPrimitive) -> DerivationMetadata:
@@ -118,8 +119,6 @@ class LemmaLibraryAdapter:
         treats ``None`` as a no-op.
         """
         if isinstance(entry, CanonicalPrimitive):
-            state = entry.mera
-            meta = None    # primitives have no AST-level encoding meta
             deriv = _primitive_deriv(entry)
             lemma_id = self._save_primitive(entry, deriv)
             self._tiers[lemma_id] = "dynamic"
@@ -149,13 +148,11 @@ class LemmaLibraryAdapter:
         fp = structural_fingerprint(primitive.mera)
         prop_type = f"primitive:{deriv.hamiltonian_id}"
         # Deterministic id from the provenance fingerprint.
-        from src.qft_pcn.composition.lemma_library import _content_id
         lemma_id = _content_id(bundle, prop_type)
         # Primitives lack a real encoding_meta; build a minimal placeholder
         # carrying enough shape info for downstream consumers. This is the
         # ONE place where a stub encoding_meta is unavoidable: primitives are
         # tensor-only (spec §5.4), they have no AST.
-        from src.qft_pcn.logic.mera_encoder import MeraEncodingMeta
         n_leaves = primitive.mera.N
         meta = MeraEncodingMeta(
             n_nodes=0,

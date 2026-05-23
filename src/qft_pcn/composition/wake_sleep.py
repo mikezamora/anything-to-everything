@@ -146,6 +146,13 @@ def _consolidate(library, promoted: list[CanonicalPrimitive],
             for prim in promoted:
                 if trace_distance(cand.rho, prim.rho_canonical) \
                         < config.cluster.distance_threshold:
+                    # NOTE: ``use_log`` carries two senses here: (a) discovery
+                    # provenance (which sids contributed to the cluster the
+                    # primitive abstracts) and (b) subsumed-source-ids (the
+                    # sids whose subtrees this primitive now subsumes and
+                    # which will be pruned below). Splitting into a separate
+                    # ``subsumes_log`` is a larger refactor — documented as a
+                    # dual-sense field for now.
                     prim.provenance.use_log.append(sid)
                     n_consolidated += 1
                     consolidated_this_sid = True
