@@ -427,6 +427,26 @@ it unblocks.
   is `pytest.mark.skip`'d until this entry is resolved.
 - Unblocks: K-Task-8 acceptance on the spec's literal §10.10
   theorem `forall xs:List A. length (reverse xs) = length xs`.
+  Also gates §10.11's literal `length(xs++ys) = length xs + length ys`
+  target; L sub-project adapts to the §10.10 composite at commit
+  64567a5 (see
+  `src/qft_pcn/composition/tests/test_hierarchical_proof_demo.py`).
+
+## Architectural note: §10.8 content-addressing extended to source_run_id namespace
+
+- Where: `src/qft_pcn/composition/lemma_library.py::_content_id` +
+  `register_lemma` call site.
+- Change: `_content_id` now accepts an optional `source_run_id` kwarg.
+  Default (`None`) preserves the prior pure-content-addressing contract.
+  When provided, the content-hash is namespaced by `source_run_id` so
+  structurally-identical sub-proofs of the same proposition under
+  different `goal_id`s register as DISTINCT library entries.
+- Rationale: L §10.11 hierarchical decomposition produces sub-lemmas
+  L1, L2 that prove the SAME proposition via independent sub-QPCN runs;
+  treating them as identical library entries would collapse the
+  hierarchical structure. The contract evolution preserves backward
+  compatibility for single-run callers (default `None`).
+- Landed: commit 64567a5.
 
 ## RESOLVED: Forall param_ty recovery limited to TNat; TList elem limited to TNat
 

@@ -664,6 +664,14 @@ def _proposition_type(decoded_ast) -> str:
 
 def _content_id(bundle: MeraTensorBundle, proposition_type: str,
                 source_run_id: str | None = None) -> str:
+    """Compute content-addressed ID for a lemma bundle.
+
+    ``source_run_id=None`` preserves the original pure content-addressing
+    contract: structurally-identical lemmas dedup to one entry.
+    ``source_run_id=<goal_id>`` namespaces the hash so the same proposition
+    proven under different goal_ids registers as distinct entries
+    (required by L §10.11 hierarchical decomposition).
+    """
     h = hashlib.sha1()
     h.update(proposition_type.encode())
     # Namespace the content hash by the derivation's source_run_id so two
