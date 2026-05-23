@@ -26,7 +26,7 @@ export const EXPLAINERS: Record<string, ExplainerSpec> = {
       'Belief diffusion uses the Laplace-Beltrami operator built from that metric — so geometry follows what the system is uncertain about.',
     ],
     elements: [
-      { name: 'Surface height', meaning: 'h_xx component of the metric perturbation', code: 'manifold.py:h_xx' },
+      { name: 'Surface height', meaning: 'selected metric-perturbation component: h_xx (default), h_xy (shear), h_yy, or tr(h) = h_xx + h_yy. The full h_μν is a rank-2 symmetric tensor (§3.2); a single scalar height cannot represent it, so the toolbar exposes all three plus the mean-curvature proxy.', code: 'manifold.py:h_xx / h_xy / h_yy' },
       { name: 'Surface colour', meaning: 'Ricci scalar curvature R', code: 'manifold.py:ricci_scalar' },
       { name: 'Overlay (Φ / E / Π)', meaning: 'Belief / error / precision fields of the first PCN layer' },
     ],

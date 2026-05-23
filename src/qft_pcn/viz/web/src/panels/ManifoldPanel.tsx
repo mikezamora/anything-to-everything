@@ -93,13 +93,44 @@ export function ManifoldPanel({
   const bst = (baselineFrame?.layer_states.manifold ?? {}) as ManifoldState;
   const [overlay, setOverlay] = useState<'phi' | 'E' | 'Pi' | null>(null);
   const [channel, setChannel] = useState(0);
+  // Height channel for the warped surface. h_μν is a *tensor*; rendering
+  // only h_xx hides the off-diagonal shear h_xy and the orthogonal h_yy
+  // (§3.2). Allow the user to switch which component drives surface height,
+  // or to view the mean curvature proxy `tr(h) = h_xx + h_yy`.
+  const [heightChannel, setHeightChannel] = useState<
+    'h_xx' | 'h_xy' | 'h_yy' | 'tr_h'
+  >('h_xx');
 
-  // Base warped grid: height = h_xx (always from current), colour = ricci.
+  // Compose the requested height grid from the metric perturbation tensor.
+  function pickHeight(mh: ManifoldState['metric_h']): Grid | null {
+    if (!mh) return null;
+    if (heightChannel === 'h_xx') return mh.h_xx ?? null;
+    if (heightChannel === 'h_xy') return mh.h_xy ?? null;
+    if (heightChannel === 'h_yy') return mh.h_yy ?? null;
+    // tr(h) = h_xx + h_yy (mean-curvature proxy).
+    const hxx = mh.h_xx;
+    const hyy = mh.h_yy;
+    if (!hxx || !hyy) return hxx ?? hyy ?? null;
+    const rows = Math.min(hxx.length, hyy.length);
+    if (rows === 0) return null;
+    const out: number[][] = [];
+    for (let i = 0; i < rows; i++) {
+      const a = hxx[i] ?? [];
+      const b = hyy[i] ?? [];
+      const cols = Math.min(a.length, b.length);
+      const row: number[] = [];
+      for (let j = 0; j < cols; j++) row.push((a[j] ?? 0) + (b[j] ?? 0));
+      out.push(row);
+    }
+    return out;
+  }
+
+  // Base warped grid: height = chosen tensor component, colour = ricci.
   // When a baseline frame is present and its ricci grid shares the same
   // shape as the current one, colour by (current - baseline) so the panel
-  // renders a diff heatmap. Height stays from current h_xx — subtracting
+  // renders a diff heatmap. Height stays from current — subtracting
   // heights would lose the warped-surface readability.
-  const baseHeight = st.metric_h?.h_xx ?? st.ricci ?? null;
+  const baseHeight = pickHeight(st.metric_h) ?? st.ricci ?? null;
   const curRicci = st.ricci ?? st.metric_h?.h_xx ?? null;
   const baseRicci = bst.ricci ?? bst.metric_h?.h_xx ?? null;
   const baseColor = useMemo<Grid | null>(() => {
@@ -137,8 +168,21 @@ export function ManifoldPanel({
     disabled: !field,
   }));
 
+  const heightItems: ToolbarItem[] = (
+    ['h_xx', 'h_xy', 'h_yy', 'tr_h'] as const
+  ).map((k) => ({
+    key: k,
+    label: k === 'tr_h' ? 'tr(h)' : k,
+    active: heightChannel === k,
+    onToggle: () => setHeightChannel(k),
+  }));
+
   const toolbar = (
     <>
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+        <span style={{ fontSize: 11, color: '#7f8bb0' }}>height</span>
+        <PanelToolbar items={heightItems} />
+      </span>
       <PanelToolbar items={toolbarItems} />
       <label style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
         channel
