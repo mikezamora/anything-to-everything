@@ -19,7 +19,7 @@ import numpy as np
 from .mera_encoding import (
     MERA_LEAF_DIM, KIND_PAD,
     KIND_APP, KIND_LAM, KIND_BIN, KIND_INT, KIND_IF, KIND_BOOL,
-    KIND_SUCC, KIND_NATLIT, KIND_VAR, KIND_FIX,
+    KIND_SUCC, KIND_NATLIT, KIND_VAR, KIND_FIX, KIND_ZERO,
 )
 from .encoding import (
     VALUE_PLUS, VALUE_MINUS, VALUE_TIMES, VALUE_LT, VALUE_EQ,
@@ -93,6 +93,108 @@ def succ_penalty_ops(succ_kind_leaf: int, arg_kind_leaf: int,
         succ_kind_leaf: _scaled(leaf_proj(KIND_SUCC), lam),
         arg_kind_leaf:  leaf_proj(KIND_NATLIT),
     }
+
+
+# Value-leaf basis index that encodes NatLit(0) (per _tensors.py: NatLit
+# sites place `int_val=node.val` directly into the value leaf — slot 0 is
+# NatLit(0)). Defined here so add_zero_penalty_ops keeps its operator
+# content self-contained.
+NATLIT_VALUE_ZERO = 0
+
+
+def add_zero_penalty_ops(bin_kind_leaf: int, bin_value_leaf: int,
+                         lhs_kind_leaf: int, lhs_value_leaf: int,
+                         rhs_kind_leaf: int, rhs_value_leaf: int,
+                         lam: float) -> list[dict]:
+    """Inclusion-exclusion sum of three factored projectors onto the
+    R-AddZero redex configuration (spec §7.1 extended; plan blocker #3):
+    a BIN(+) node with EXACTLY ONE of {lhs, rhs} carrying a zero (either
+    KIND_ZERO or KIND_NATLIT with value-slot 0).
+
+    Returns a LIST of three `dict[leaf -> (16,16)]` factored ops whose
+    expectation values sum to <P_exactly_one_zero> on the state. Each
+    factored op stays a small dict — never materialized as a 16**k
+    operator (spec §1.3).
+
+    Decomposition (P[zero](op) := P[kind=KIND_ZERO](op_kind)
+                              + P[kind=KIND_NATLIT](op_kind) . P[value=0](op_value),
+    a sum-of-two-factored-products that we split into TWO separate dict
+    terms; combined with T1/T2/T3 of the inclusion-exclusion that gives
+    six factored ops total — every one a dict[leaf -> (16,16)]):
+
+        T1 = P[BIN](bin_kind) . P[+](bin_value) . P[zero](lhs)
+        T2 = P[BIN](bin_kind) . P[+](bin_value) . P[zero](rhs)
+        T3 = -P[BIN](bin_kind) . P[+](bin_value) . P[zero](lhs) . P[zero](rhs)
+
+    so T1 + T2 + T3 projects onto "exactly one zero". The lam scaling is
+    applied once on `bin_kind_leaf` (matching `arith_penalty_ops`).
+
+    A `P[zero]` on one operand expands as a sum of two factored two-leaf
+    products (KIND_ZERO on the kind leaf alone, OR KIND_NATLIT joined with
+    value=0). Each expansion is a separate dict term; the cross product
+    T3 contains FOUR such combinations. The total list is therefore 1*2 +
+    1*2 + 1*4 = 8 factored ops — bounded, no 16**k operator.
+    """
+    # P[BIN](bin_kind) base, scaled by lam (the scaling rides on
+    # bin_kind_leaf so the factored expectation yields lam * <product>).
+    p_bin_scaled = _scaled(leaf_proj(KIND_BIN), lam)
+    p_plus = leaf_proj(VALUE_PLUS)
+    p_kind_zero = leaf_proj(KIND_ZERO)
+    p_kind_natlit = leaf_proj(KIND_NATLIT)
+    p_val_zero = leaf_proj(NATLIT_VALUE_ZERO)
+
+    def _p_zero_terms(op_kind_leaf, op_value_leaf, sign):
+        """Two factored ops summing to sign * P[zero](operand)."""
+        return [
+            # sign * P[KIND_ZERO] on the kind leaf alone (value leaf
+            # unconstrained — Zero's value is encoder-default).
+            {op_kind_leaf: sign * p_kind_zero},
+            # sign * P[KIND_NATLIT] . P[value=0]
+            {op_kind_leaf: sign * p_kind_natlit,
+             op_value_leaf: p_val_zero},
+        ]
+
+    ops: list[dict] = []
+
+    def _attach_bin_factors(term_ops, scale):
+        """Multiply each operand-only dict by the BIN+plus factor; the
+        lam scaling is carried on the BIN kind leaf for T1 and T2, and
+        spread onto bin_kind_leaf for T3 with the inclusion-exclusion
+        sign embedded in `scale`."""
+        for op in term_ops:
+            merged = dict(op)
+            # The lam scaling and the inclusion-exclusion sign both ride
+            # on the BIN kind leaf; the operand-side factor in `op`
+            # already carries any per-zero-form sub-sign (passed in via
+            # _p_zero_terms's sign). For T1/T2 scale == lam, for T3
+            # scale == -lam.
+            merged[bin_kind_leaf] = scale * leaf_proj(KIND_BIN)
+            merged[bin_value_leaf] = p_plus
+            ops.append(merged)
+
+    # T1: lhs is zero, rhs unconstrained.
+    _attach_bin_factors(_p_zero_terms(lhs_kind_leaf, lhs_value_leaf, 1.0),
+                        scale=lam)
+    # T2: rhs is zero, lhs unconstrained.
+    _attach_bin_factors(_p_zero_terms(rhs_kind_leaf, rhs_value_leaf, 1.0),
+                        scale=lam)
+    # T3: -2 * P[zero](lhs) . P[zero](rhs). This implements
+    # P_exactly_one = P_lhs + P_rhs - 2 * P_lhs * P_rhs, the algebraic
+    # form of (P_lhs XOR P_rhs) for orthogonal projectors. The outer
+    # product of the two P[zero] sums gives four factored cross terms,
+    # each scaled by -2.
+    for lhs_op in _p_zero_terms(lhs_kind_leaf, lhs_value_leaf, 1.0):
+        for rhs_op in _p_zero_terms(rhs_kind_leaf, rhs_value_leaf, 1.0):
+            # Merge the lhs and rhs operand dicts; leaves are disjoint by
+            # construction (different nodes), so no overwrite conflict.
+            merged = dict(lhs_op)
+            for k, v in rhs_op.items():
+                merged[k] = v
+            merged[bin_kind_leaf] = (-2.0 * lam) * leaf_proj(KIND_BIN)
+            merged[bin_value_leaf] = p_plus
+            ops.append(merged)
+
+    return ops
 
 
 def fix_penalty_ops(fix_kind_leaf: int, use_kind_leaf: int,

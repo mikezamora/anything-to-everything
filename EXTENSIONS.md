@@ -6,6 +6,38 @@ than left as a TODO or stub. Each entry names the call site, what is
 needed, the workaround currently in tree, and which acceptance criterion
 it unblocks.
 
+## RESOLVED — I-Task-10 blocker #1: `relax_program` driver in M3
+
+- Resolution: `src/qft_pcn/logic/mera_synthesis/runner.py` gains a
+  `RelaxResult` (frozen dataclass with `state, meta, hamiltonian,
+  residual, trotter_steps, converged`) and a top-level
+  `relax_program(ast_src, *, constraints=(), eps, dt, max_trotter_steps,
+  chi_layer, n_nodes_max, frozen_leaves, lemma_library)` driver. The
+  driver encodes the AST (or parses if given a `str`), composes
+  `H_typing + H_eval` via `ComposedMeraSynthesisHamiltonian`, applies
+  any `use_lemma` constraints via `Promoter.apply_init_clamp(...,
+  strength=1.0)` and unions the clamped leaves into the frozen set
+  (along with `meta.forall_protected_leaves` for §1.1 binder
+  protection), then runs chunked imag-time evolution with early
+  termination the moment `H.total_energy(state) < eps`. The existing
+  `synthesize(SynthesisProblem)` sketch-completion runner is untouched.
+- `mera_synthesis/__init__.py` re-exports `relax_program` and
+  `RelaxResult` via the lazy `__getattr__` (matching `synthesize`'s
+  circular-import workaround).
+- Tests: `src/qft_pcn/logic/mera_synthesis/tests/test_relax_program.py`
+  — 3 cases: closed-arith convergence (`residual < 1e-3`,
+  `converged=True`, `1 <= trotter_steps <= 200`), early termination
+  (`trotter_steps < 500` at `eps=1e-2`), and full-budget consumption
+  (`eps=0.0 → trotter_steps == max_trotter_steps`, `converged=False`).
+  All exercise REAL imag-time evolution (no stubs).
+- Unblocks: I-Task-10 two-stage acceptance demo (spec §8.12 / arch
+  §10.8). With blocker #6 (frozen-leaves hook) already landed, the
+  lemma-clamp path is wired in; once blockers #3/#4/#5 land the open
+  universal proof obligation `forall x:Nat. Eq (x + 0) x` will relax
+  to ~0.
+- Per `docs/superpowers/plans/2026-05-23-i-task-10-blocker-fixes.md`
+  blocker #1.
+
 ## RESOLVED — I-Task-10 blocker #3: R-AddZero reduction rule (`add x Zero -> x`)
 
 - Resolution: new `RULE_R_ADD_ZERO = "R-AddZero"` term added to

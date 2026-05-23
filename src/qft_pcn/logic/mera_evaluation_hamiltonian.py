@@ -23,7 +23,7 @@ from .mera_encoder import MeraEncodingMeta
 from .mera_encoding import (
     MERA_LEAF_DIM, SPECIES_LEAF_OFFSET, LEAVES_PER_NODE,
     KIND_PAD, KIND_APP, KIND_BIN, KIND_IF, KIND_SUCC, KIND_FIX,
-    KIND_INT, KIND_NATLIT,
+    KIND_INT, KIND_NATLIT, KIND_ZERO,
 )
 from .encoding import (
     VALUE_PLUS, VALUE_MINUS, VALUE_TIMES, VALUE_LT, VALUE_EQ,
@@ -33,6 +33,7 @@ from ._mera_window import mera_window_expectation_factored
 from ._mera_eval_terms import (
     beta_penalty_ops, arith_penalty_ops, cmp_penalty_ops,
     if_penalty_ops, succ_penalty_ops, fix_penalty_ops,
+    add_zero_penalty_ops, NATLIT_VALUE_ZERO,
     single_leaf_transition_gate, fix_transition_gate,
     arith_result_value_idx, cmp_result_value_idx,
     DEFAULT_LAMBDA_BETA, DEFAULT_LAMBDA_ARITH, DEFAULT_LAMBDA_IF,
@@ -45,9 +46,10 @@ RULE_R_CMP = "R-Cmp"
 RULE_R_IF = "R-If"
 RULE_R_SUCC = "R-Succ"
 RULE_R_FIX = "R-Fix"
+RULE_R_ADD_ZERO = "R-AddZero"
 
 _ALL_RULES = (RULE_R_BETA, RULE_R_ARITH, RULE_R_CMP, RULE_R_IF,
-              RULE_R_SUCC, RULE_R_FIX)
+              RULE_R_SUCC, RULE_R_FIX, RULE_R_ADD_ZERO)
 
 
 class MeraEvalError(Exception):
@@ -182,6 +184,18 @@ class MeraEvalHamiltonian:
         # populated by `_arith_bin_unfinished` itself on the way past
         # (addressing-only read of the kind leaf, spec §1.2).
         self._arith_node_was_bin: set[int] = set()
+        # Per-BIN-node R-AddZero snapshot of the non-zero operand sub-tree's
+        # root-node 5 leaf values, captured the first time R-AddZero fires
+        # for that BIN node (while the non-zero operand is still pristine).
+        # Mirrors `_if_keep_targets` / `_beta_body_targets`. The snapshot
+        # is the stable promotion target for the BIN node's 5 leaves;
+        # reading the non-zero operand live would drift toward PAD once the
+        # operand collapse begins. Each entry holds:
+        #   {"nonzero": int,        # the non-zero operand sub-tree root
+        #    "zero":    int,        # the operand carrying NatLit(0)/Zero
+        #    "leaves":  {sp -> int} # snapshot of nonzero's 5 leaf indices
+        #   }
+        self._add_zero_promote_targets: dict[int, dict] = {}
 
     def _enumerate_terms(self):
         terms = []
@@ -256,6 +270,14 @@ class MeraEvalHamiltonian:
                 leaves.update(self._node_leaves(body))
             for use in self._fix_recursion_uses(node):
                 leaves.update(self._node_leaves(use))
+        elif term.rule_id == RULE_R_ADD_ZERO and len(kids) >= 2:
+            # R-AddZero may read leaves anywhere in BOTH operand sub-trees
+            # (the zero operand's leaves to confirm it is zero, and the
+            # non-zero operand sub-tree's root to snapshot the promotion
+            # target). Conservative footprint: the full sub-tree of each.
+            for kid in kids:
+                for sub in self._subtree_nodes(kid):
+                    leaves.update(self._node_leaves(sub))
         result = frozenset(leaves)
         cache[key] = result
         return result
@@ -263,7 +285,8 @@ class MeraEvalHamiltonian:
     def _lambda_for(self, rule):
         if rule == RULE_R_BETA:
             return self.lambda_beta
-        if rule in (RULE_R_ARITH, RULE_R_CMP, RULE_R_SUCC):
+        if rule in (RULE_R_ARITH, RULE_R_CMP, RULE_R_SUCC,
+                    RULE_R_ADD_ZERO):
             return self.lambda_arith
         if rule == RULE_R_IF:
             return self.lambda_if
@@ -326,6 +349,14 @@ class MeraEvalHamiltonian:
                 ops_list.append(fix_penalty_ops(_kind_leaf(meta, node),
                                                 _kind_leaf(meta, use), lam))
             return ops_list
+        if term.rule_id == RULE_R_ADD_ZERO:
+            if len(kids) < 2:
+                return []
+            return add_zero_penalty_ops(
+                _kind_leaf(meta, node), _value_leaf(meta, node),
+                _kind_leaf(meta, kids[0]), _value_leaf(meta, kids[0]),
+                _kind_leaf(meta, kids[1]), _value_leaf(meta, kids[1]),
+                lam)
         raise MeraEvalTermNotFound(term)
 
     def term_energy(self, state: MERA, term: MeraEvalTerm) -> float:
@@ -515,6 +546,65 @@ class MeraEvalHamiltonian:
                 return True
         return False
 
+    def _add_zero_unfinished(self, state: MERA, term: MeraEvalTerm) -> bool:
+        """True if `term` is an R-AddZero redex that has reached Stage C
+        (the non-zero operand snapshot exists) but the BIN node has not
+        yet fully received the snapshot leaves.
+
+        Mirrors `_beta_app_unfinished`: the R-AddZero diagonal penalty
+        product reads 0 the instant the zero operand starts collapsing
+        toward PAD (P[zero] on the operand kind leaf vanishes), but the
+        BIN node's 5 leaves still need to finish rotating to the
+        non-zero operand's snapshot values. Without this guard the gate
+        would freeze the moment the operand collapse started, stranding
+        the BIN node half-promoted (the staged plateau) and breaking
+        the universal-quantifier preservation in the Forall case.
+        """
+        if term.rule_id != RULE_R_ADD_ZERO:
+            return False
+        target_record = self._add_zero_promote_targets.get(term.node)
+        if target_record is None:
+            return False
+        target = target_record["leaves"]
+        meta = self.meta
+        for sp in ("kind", "type", "bid", "value", "tobl"):
+            leaf = meta.layout.leaf_of(term.node, sp)
+            if _leaf_weights(state, leaf)[target[sp]] < 0.999999:
+                return True
+        return False
+
+    def _add_zero_cleanup_unfinished(self, state: MERA,
+                                     term: MeraEvalTerm) -> bool:
+        """True if R-AddZero has reached Stage C but the spent lhs/rhs
+        sub-trees have not yet fully reached PAD.
+
+        Mirrors `_beta_cleanup_unfinished` / `_if_cleanup_unfinished`.
+        The penalty product reads 0 as soon as the zero operand collapses,
+        but the non-zero operand sub-tree (everything STRICTLY BELOW its
+        root — the root's leaves are PROMOTED into the BIN node, not
+        collapsed) and the zero operand sub-tree must still finish
+        draining to PAD. R-AddZero stays live until they do (spec §7.4).
+        """
+        if term.rule_id != RULE_R_ADD_ZERO:
+            return False
+        rec = self._add_zero_promote_targets.get(term.node)
+        if rec is None:
+            return False
+        meta = self.meta
+        spent = list(self._subtree_nodes(rec["zero"]))
+        # Strict subtree of the non-zero operand root: the root itself is
+        # promoted into the BIN node (its leaves become the BIN node's
+        # leaves), but its descendants (if any) are no longer addressable
+        # and must collapse to PAD.
+        nonzero_kids = meta.children_of_node.get(rec["nonzero"], [])
+        for kid in nonzero_kids:
+            spent.extend(self._subtree_nodes(kid))
+        for cnode in spent:
+            w = _leaf_weights(state, meta.layout.leaf_of(cnode, "kind"))
+            if w[KIND_PAD] < 0.999999:
+                return True
+        return False
+
     def _arith_bin_unfinished(self, state: MERA, term: MeraEvalTerm) -> bool:
         """True if `term` is an arith/cmp redex whose BIN node has begun
         reducing but has NOT yet fully reached its result kind.
@@ -592,7 +682,9 @@ class MeraEvalHamiltonian:
             if (not self._arith_bin_unfinished(state, term)
                     and not self._if_cleanup_unfinished(state, term)
                     and not self._beta_app_unfinished(state, term)
-                    and not self._beta_cleanup_unfinished(state, term)):
+                    and not self._beta_cleanup_unfinished(state, term)
+                    and not self._add_zero_unfinished(state, term)
+                    and not self._add_zero_cleanup_unfinished(state, term)):
                 return []
         meta = self.meta
         node = term.node
@@ -671,6 +763,8 @@ class MeraEvalHamiltonian:
             moves = self._beta_moves(state, node, kids)
         elif term.rule_id == RULE_R_FIX:
             moves, fix_pair_gates = self._fix_moves(state, node, dt, lam)
+        elif term.rule_id == RULE_R_ADD_ZERO:
+            moves = self._add_zero_moves(state, node, kids)
         gates = []
         for leaf, u, r in moves:
             # The drive is gradual: a single application of the
@@ -971,6 +1065,127 @@ class MeraEvalHamiltonian:
         collapse_nodes = [fn, arg] + self._subtree_nodes(body)
         for collapse in collapse_nodes:
             moves.extend(self._collapse_moves(state, collapse))
+        return moves
+
+    def _add_zero_moves(self, state, node, kids):
+        """BIN(+)(x, Zero) -> x: promote the non-zero operand sub-tree's
+        ROOT-node leaves into the BIN node, collapse the zero operand
+        and everything strictly under the non-zero root to PAD.
+
+        Per-leaf promotion mirrors `_if_branch_moves`: each of the BIN
+        node's 5 species leaves is driven (via `single_leaf_transition_gate`
+        in the caller) toward the corresponding leaf of the non-zero
+        operand root. When the non-zero operand is a Forall-protected
+        `Var`, its 5 leaves carry the universally-bound binding's
+        encoded state — copying those indices into the BIN node makes
+        the BIN node inherit the Var's bid leaf, i.e. the Forall
+        entanglement structure (§1.1: bid entanglement, not classical
+        substitution). The protected Var's own leaves are never written
+        by this rule (the moves listed below all WRITE the BIN node or
+        the spent zero operand / spent non-zero descendants; the Var
+        node's leaves act only as READ TARGETS for the snapshot, which
+        is pure addressing of leaf weights per spec §1.2). The
+        `forall_protected_leaves` evolution filter then drops any gate
+        whose target leaves touch a protected Var leaf — so even if a
+        future rewrite re-introduced a write here it would be filtered.
+
+        Staged with a snapshot, same pattern as `_beta_moves` Stage C:
+        the non-zero operand's leaves are SNAPSHOTTED the first time
+        R-AddZero fires for this BIN node (while the operand is still
+        pristine); the snapshot is the stable promotion target. A live
+        read would drift once the spent-sub-tree collapse begins.
+        """
+        meta = self.meta
+        if len(kids) < 2:
+            return []
+        lhs, rhs = kids[0], kids[1]
+
+        # Use the snapshot if one already exists (Stage C onward). After
+        # the first firing the zero operand is being drained toward PAD,
+        # so a live re-detection of "which side is zero" would FLIP once
+        # the zero operand's kind argmax passes 50% — corrupting the
+        # promotion target and breaking the rotation. The snapshot is
+        # the stable choice.
+        rec = self._add_zero_promote_targets.get(node)
+        if rec is None:
+            # Stage A: identify which operand is the zero from pristine
+            # leaf weights. Pure addressing (spec §1.2).
+            def _is_zero(op_node: int) -> bool:
+                k = _leaf_argmax(state, _kind_leaf(meta, op_node))
+                if k == KIND_ZERO:
+                    return True
+                if k == KIND_NATLIT:
+                    v = _leaf_argmax(state, _value_leaf(meta, op_node))
+                    return v == NATLIT_VALUE_ZERO
+                return False
+
+            lhs_is_zero = _is_zero(lhs)
+            rhs_is_zero = _is_zero(rhs)
+            if lhs_is_zero == rhs_is_zero:
+                # Diagonal penalty must have been 0 (no redex) or the
+                # rule fired ambiguously (both-zero is excluded by the
+                # inclusion-exclusion projector). Decline to emit.
+                return []
+            if lhs_is_zero:
+                zero_op, nonzero_op = lhs, rhs
+            else:
+                zero_op, nonzero_op = rhs, lhs
+            # Snapshot the non-zero operand root's 5 leaf values on
+            # first firing. Pure leaf-weight addressing — never writes
+            # to a protected Var (spec §1.2).
+            self._add_zero_promote_targets[node] = {
+                "nonzero": nonzero_op,
+                "zero": zero_op,
+                "leaves": {
+                    sp: _leaf_argmax(state,
+                                     meta.layout.leaf_of(nonzero_op, sp))
+                    for sp in ("kind", "type", "bid", "value", "tobl")
+                },
+            }
+            rec = self._add_zero_promote_targets[node]
+        target = rec["leaves"]
+        nonzero_op = rec["nonzero"]
+        zero_op = rec["zero"]
+
+        moves: list[tuple[int, int, int]] = []
+        # Promote the BIN node's 5 species leaves toward the snapshot.
+        # The bid leaf in particular: if `nonzero_op` is a Forall-bound
+        # Var, target[`bid`] is the index entangled (through the encoded
+        # MERA tree) with the Forall's bid leaf — driving the BIN node's
+        # bid leaf to that index makes the reduced node carry the SAME
+        # binding entanglement. Universal quantification preserved
+        # through entanglement, not classical substitution (§1.1).
+        for sp in ("kind", "type", "bid", "value", "tobl"):
+            bin_leaf = meta.layout.leaf_of(node, sp)
+            cur = _leaf_argmax(state, bin_leaf)
+            moves.append((bin_leaf, cur, target[sp]))
+
+        # Collapse the zero operand's whole sub-tree to PAD.
+        for cnode in self._subtree_nodes(zero_op):
+            moves.extend(self._collapse_moves(state, cnode))
+        # Collapse everything strictly UNDER the non-zero operand root
+        # to PAD. The root itself is promoted into the BIN node and its
+        # leaves continue to live there. If `nonzero_op` is a Forall-
+        # protected Var, the evolution-level frozen-leaves filter will
+        # drop any collapse gate that would target a protected leaf;
+        # but a leaf Var has no children, so `nonzero_kids` is empty in
+        # the open-case test and this loop emits nothing.
+        nonzero_kids = meta.children_of_node.get(nonzero_op, [])
+        for kid in nonzero_kids:
+            for cnode in self._subtree_nodes(kid):
+                moves.extend(self._collapse_moves(state, cnode))
+        # Finally, drain the non-zero operand ROOT's own leaves to PAD
+        # only AFTER the BIN node has fully received the snapshot — the
+        # same staging as `_beta_moves` enforces, gated by
+        # `_add_zero_unfinished`. Until then the root's leaves stay
+        # pristine so the snapshot remains the stable target.
+        bin_resolved = all(
+            _leaf_weights(state, meta.layout.leaf_of(node, sp))[target[sp]]
+            > 0.999
+            for sp in ("kind", "type", "bid", "value", "tobl")
+        )
+        if bin_resolved:
+            moves.extend(self._collapse_moves(state, nonzero_op))
         return moves
 
     def _fix_moves(self, state, node, dt, lam):
