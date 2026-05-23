@@ -73,6 +73,7 @@ from src.qft_pcn.composition.dispatcher import (
 from src.qft_pcn.composition.goal_graph import make_sub_goal
 from src.qft_pcn.composition.lemma_library import LemmaLibrary
 from src.qft_pcn.composition.orchestrator import (
+    MAX_REVISIONS,
     SolveResult,
     solve_goal_graph,
 )
@@ -326,7 +327,31 @@ def test_orchestrator_blocked_on_lemma_persistence_substrate_gap(lemma_lib):
     report = result.failure_report
     assert report["root_status"] in {"failed", "pending_revision"}
     assert "exhausted_goal_id" in report
-    assert report["revision_attempts"] > 0
+    # Tighter than `> 0`: the orchestrator must exhaust the full
+    # MAX_REVISIONS + 1 budget (one initial attempt + MAX_REVISIONS
+    # retries -- see orchestrator.py:185-186, :268-277). Loud + specific
+    # over vague + permissive: a future short-circuit must trip this.
+    assert report["revision_attempts"] >= MAX_REVISIONS + 1, (
+        f"orchestrator did not exhaust MAX_REVISIONS+1={MAX_REVISIONS + 1} "
+        f"attempts; got revision_attempts={report['revision_attempts']}"
+    )
+    # Gap-E-specific: pin the integrator's audit trail on the
+    # decode_error reason string so this test ties to Gap E
+    # (post-promotion stale leaves break trailing-PAD), not to any
+    # future blocker. The orchestrator's top-level failure_report
+    # carries the exhaustion summary; the granular substrate reason
+    # is preserved in the lemma_library's near_misses.log per the K-5
+    # integrator audit-trail contract. When Gap E is fixed (decode_error
+    # no longer appears in the near-misses log because registration
+    # succeeds), this assertion flips loudly alongside the rest.
+    near_log = lemma_lib.root / "near_misses.log"
+    assert near_log.exists(), "near_misses log not written"
+    assert "decode_error" in near_log.read_text(), (
+        f"near_misses log did not carry a decode_error reason -- "
+        f"substrate seam may have moved beyond Gap E. "
+        f"failure_report={result.failure_report}; "
+        f"log={near_log.read_text()!r}"
+    )
 
 
 def test_orchestrator_refusal_diagnostic_pins_substrate_seam(

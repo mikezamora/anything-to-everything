@@ -5,7 +5,7 @@
  */
 
 import type { ComponentType } from 'react';
-import type { Frame, LayerKey } from '../lib/types';
+import type { Frame } from '../lib/types';
 import { ManifoldPanel } from './ManifoldPanel';
 import { MultifieldPanel } from './MultifieldPanel';
 import { MpsPanel } from './MpsPanel';
@@ -19,10 +19,13 @@ import { BridgePanel } from './BridgePanel';
 import { PcnFieldsPanel } from './PcnFieldsPanel';
 import { PcnDynamicsPanel } from './PcnDynamicsPanel';
 import { PcnCouplingPanel } from './PcnCouplingPanel';
+import { IntroQftPanel } from './IntroQftPanel';
+import { IntroPcnPanel } from './IntroPcnPanel';
+import { IntroQpcnPanel } from './IntroQpcnPanel';
 
 export type PanelComponent = ComponentType<{ frame: Frame; baselineFrame?: Frame }>;
 
-export const PANELS: Record<LayerKey, PanelComponent> = {
+export const PANELS: Record<string, PanelComponent> = {
   manifold: ManifoldPanel,
   multifield: MultifieldPanel,
   mps: MpsPanel,
@@ -36,9 +39,12 @@ export const PANELS: Record<LayerKey, PanelComponent> = {
   'pcn-fields': PcnFieldsPanel,
   'pcn-dynamics': PcnDynamicsPanel,
   'pcn-coupling': PcnCouplingPanel,
+  'intro-qft': IntroQftPanel,
+  'intro-pcn': IntroPcnPanel,
+  'intro-qpcn': IntroQpcnPanel,
 };
 
 /** Look up a panel by layer name; `undefined` for an unknown layer. */
 export function panelFor(layer: string): PanelComponent | undefined {
-  return PANELS[layer as LayerKey];
+  return PANELS[layer];
 }

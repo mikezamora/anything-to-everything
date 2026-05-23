@@ -457,7 +457,12 @@ it unblocks.
 ## Missing dependency: post-promotion stale leaves break decoder trailing-PAD check (Gap E)
 
 - Where: surfaces in `src/qft_pcn/logic/decoder.py::parse_kind_stream`
-  trailing-PAD loop (lines ~315-321). After
+  trailing-PAD loop (lines ~315-321).
+  Producer: `src/qft_pcn/logic/mera_evaluation_hamiltonian.py::eq_refl_moves`
+  (and the `eqrefl_penalty_ops` factored projectors in
+  `src/qft_pcn/logic/_mera_eval_terms.py`) -- the promotion fires
+  correctly but does not co-project orphaned subtree descendants to PAD.
+  After
   `mera_imaginary_evolve_state` proves the §10.10 composite
   `forall x:Nat. Eq (add x Zero) x`, node 0 stays `KIND_FORALL`,
   node 1 promotes from `KIND_EQ` to `KIND_BOOL` (the load-bearing
@@ -500,3 +505,4 @@ it unblocks.
   `KIND_BOOL` + `VALUE_TRUE` -- the substrate IS proving the
   theorem; only the orchestrator's lemma-persistence handoff is
   blocked by the stale-descendant residue.
+- Commit: 7ae483f.

@@ -3,7 +3,7 @@
  * body grid (LayerSelector | PanelArea | ExplainerPane), Timeline.
  */
 
-import { LayerSelector } from './components/LayerSelector';
+import { SectionedLayerSelector } from './components/SectionedLayerSelector';
 import { Timeline } from './components/Timeline';
 import { RunControls } from './components/RunControls';
 import { CompareBar } from './components/CompareBar';
@@ -48,7 +48,7 @@ export default function App() {
           <CompareBar />
           {error && <div className="error-bar" role="alert">{error}</div>}
           <div className="body">
-            <LayerSelector />
+            <SectionedLayerSelector />
             <PanelArea />
             <ExplainerPane layer={selectedLayer} />
           </div>
