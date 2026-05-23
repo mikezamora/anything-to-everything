@@ -13,6 +13,7 @@ export default defineConfig({
       '/params': 'http://localhost:8000',
       '/export': 'http://localhost:8000',
       '/health': 'http://localhost:8000',
+      '/dsl': 'http://localhost:8000',
       '/ws': { target: 'http://localhost:8000', ws: true },
     },
   },

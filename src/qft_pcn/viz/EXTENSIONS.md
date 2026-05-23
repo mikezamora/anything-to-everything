@@ -76,3 +76,33 @@ Each entry: **What's needed**, **Why deferred**, **Wire-up when ready**.
 - **Why deferred:** Not exposed today.
 - **Wire-up when ready:** `HamiltonianPanel` already has the layout slot;
   drop the surrounding `null` guard once `terms` is present.
+
+<a id="pcn-layer-kl-divergence"></a>
+## PCN — per-layer KL divergence
+
+- **What's needed:** A `QFTPCNLayer.kl_divergence() -> float` method exposing
+  the per-layer KL term so `PcnDynamicsPanel` can decompose F = accuracy + KL.
+- **Why deferred:** Substrate currently exposes only the aggregate
+  `free_energy(phi_below, kappa_R)`.
+- **Wire-up when ready:** Snapshot `per_layer_kl` next to `per_layer_free_energy`
+  in `snapshot_pcn_dynamics`; the panel already has the chart slot.
+
+<a id="lossless-dsl-runspec-round-trip"></a>
+## DSL — lossless RunSpec round-trip
+
+- **What's needed:** `RunSpec` to carry an optional `dsl: dict | None` companion
+  so `runspec_to_dsl` can return the original DSL verbatim.
+- **Why deferred:** `RunSpec.params` is intentionally flat for fast dict-merge
+  semantics; structured DSL is currently dropped on `dsl_to_runspec`.
+- **Wire-up when ready:** Store the original DSL on `RunSpec.dsl` in
+  `dsl_to_runspec`; `runspec_to_dsl` returns it verbatim when present.
+
+<a id="llm-retry-with-validation-feedback"></a>
+## DSL — LLM retry on validation failure
+
+- **What's needed:** A retry loop in `generate_dsl` that feeds the validation
+  errors back into the LLM as a follow-up turn.
+- **Why deferred:** v1 surfaces raw output to the chat pane for manual repair.
+- **Wire-up when ready:** Add `max_retries: int = 0` param; on validation
+  failure, append a "this DSL failed validation: <errors>; fix and re-emit"
+  message and retry up to `max_retries` times.
