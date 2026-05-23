@@ -1111,17 +1111,18 @@ def _encode_bundle(bundle: Bundle, n_nodes_max: int,
                     depth_from_innermost=vr.depth_from_innermost,
                     candidates=[(eslot.get(b, b), d) for b, d in vr.candidates],
                 )
-        # Children 1+ var_refs need offsetting by child_offsets[ci].
-        for ci in range(1, len(bundle.children)):
-            off = child_offsets[ci]
-            for occ in per_child_sites[ci]:
-                if occ.var_ref is not None:
-                    vr = occ.var_ref
-                    occ.var_ref = VarRef(
-                        binder_site=vr.binder_site + off,
-                        depth_from_innermost=vr.depth_from_innermost,
-                        candidates=[(bs + off, d) for bs, d in vr.candidates],
-                    )
+        # Children 1+ var_refs were ALREADY rebased by `running` (== the same
+        # value as child_offsets[ci] at that iteration) in the first pass
+        # above (lines ~1077-1086). A second rebase here would double-offset
+        # witness binder_sites past meta.n_nodes (e.g. P4: witness Var x had
+        # binder_site=0 -> first pass -> 9 (== child_offsets[1]) -> second
+        # pass -> 18, while meta.n_nodes=17, producing IndexError in
+        # downstream leaf addressing). Drop the redundant second pass.
+        # Child 0's structural-segment rebase (sub_idx -> expanded slot) is
+        # handled separately above; this block was only ever needed for ci>=1,
+        # and the first pass already covers that case.
+        # (Bug fix: d580815 review — durable replacement for the localized
+        # `_binder_node_of` >= n_nodes filter in mera_typing_hamiltonian.)
 
     # 2) Concatenate.
     sites_all: list = []

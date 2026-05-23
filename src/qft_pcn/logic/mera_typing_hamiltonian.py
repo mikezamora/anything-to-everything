@@ -186,17 +186,16 @@ def _binder_node_of(meta, use_node):
     addressing (spec §1.2 — addressing, not classical lookup).
 
     Returns None when the resolved binder node lies outside the encoded
-    leaf array (``binder_node >= meta.n_nodes``). The bundle-encoder's
-    witness-rebase pass (mera_encoder ``_encode_bundle`` lines 752-762)
-    re-offsets witness-child ``var_ref.binder_site`` values that were
-    already offset in the first concatenation pass; the resulting
-    binder_bid points past the layout's leaf range. Rather than dereference
-    a leaf that doesn't exist (state.leaves IndexError under
-    `_energy_t_var`'s factored expectation), the typing term is filtered
-    out at the binder-resolution boundary — a stale binder reference
-    cannot constrain a use-site type. This is an operator-algebraic skip
-    (spec §1.5): the would-be projector pair targets a non-existent leaf,
-    so the term contributes 0 to <psi|H|psi>."""
+    leaf array (``binder_node >= meta.n_nodes``). Defense-in-depth backstop:
+    the underlying bundle-encoder double-rebase bug was fixed in
+    `mera_encoder._encode_bundle` (dropped the redundant second-pass
+    rebase for ci>=1 witness children — the first pass already offsets
+    them by `running`). With that fix in place this guard should never
+    fire on valid programs, but is retained as an operator-algebraic skip
+    (spec §1.5): a stale binder reference points to a non-existent leaf,
+    so the would-be projector contributes 0 to <psi|H|psi> rather than
+    raising under `state.leaves[leaf]` in `_energy_t_var`'s factored
+    expectation."""
     use_bid = meta.layout.leaf_of(use_node, "bid")
     binder_bid = meta.use_to_binder.get(use_bid)
     if binder_bid is None:
