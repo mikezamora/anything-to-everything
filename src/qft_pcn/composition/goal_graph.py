@@ -213,9 +213,15 @@ def compute_free_energy(root: Node) -> float:
     def _walk(n: Node) -> None:
         nonlocal accuracy, n_nodes
         n_nodes += 1
-        res = getattr(n.result, "residual_energy", None)
-        if res is not None and res != float("inf"):
-            accuracy += res
+        # Internal nodes carry a synthetic _JointResult whose residual is
+        # already the sum of their children's residuals (orchestrator
+        # §6.3 joint). Counting both would double-count and break the
+        # §9.5 monotonicity invariant whenever the tree has depth > 1.
+        # Leaves are the source of truth -- only their residuals add.
+        if not n.children:
+            res = getattr(n.result, "residual_energy", None)
+            if res is not None and res != float("inf"):
+                accuracy += res
         for c in n.children:
             _walk(c)
 

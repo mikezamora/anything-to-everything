@@ -662,9 +662,19 @@ def _proposition_type(decoded_ast) -> str:
     return canonical_type_string(decoded_ast)
 
 
-def _content_id(bundle: MeraTensorBundle, proposition_type: str) -> str:
+def _content_id(bundle: MeraTensorBundle, proposition_type: str,
+                source_run_id: str | None = None) -> str:
     h = hashlib.sha1()
     h.update(proposition_type.encode())
+    # Namespace the content hash by the derivation's source_run_id so two
+    # sub-proofs of the same proposition under DIFFERENT goal_ids (e.g.
+    # the L §10.11 hierarchical decomposition where L1 and L2 each
+    # produce a sub-QPCN proving the same theorem) register as DISTINCT
+    # lemma entries. With no source_run_id, the hash falls back to pure
+    # content-addressing (the prior single-goal contract).
+    if source_run_id:
+        h.update(b"\x00source_run_id=")
+        h.update(source_run_id.encode())
     for v in bundle.leaf_vectors:
         h.update(np.ascontiguousarray(v).tobytes())
     for d in bundle.disentanglers:
@@ -731,7 +741,10 @@ def register_lemma(library: LemmaLibrary, state, meta, hamiltonian,
                 return float(hamiltonian.total_energy(m))
             return float(hamiltonian.energy(m))
         bundle = compress_bundle(bundle, energy_fn, library.eps_compress)
-    lemma_id = _content_id(bundle, prop_type)
+    lemma_id = _content_id(
+        bundle, prop_type,
+        source_run_id=getattr(derivation, "source_run_id", None),
+    )
     lemma = Lemma(lemma_id=lemma_id, proposition_type=prop_type,
                   mera_tensors=bundle, encoding_meta=meta,
                   derivation=derivation, fingerprint=fp)

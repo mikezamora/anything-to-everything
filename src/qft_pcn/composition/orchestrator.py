@@ -192,6 +192,18 @@ def solve_goal_graph(
                     key=_frontier_priority,
                     reverse=True,
                 )
+                # Eagerly expand each PENDING child one level so we can
+                # classify it correctly: a sub-goal that decomposes further
+                # is an INTERNAL node and must recurse, even though it has
+                # no children at the moment of classification (build_goal_graph
+                # only expands the root one level; deeper levels are lazy
+                # per §4.2). Without this pre-expansion, an internal sub-
+                # lemma like L1 (which decomposes to [A1]) is misclassified
+                # as a leaf and dispatched directly -- collapsing the §10.11
+                # multi-level hierarchy in extract_proof_tree.
+                for c in ready:
+                    if c.status == Status.PENDING and not c.children:
+                        expand_node(c, decomposer)
                 # Siblings that are themselves leaf goals batch together
                 # for parallel dispatch (spec §5.2); internal-node children
                 # recurse depth-first.
