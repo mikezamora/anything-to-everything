@@ -40,13 +40,23 @@ export function ChatPane() {
       const result = await translate(prompt, model);
       if (result.dsl) {
         setDslText(JSON.stringify(result.dsl, null, 2));
+        const rawTail = result.raw
+          ? `\n\nLLM raw:\n${result.raw}`
+          : '';
         append({ role: 'assistant',
-                 text: `Emitted DSL into the editor.`,
+                 text: `Emitted DSL into the editor.${rawTail}`,
                  artifact: { kind: 'dsl', payload: result.dsl } });
       } else {
+        // §9.3: the LLM is the verbalizer — surface its raw text so the
+        // user can repair it inline in the editor.
+        if (result.raw) setDslText(result.raw);
+        const rawBlock = result.raw
+          ? `\n\nLLM raw:\n${result.raw}`
+          : '';
         append({ role: 'assistant',
                  text: `DSL validation failed: ${result.error}\n` +
-                       `${(result.validation_errors ?? []).join('\n')}` });
+                       `${(result.validation_errors ?? []).join('\n')}` +
+                       rawBlock });
       }
       setPrompt('');
     } catch (e) {
