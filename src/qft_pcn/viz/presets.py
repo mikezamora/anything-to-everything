@@ -215,6 +215,35 @@ PRESETS: list[Preset] = [
         spec_overrides={"steps": 5, "seed": 0,
                         "params": {"mera": {"leaves": 4, "chi_layer": 4}}},
     ),
+    # ---- PCN substrate ----------------------------------------------------
+    Preset(
+        id="pcn-fields.two-layer-default",
+        layer="pcn-fields",
+        label="Two-layer hierarchy (default)",
+        description="Two-layer QFTPCNNetwork on a flat manifold. Watch "
+                    "Phi/E/Pi propagate top-down + bottom-up.",
+        spec_overrides={"steps": 30, "grid": 12, "seed": 0,
+                        "params": {"manifold": {"source": "flat"}}},
+    ),
+    Preset(
+        id="pcn-dynamics.free-energy-decay",
+        layer="pcn-dynamics",
+        label="Free-energy decay — quiescent observation",
+        description="Quiescent observation; total free energy should decay "
+                    "as beliefs settle toward the prior.",
+        spec_overrides={"steps": 40, "grid": 12, "seed": 0,
+                        "params": {"manifold": {"source": "flat"}}},
+    ),
+    Preset(
+        id="pcn-coupling.bridge-snapshot",
+        layer="pcn-coupling",
+        label="PCN <-> QFT bridge — coupled run",
+        description="PCN net plus a single-species QPCN, watching the "
+                    "bidirectional coupling magnitudes.",
+        spec_overrides={"steps": 30, "grid": 12, "seed": 0,
+                        "layers": ["pcn-coupling", "qpcn"],
+                        "params": {"manifold": {"source": "hot-spot"}}},
+    ),
 ]
 
 
@@ -343,4 +372,7 @@ PARAM_SCHEMA: dict[str, dict] = {
             },
         },
     },
+    "pcn-fields":   {"type": "object", "properties": {}},
+    "pcn-dynamics": {"type": "object", "properties": {}},
+    "pcn-coupling": {"type": "object", "properties": {}},
 }
