@@ -124,3 +124,31 @@ After substantial changes, walk these by hand against `./scripts/viz.sh`:
 | logic     | fixture only — see EXTENSIONS.md |||
 
 Additionally: pause/resume/step, baseline compare, JSONL export, MP4 export.
+
+## PCN-side smoke
+
+| layer | fixture | preset | advanced |
+|---|---|---|---|
+| pcn-fields    | ✓ | ✓ | n/a |
+| pcn-dynamics  | ✓ | ✓ | n/a |
+| pcn-coupling  | ✓ | ✓ | n/a |
+
+## Narrative sections
+
+- Click each section header (QFT Substrate / PCN Substrate / QPCN Fusion);
+  confirm the matching `Intro*` panel renders with the section's tagline +
+  layer summaries.
+- Collapse / expand each section using the ▾/▸ toggle.
+
+## DSL route
+
+- Switch routes via the top-bar `Viz / DSL` toggle.
+- Confirm the Ollama model picker populates from `ollama list`.
+- Chat mode: enter a prompt → DSL appears in the editor → click Run in the
+  right pane → frames stream → click Verbalize → assistant turn appears.
+- Stepped mode: toggle "stepped-flow mode" → use the three numbered
+  buttons in order; confirm each is gated on the previous step.
+- Import: paste a DSL JSON into the editor → click Run.
+- Export: pin a run as baseline, click "Export DSL" in the right pane,
+  confirm a `.dsl.json` downloads with the expected structure.
+
