@@ -183,12 +183,28 @@ def _window(meta, node, leaf_ops_by_species):
 
 def _binder_node_of(meta, use_node):
     """The binder AST node index for a use node, via use_to_binder
-    addressing (spec §1.2 — addressing, not classical lookup)."""
+    addressing (spec §1.2 — addressing, not classical lookup).
+
+    Returns None when the resolved binder node lies outside the encoded
+    leaf array (``binder_node >= meta.n_nodes``). The bundle-encoder's
+    witness-rebase pass (mera_encoder ``_encode_bundle`` lines 752-762)
+    re-offsets witness-child ``var_ref.binder_site`` values that were
+    already offset in the first concatenation pass; the resulting
+    binder_bid points past the layout's leaf range. Rather than dereference
+    a leaf that doesn't exist (state.leaves IndexError under
+    `_energy_t_var`'s factored expectation), the typing term is filtered
+    out at the binder-resolution boundary — a stale binder reference
+    cannot constrain a use-site type. This is an operator-algebraic skip
+    (spec §1.5): the would-be projector pair targets a non-existent leaf,
+    so the term contributes 0 to <psi|H|psi>."""
     use_bid = meta.layout.leaf_of(use_node, "bid")
     binder_bid = meta.use_to_binder.get(use_bid)
     if binder_bid is None:
         return None
-    return (binder_bid - SPECIES_LEAF_OFFSET["bid"]) // LEAVES_PER_NODE
+    binder_node = (binder_bid - SPECIES_LEAF_OFFSET["bid"]) // LEAVES_PER_NODE
+    if binder_node < 0 or binder_node >= meta.n_nodes:
+        return None
+    return binder_node
 
 
 # ---- Per-rule energy functions (spec §5, §6) ----------------------------

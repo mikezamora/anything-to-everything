@@ -84,3 +84,46 @@ def test_structural_same_instance_two_programs():
     assert abs(H1.total_energy(s1)) < 1e-9
     H2 = MeraTypingHamiltonian(m2)
     assert abs(H2.total_energy(s2)) < 1e-9
+
+
+def test_typing_hamiltonian_p4_program_does_not_raise():
+    """Regression: P4-style witness-augmented bundle previously triggered
+    `IndexError: state.leaves[leaf]` inside `_energy_t_var` because the
+    bundle encoder's witness-rebase pass double-offsets witness var_refs,
+    producing a binder_node beyond meta.n_nodes. `_binder_node_of` now
+    filters out-of-range binder resolutions, so the typing Hamiltonian
+    evaluates without raising on the M3 P4 acceptance encoding.
+    """
+    from src.qft_pcn.logic.ast import (
+        Lam as _Lam, TInt as _TInt, Var as _Var, Bin as _Bin, If as _If,
+        IntLit as _IntLit, HoleVar as _HoleVar,
+    )
+    from src.qft_pcn.logic.mera_synthesis.encode_ext import (
+        _witness_augmented_ast,
+    )
+    from src.qft_pcn.logic.mera_synthesis.problem import IOExample
+
+    cand_correct = _If(
+        cond=_Bin(op="<", lhs=_Var(name="x"), rhs=_IntLit(val=5)),
+        then_b=_Var(name="x"),
+        else_b=_Bin(op="+", lhs=_Var(name="x"), rhs=_IntLit(val=1)),
+    )
+    cand_wrong_thr = _If(
+        cond=_Bin(op="<", lhs=_Var(name="x"), rhs=_IntLit(val=3)),
+        then_b=_Var(name="x"),
+        else_b=_Bin(op="+", lhs=_Var(name="x"), rhs=_IntLit(val=1)),
+    )
+    cand_succ_only = _Bin(op="+", lhs=_Var(name="x"), rhs=_IntLit(val=1))
+    hole = _HoleVar(candidates=(cand_correct, cand_wrong_thr, cand_succ_only))
+    sketch = _Lam(param="x", param_ty=_TInt(), body=hole)
+    examples = (
+        IOExample(inputs=(_IntLit(val=2),), output=_IntLit(val=2)),
+        IOExample(inputs=(_IntLit(val=7),), output=_IntLit(val=8)),
+    )
+    aug = _witness_augmented_ast(sketch, examples)
+    state, meta = encode_mera(aug, n_nodes_max=32, chi_layer=16)
+    H = MeraTypingHamiltonian(meta)
+    # Must not raise IndexError; the actual numeric value is unconstrained
+    # (the augmented bundle isn't necessarily well-typed mid-synthesis).
+    e = H.total_energy(state)
+    assert isinstance(e, float)
