@@ -1,8 +1,12 @@
 /**
  * MERA panel — a binary MERA tree laid out on the Poincaré disk (Three.js,
- * orthographic). Leaves sit on the disk boundary; coarse-graining layers march
- * inward. Isometry nodes are drawn as triangles, disentanglers as squares, and
- * each tree edge's width tracks the bond dimension of its layer.
+ * orthographic). Leaves sit on the disk boundary; one coarse-graining node
+ * is drawn per layer ring inward. Each layer's RG step contains BOTH
+ * disentanglers (intra-pair `u` + inter-pair `u_inter`) AND a 2->1 isometry
+ * `w` (Vidal 2008, §11.4); the substrate `snapshot_mera` field surfaces the
+ * isometry tensors only, so we draw one isometry-glyph per coarse node and
+ * do NOT invent alternating "disentangler" layers (deviation D-6). Each
+ * tree edge's width tracks the bond dimension of its layer.
  *
  * Below the disk: a readout strip (leaves, layers, max χ) and an inline-SVG
  * entropy-vs-cut line over `st.entropies`.
@@ -59,7 +63,12 @@ export interface MNode {
   x: number;
   y: number;
   depth: number;
-  kind: 'leaf' | 'isometry' | 'disentangler';
+  /** Every coarse-graining node is a 2->1 isometry (substrate exposes
+   * `isometries` per layer; intra- and inter-pair disentanglers exist on
+   * the substrate side but are not surfaced as separate nodes here — see
+   * D-6 in visualizer-DEVIATIONS.md for why the prior alternating
+   * "isometry / disentangler" layer scheme was incorrect). */
+  kind: 'leaf' | 'isometry';
   bond: number;
 }
 export interface MEdge {
@@ -70,8 +79,10 @@ export interface MEdge {
 
 /**
  * Place nodes on concentric circles: the boundary circle holds the leaves,
- * each coarser layer sits on a smaller-radius circle. Within a layer the nodes
- * alternate isometry / disentangler glyphs.
+ * each coarser layer sits on a smaller-radius circle. Every coarse node is
+ * a 2->1 isometry (D-6: the substrate exposes `isometries` per layer; the
+ * prior alternating "isometry / disentangler" scheme by layer parity was
+ * not present in the substrate and misrepresented MERA topology).
  */
 export function buildTree(
   nLeaves: number,
@@ -118,9 +129,10 @@ export function buildTree(
     // Poincaré-style inward compression: radius shrinks toward the centre.
     const radius = 1.0 * Math.pow(0.55, layer + 1);
     const bond = bondDims[layer] ?? 1;
-    const kind: MNode['kind'] =
-      layer % 2 === 0 ? 'isometry' : 'disentangler';
-    const cur = ring(count, radius, layer + 1, kind, bond);
+    // Every coarse-graining node is a 2->1 isometry. The architecture's
+    // disentanglers exist within the same RG step on the substrate but
+    // are not drawn as separate nodes here (D-6).
+    const cur = ring(count, radius, layer + 1, 'isometry', bond);
     // connect each coarse node to two finer nodes.
     cur.forEach((node, i) => {
       const w = 0.6 + (bond / maxBond) * 4;
@@ -168,20 +180,14 @@ function MeraScene({ nLeaves, layerDims, bondDims }: {
         />
       ))}
       {nodes.map((n, i) => {
-        const color =
-          n.kind === 'leaf'
-            ? '#5fd0c8'
-            : n.kind === 'isometry'
-              ? '#d0a05f'
-              : '#a05fd0';
-        // isometry -> triangle, disentangler -> square, leaf -> small circle.
+        // Leaf = small disc; coarse-graining isometry = triangle glyph.
+        // No "disentangler" glyph — see D-6.
+        const color = n.kind === 'leaf' ? '#5fd0c8' : '#d0a05f';
         const r = n.kind === 'leaf' ? 0.025 : 0.05;
         return (
           <mesh key={`n${i}`} position={[n.x, n.y, 0.1]}>
             {n.kind === 'isometry' ? (
               <circleGeometry args={[r, 3]} />
-            ) : n.kind === 'disentangler' ? (
-              <circleGeometry args={[r, 4]} />
             ) : (
               <circleGeometry args={[r, 16]} />
             )}

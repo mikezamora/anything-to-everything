@@ -143,16 +143,17 @@ export const EXPLAINERS: Record<string, ExplainerSpec> = {
     title: 'MERA — Multi-Scale Tree',
     oneLine: 'Tree of disentanglers + isometries; encodes scale structure.',
     what: [
-      'A MERA represents a quantum state as a renormalisation-group tree: each layer applies disentanglers (to remove short-range entanglement) followed by isometries (to coarse-grain).',
-      'Used here as a substrate for hierarchical reasoning; the panel shows tree shape, per-layer χ, and per-cut entropy.',
+      'A MERA represents a quantum state as a renormalisation-group tree: each layer applies disentanglers (to remove short-range entanglement) AND a 2->1 isometry (to coarse-grain) WITHIN the same RG step; the panel surfaces one isometry-glyph per coarse layer, matching what `snapshot_mera` exposes.',
+      'Used here as a substrate for hierarchical reasoning; the panel shows tree shape, per-layer χ, per-cut entropy, and the per-layer isometry-violation residual.',
     ],
     elements: [
-      { name: 'Tree nodes', meaning: 'tensors at each layer; leaves are physical sites' },
+      { name: 'Tree nodes', meaning: 'leaves on the boundary circle; every coarse node is a 2->1 isometry (disentanglers exist on the substrate but are not drawn as separate nodes — see D-6)' },
       { name: 'Per-layer χ', meaning: 'bond dimension at each level' },
       { name: 'Entropy line', meaning: 'entanglement at each leaf-cut' },
+      { name: 'iso err sparkline', meaning: 'per-layer mean ‖W W† − I‖_F (isometry-condition residual)' },
     ],
     math: [
-      { tex: '|\\psi\\rangle = U_1 W_1 U_2 W_2 \\cdots U_L W_L |0\\rangle', caption: 'Alternating disentanglers U and isometries W.' },
+      { tex: '|\\psi\\rangle = \\prod_{\\ell=1}^{L} W_\\ell\\, U_\\ell\\, |0\\rangle', caption: 'Each RG layer ℓ contains BOTH a disentangler U_ℓ AND an isometry W_ℓ.' },
     ],
     watch: [
       { label: 'Logarithmic entropy scaling on critical states' },

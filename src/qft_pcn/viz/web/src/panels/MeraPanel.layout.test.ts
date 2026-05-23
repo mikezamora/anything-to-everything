@@ -44,11 +44,15 @@ describe('buildTree', () => {
     expect(radiusAt(3)).toBeLessThan(radiusAt(2));
   });
 
-  it('alternates isometry / disentangler glyphs across layers', () => {
+  it('labels every coarse-graining node as an isometry — D-6', () => {
+    // The substrate exposes `isometries` per layer; intra- and inter-pair
+    // disentanglers exist on the substrate but are not surfaced as separate
+    // panel nodes. The previous "alternating by layer parity" scheme had no
+    // basis in the architecture and is gone.
     const { nodes } = buildTree(8, [4, 2, 1], [2, 2, 2]);
-    expect(nodes.find((n) => n.depth === 1)!.kind).toBe('isometry');
-    expect(nodes.find((n) => n.depth === 2)!.kind).toBe('disentangler');
-    expect(nodes.find((n) => n.depth === 3)!.kind).toBe('isometry');
+    for (const n of nodes.filter((m) => m.depth > 0)) {
+      expect(n.kind).toBe('isometry');
+    }
   });
 
   it('connects every coarse node to two finer nodes', () => {
