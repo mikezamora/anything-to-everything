@@ -6,6 +6,35 @@ than left as a TODO or stub. Each entry names the call site, what is
 needed, the workaround currently in tree, and which acceptance criterion
 it unblocks.
 
+## RESOLVED — I-Task-10 blocker #6: `frozen_leaves=` in MERA imag-time evolution
+
+- Resolution: `mera_trotter_step`, `mera_imaginary_evolve_state`, and
+  `mera_imaginary_evolve` (`src/qft_pcn/logic/mera_evolution_logic.py`)
+  now accept `frozen_leaves: set[int] | None = None`. Inside
+  `mera_trotter_step` the gate list returned by `ham.term_gates` is
+  filtered to drop any gate whose target leaves intersect the frozen
+  set BEFORE the per-leaf grouping pass — operator-algebraic restriction
+  of H's action to the unfrozen subsystem (§5.2a / §8.6, "clamp +
+  freeze"). For two-leaf gates with one frozen and one unfrozen leg the
+  whole gate is dropped (the gate is not separable; the frozen leaf is
+  a proved-lemma datum the lemma alone resolves). The default `None`
+  preserves prior behavior bitwise — confirmed by the unchanged M2
+  reduction / eval-Hamiltonian / fix-recursion suites (16 passed) and
+  the broader evolution-touching tests (22 passed).
+- Tests: `src/qft_pcn/tests/test_mera_evolution_logic.py` gains three
+  cases (`test_trotter_step_with_all_leaves_frozen_is_identity`,
+  `test_imaginary_evolve_many_steps_preserves_frozen_leaves`,
+  `test_imaginary_evolve_descends_on_non_frozen_leaves`) — all-frozen
+  identity, multi-step bitwise stability of a frozen subset, and
+  monotone descent of the unfrozen subsystem when a PAD leaf is frozen.
+- Unblocks: I-Task-10 two-stage acceptance (Promoter clamps lemma
+  leaves and the relaxation driver must not deform them); J-Task-6
+  wake-sleep (canonical primitives frozen during host relaxation);
+  I-Task-10 blockers #5 (Forall-protected ground-state semantics
+  reuses the same hook) and #1 (`relax_program` driver in M3).
+- Per `docs/superpowers/plans/2026-05-23-i-task-10-blocker-fixes.md`
+  blocker #6.
+
 ## RESOLVED — bridge RunResult does not surface MeraEncodingMeta / ground_state / solved_ast
 
 - Resolution: `RunResult` now carries additive, default-`None` fields

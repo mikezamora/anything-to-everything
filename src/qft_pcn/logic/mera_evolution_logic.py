@@ -30,7 +30,8 @@ def _leaf_vectors(state: MERA) -> list[np.ndarray]:
 def mera_trotter_step(state: MERA, ham, dt: float,
                       imaginary: bool = True,
                       chi_layer: int | None = None,
-                      cache: dict | None = None) -> MERA:
+                      cache: dict | None = None,
+                      frozen_leaves: set[int] | None = None) -> MERA:
     """One Trotter step: apply each term's factored transition gates to a
     copy of `state`'s leaf vectors, rebuild a consistent product MERA,
     and return it (the input is not mutated).
@@ -88,6 +89,17 @@ def mera_trotter_step(state: MERA, ham, dt: float,
                 new_inactive.add(id(term))
                 continue
         gates = ham.term_gates(state, term, dt, imaginary)
+        if frozen_leaves:
+            # I-Task-10 blocker #6 / spec §5.2a, §8.6: a gate whose target
+            # leaf(es) intersect the clamped (lemma-promoted or Forall-
+            # protected) set is dropped at dispatch — operator-algebraic
+            # restriction of H's action to the unfrozen subsystem. For
+            # two-leaf gates with one frozen and one unfrozen leg the
+            # whole gate is dropped (the gate is not separable; the
+            # frozen leaf is a proved-lemma datum that the lemma alone
+            # resolves). Per docs/.../i-task-10-blocker-fixes.md #6.
+            gates = [(leaves, gate) for (leaves, gate) in gates
+                     if not (set(leaves) & frozen_leaves)]
         if not gates and affected_fn is not None:
             new_inactive.add(id(term))
         for leaves, gate in gates:
@@ -150,7 +162,8 @@ def mera_trotter_step(state: MERA, ham, dt: float,
 
 
 def mera_imaginary_evolve(state: MERA, ham, dt: float, steps: int,
-                          chi_layer: int | None = None) -> list[float]:
+                          chi_layer: int | None = None,
+                          frozen_leaves: set[int] | None = None) -> list[float]:
     """Repeat mera_trotter_step `steps` times in imaginary time. Returns
     the energy trajectory [<H>_0, <H>_1, ..., <H>_steps]. Energy decreases
     monotonically (architecture §13.1).
@@ -158,15 +171,27 @@ def mera_imaginary_evolve(state: MERA, ham, dt: float, steps: int,
     NOTE: mera_trotter_step returns a fresh MERA each step; this driver
     threads it. Callers that need the final relaxed state should use
     mera_imaginary_evolve_state.
+
+    `frozen_leaves` (I-Task-10 blocker #6) is forwarded to
+    `mera_trotter_step`: gates targeting any frozen leaf are dropped at
+    dispatch, so those leaves are bitwise unchanged through evolution.
     """
-    traj, _ = mera_imaginary_evolve_state(state, ham, dt, steps, chi_layer)
+    traj, _ = mera_imaginary_evolve_state(state, ham, dt, steps, chi_layer,
+                                          frozen_leaves=frozen_leaves)
     return traj
 
 
 def mera_imaginary_evolve_state(state: MERA, ham, dt: float, steps: int,
-                                chi_layer: int | None = None):
+                                chi_layer: int | None = None,
+                                frozen_leaves: set[int] | None = None):
     """Like mera_imaginary_evolve but also returns the final relaxed
-    MERA state. Returns (trajectory, final_state)."""
+    MERA state. Returns (trajectory, final_state).
+
+    `frozen_leaves` (I-Task-10 blocker #6) forwards to `mera_trotter_step`;
+    every step drops gates that would touch any leaf in the set, so the
+    frozen leaves are bitwise unchanged across the full evolution. This
+    is the §5.2a / §8.6 "clamp + freeze" hook used by the Promoter
+    (lemma window) and the Forall-protected set."""
     cur = state.copy()
     traj = [ham.total_energy(cur)]
     # Threaded redex-presence cache (see mera_trotter_step docstring). The
@@ -176,6 +201,7 @@ def mera_imaginary_evolve_state(state: MERA, ham, dt: float, steps: int,
     cache: dict = {}
     for _ in range(steps):
         cur = mera_trotter_step(cur, ham, dt, imaginary=True,
-                                chi_layer=chi_layer, cache=cache)
+                                chi_layer=chi_layer, cache=cache,
+                                frozen_leaves=frozen_leaves)
         traj.append(ham.total_energy(cur))
     return traj, cur
