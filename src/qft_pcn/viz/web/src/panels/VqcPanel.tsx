@@ -152,7 +152,13 @@ function Bloch({
   );
 }
 
-export function VqcPanel({ frame }: { frame: Frame }) {
+export function VqcPanel({
+  frame,
+  baselineFrame: _baselineFrame,
+}: {
+  frame: Frame;
+  baselineFrame?: Frame;
+}) {
   const st = (frame.layer_states.vqc ?? {}) as VqcState;
   const theta = st.theta ?? [];
   const nQubits = st.n_qubits ?? theta[0]?.length ?? 0;
@@ -171,6 +177,9 @@ export function VqcPanel({ frame }: { frame: Frame }) {
           : undefined
       }
       hasData={hasData}
+      isExtension={!hasData}
+      extensionAnchor="#vqc-live-training-panel"
+      emptyMessage="vqc is currently fixture-only — see EXTENSIONS.md."
     >
       <div className="viz-panel__split" style={{ height: '100%' }}>
         <Circuit theta={theta} />

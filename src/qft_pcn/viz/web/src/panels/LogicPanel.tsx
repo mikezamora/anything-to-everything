@@ -226,7 +226,13 @@ function LogicDiagram({ st }: { st: LogicState }) {
   );
 }
 
-export function LogicPanel({ frame }: { frame: Frame }) {
+export function LogicPanel({
+  frame,
+  baselineFrame: _baselineFrame,
+}: {
+  frame: Frame;
+  baselineFrame?: Frame;
+}) {
   const st = (frame.layer_states.logic ?? {}) as LogicState;
   const hasData = (st.n_sites ?? 0) > 0;
   const nTerms = st.terms?.length ?? 0;
@@ -243,6 +249,9 @@ export function LogicPanel({ frame }: { frame: Frame }) {
           : undefined
       }
       hasData={hasData}
+      isExtension={!hasData}
+      extensionAnchor="#logic-live-relaxation-panel"
+      emptyMessage="logic is currently fixture-only — see EXTENSIONS.md."
     >
       {hasData && <LogicDiagram st={st} />}
     </PanelShell>
