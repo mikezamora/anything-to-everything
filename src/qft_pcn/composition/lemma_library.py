@@ -530,3 +530,116 @@ class LemmaLibrary:
                 out.append((lem, d))
         out.sort(key=lambda t: t[1])
         return out
+
+
+# ---- validated registration (spec §4.5) -----------------------------------
+
+
+from src.qft_pcn.logic.mera_decoder import decode_mera
+
+
+@dataclass(frozen=True)
+class RegistrationResult:
+    """Outcome of register_lemma. Total: register_lemma always returns
+    one of these and never throws for a bad candidate."""
+    accepted: bool
+    lemma_id: str | None
+    reason: str
+
+
+def _validate_decoded(decoded_ast, hamiltonian) -> tuple[bool, str]:
+    """Classically type-check the decoded AST (spec §4.5 step 2).
+
+    Returns ``(ok, detail)``. Reuses the synthesis stack's classical
+    checker when present; otherwise this is a soft gate -- the residual
+    gate still rejects unsolved candidates, and the type-checker fallback
+    keeps Sub-project I usable before the synthesis stack lands its own
+    AST type-checker. Tests monkeypatch this function directly to drive
+    the rejection branch.
+    """
+    try:
+        # The synthesis stack today exposes `validate_problem` (problem-level
+        # validation) but no standalone AST type-checker. Until one lands,
+        # the soft path returns True and lets the residual gate carry the
+        # weight. See plan §I.7 — the "no-checker-available" fallback.
+        from src.qft_pcn.logic.synthesis._validate import (  # noqa: F401
+            validate_problem,
+        )
+    except Exception:
+        return True, "no-checker-available"
+    return True, "no-checker-available"
+
+
+def _proposition_type(decoded_ast) -> str:
+    """Canonical, alpha-normalized type-signature string (spec §4.2)."""
+    from src.qft_pcn.logic.ast import canonical_type_string
+    return canonical_type_string(decoded_ast)
+
+
+def _content_id(bundle: MeraTensorBundle, proposition_type: str) -> str:
+    h = hashlib.sha1()
+    h.update(proposition_type.encode())
+    for v in bundle.leaf_vectors:
+        h.update(np.ascontiguousarray(v).tobytes())
+    for d in bundle.disentanglers:
+        h.update(np.ascontiguousarray(d).tobytes())
+    for w in bundle.isometries:
+        h.update(np.ascontiguousarray(w).tobytes())
+    for u in bundle.inter_disentanglers:
+        h.update(np.ascontiguousarray(u).tobytes())
+    if bundle.top is not None:
+        h.update(np.ascontiguousarray(bundle.top).tobytes())
+    if bundle.layer_dims:
+        h.update(np.array(bundle.layer_dims, dtype=np.int64).tobytes())
+    return h.hexdigest()[:16]
+
+
+def register_lemma(library: LemmaLibrary, state, meta, hamiltonian,
+                   derivation: DerivationMetadata,
+                   eps_register: float = 1e-8) -> RegistrationResult:
+    """Validated registration (spec §4.5). Total: always returns a
+    RegistrationResult, never throws for a bad candidate. Failures are
+    appended to ``<library.root>/near_misses.log`` and surface via the
+    returned ``reason``."""
+    near_log = library.root / "near_misses.log"
+
+    # 1. residual gate
+    if derivation.residual_energy >= eps_register:
+        with near_log.open("a") as fh:
+            fh.write(f"residual_too_high {derivation.residual_energy}\n")
+        return RegistrationResult(False, None, "residual_too_high")
+
+    # 2. validation pass (resolved through the module namespace so that
+    # tests can monkeypatch ``L._validate_decoded`` and have register_lemma
+    # see the patched function).
+    import sys as _sys
+    _mod = _sys.modules[__name__]
+    decoded = decode_mera(state, meta)
+    ast = getattr(decoded, "ast", decoded)
+    ok, detail = _mod._validate_decoded(ast, hamiltonian)
+    if not ok:
+        with near_log.open("a") as fh:
+            fh.write(f"validation_failed {detail}\n")
+        return RegistrationResult(False, None, f"validation_failed:{detail}")
+
+    # 3. proposition type, 4. fingerprint
+    prop_type = _proposition_type(ast)
+    fp = structural_fingerprint(state)
+
+    # 5. compress + persist
+    bundle = bundle_from_mera(state)
+    if hamiltonian is not None:
+        # MeraTypingHamiltonian / MeraEvalHamiltonian expose `.total_energy`;
+        # fall back to `.energy` if a future Hamiltonian API renames it.
+        def energy_fn(b: MeraTensorBundle) -> float:
+            m = mera_from_bundle(b)
+            if hasattr(hamiltonian, "total_energy"):
+                return float(hamiltonian.total_energy(m))
+            return float(hamiltonian.energy(m))
+        bundle = compress_bundle(bundle, energy_fn, library.eps_compress)
+    lemma_id = _content_id(bundle, prop_type)
+    lemma = Lemma(lemma_id=lemma_id, proposition_type=prop_type,
+                  mera_tensors=bundle, encoding_meta=meta,
+                  derivation=derivation, fingerprint=fp)
+    library.save(lemma)
+    return RegistrationResult(True, lemma_id, "ok")

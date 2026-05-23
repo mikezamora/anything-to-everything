@@ -460,6 +460,45 @@ def pretty(node: Node) -> str:
     return _pretty_node(node, _PREC_LAM)
 
 
+# ---- canonical type-signature string (sub-project I §4.2) -----------------
+
+
+def canonical_type_string(node: Node) -> str:
+    """Alpha-normalized type-signature string for a top-level AST node.
+
+    Pure pretty-printer over the surface type structure; never inspects
+    surface binder names so alpha-equivalent terms produce identical
+    strings. Used by the lemma library to key proofs by their proposition
+    type (Curry-Howard: the type is the proposition).
+
+    For a ``Lam(_, param_ty, body)`` this is ``"<param_ty>-><body_type>"``;
+    for atoms (IntLit/BoolLit/Var) it is the immediate type; for App/If/Bin
+    we fall back to a best-effort tag derived from the head node kind --
+    callers that need richer inference should use M2's typing-rule stack
+    and pass the resulting type string in directly.
+    """
+    if isinstance(node, IntLit):
+        return "Int"
+    if isinstance(node, BoolLit):
+        return "Bool"
+    if isinstance(node, Lam):
+        return f"{_pretty_ty(node.param_ty)}->{canonical_type_string(node.body)}"
+    if isinstance(node, Var):
+        # Free-variable type is unknown at this level; tag as opaque.
+        return "Var"
+    if isinstance(node, App):
+        return f"App[{canonical_type_string(node.fn)},{canonical_type_string(node.arg)}]"
+    if isinstance(node, If):
+        return canonical_type_string(node.then_b)
+    if isinstance(node, Bin):
+        op = node.op
+        if op in ("+", "-", "*"):
+            return "Int"
+        return "Bool"
+    # Fall back: tag by class name; keeps the string stable but opaque.
+    return type(node).__name__
+
+
 # ---- holes (for sub-project E) -------------------------------------------
 
 
