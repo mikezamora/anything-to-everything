@@ -13,7 +13,7 @@ from __future__ import annotations
 from typing import Optional
 
 from .ast import (Node, Var, Lam, App, IntLit, BoolLit, If, Bin, HoleVar,
-                  Ty, TInt, TBool, TArrow,
+                  Ty, TInt, TBool, TArrow, TypeHole,
                   Zero, Succ, NatLit, Nil, Cons, Eq, TNat, TList, TProp,
                   Forall, Fix)
 from ._serialize import NodeOccupancy
@@ -31,6 +31,19 @@ _FLAT_ARROW_TAGS = {
     (TYPE_BOOL, TYPE_INT): TYPE_ARR_BI,
     (TYPE_BOOL, TYPE_BOOL): TYPE_ARR_BB,
 }
+
+
+def _resolve_typehole(ty: Ty) -> Ty:
+    """Replace a TypeHole with its first candidate; identity otherwise.
+
+    Used by the bottom-up site-type walker so the env carries a concrete
+    Ty even when the source Lam/Forall/Fix has a TypeHole param_ty. The
+    encoder lifts the result to a per-candidate superposition on the
+    affected type leaves.
+    """
+    if isinstance(ty, TypeHole):
+        return ty.candidates[0]
+    return ty
 
 
 def ty_to_tag(ty: Ty) -> tuple[int, Optional[Ty]]:
@@ -60,6 +73,15 @@ def ty_to_tag(ty: Ty) -> tuple[int, Optional[Ty]]:
         return (TYPE_LIST, None)
     if isinstance(ty, _TProp):
         return (TYPE_PROP, None)
+    if isinstance(ty, TypeHole):
+        # Defensive: when a TypeHole leaks into ty_to_tag (e.g. as the
+        # src/dst of a TArrow built from a Lam whose param_ty is a hole),
+        # collapse to the first candidate's flat tag. The MERA encoder
+        # treats the TypeHole as a genuine candidate-tag superposition
+        # at the appropriate type leaves (see encode_mera typehole path);
+        # this branch keeps the bottom-up site-type computation total
+        # without erasing the encoder's superposition contract.
+        return ty_to_tag(ty.candidates[0])
     raise TypeError(f"unknown Ty: {ty!r}")
 
 
@@ -84,9 +106,16 @@ def _compute_ast_type(node: Node, env: list[tuple[str, Ty]]) -> Ty:
                 return t
         raise KeyError(f"unbound HoleVar candidate {first}")
     if isinstance(node, Lam):
+        # If param_ty is a TypeHole, use its first candidate as the
+        # "default" type for bottom-up computation. The encoder lifts
+        # the result to a genuine candidate superposition on the type
+        # leaves; this default keeps the site-type pipeline total.
+        param_ty = node.param_ty
+        if isinstance(param_ty, TypeHole):
+            param_ty = param_ty.candidates[0]
         body_ty = _compute_ast_type(node.body,
-                                    env + [(node.param, node.param_ty)])
-        return TArrow(src=node.param_ty, dst=body_ty)
+                                    env + [(node.param, param_ty)])
+        return TArrow(src=param_ty, dst=body_ty)
     if isinstance(node, App):
         fn_ty = _compute_ast_type(node.fn, env)
         if isinstance(fn_ty, TArrow):
@@ -115,7 +144,10 @@ def _compute_ast_type(node: Node, env: list[tuple[str, Ty]]) -> Ty:
         return TProp()
     if isinstance(node, Fix):
         # The fixed point has the same type as the recursion variable.
-        return node.param_ty
+        param_ty = node.param_ty
+        if isinstance(param_ty, TypeHole):
+            param_ty = param_ty.candidates[0]
+        return param_ty
     raise TypeError(f"unknown Node: {type(node).__name__}")
 
 
@@ -135,7 +167,7 @@ def compute_site_types(root: Node,
         ty = _compute_ast_type(node, env)
         path_to_ty[path] = ty
         if isinstance(node, Lam):
-            _walk(node.body, env + [(node.param, node.param_ty)],
+            _walk(node.body, env + [(node.param, _resolve_typehole(node.param_ty))],
                   path + (0,))
         elif isinstance(node, App):
             _walk(node.fn, env, path + (0,))
@@ -156,7 +188,7 @@ def compute_site_types(root: Node,
             _walk(node.lhs, env, path + (0,))
             _walk(node.rhs, env, path + (1,))
         elif isinstance(node, (Forall, Fix)):
-            _walk(node.body, env + [(node.param, node.param_ty)],
+            _walk(node.body, env + [(node.param, _resolve_typehole(node.param_ty))],
                   path + (0,))
 
     _walk(root, [], ())

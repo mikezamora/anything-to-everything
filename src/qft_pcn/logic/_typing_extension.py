@@ -30,7 +30,7 @@ from .ast import (
     Zero, Succ, NatLit, Nil, Cons, Eq, Forall, Fix,
 )
 from ._serialize import NodeOccupancy
-from ._types import ty_to_tag, _compute_ast_type
+from ._types import ty_to_tag, _compute_ast_type, _resolve_typehole
 from .encoding import (
     KIND_PAD,
     TOBL_NONE, TOBL_INT, TOBL_BOOL, TOBL_ARR_NESTED,
@@ -85,11 +85,11 @@ def compute_tobl_tags(root: Node,
             # body's obligation = dst(LAM.type) = dst(TArrow(param_ty, body_type))
             #                   = body_type
             body_ty = _compute_ast_type(node.body,
-                                        env + [(node.param, node.param_ty)])
+                                        env + [(node.param, _resolve_typehole(node.param_ty))])
             body_tag, body_nested = ty_to_tag(body_ty)
             _emit(node.body, body_tag,
                   body_nested if body_tag == TOBL_ARR_NESTED else None,
-                  env + [(node.param, node.param_ty)])
+                  env + [(node.param, _resolve_typehole(node.param_ty))])
             return
 
         if isinstance(node, App):
@@ -131,7 +131,7 @@ def compute_tobl_tags(root: Node,
             # Forall / Fix are binders; their bodies' typing is handled by
             # the M2 T-Forall / T-Fix rules, so no tobl obligation here.
             _emit(node.body, TOBL_NONE, None,
-                  env + [(node.param, node.param_ty)])
+                  env + [(node.param, _resolve_typehole(node.param_ty))])
             return
 
         raise TypeError(f"unsupported AST node in tobl walk: "
