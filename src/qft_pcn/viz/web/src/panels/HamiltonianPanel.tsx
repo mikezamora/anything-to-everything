@@ -5,6 +5,10 @@
  * the Hamiltonian's *field-species* list (one entry per species, NOT per
  * site), shown as a separate legend.
  *
+ * Uplift: PanelReadouts (N, d_local, species count), a KaTeX-rendered
+ * canonical-form block `H = sum h_i + sum h_{ij}`, and a small 64x64
+ * curvature mini-map painted via the `diverging()` ramp.
+ *
  * Reads `frame.layer_states.hamiltonian` (shape: `snapshot_hamiltonian`).
  */
 
@@ -12,7 +16,8 @@ import { useEffect, useRef } from 'react';
 import * as d3 from 'd3';
 import type { Frame } from '../lib/types';
 import { PanelShell } from './PanelShell';
-import { useSize } from './common';
+import { PanelReadouts } from './PanelReadouts';
+import { useSize, tex, diverging } from './common';
 
 interface HamiltonianState {
   n_sites?: number | null;
@@ -120,13 +125,88 @@ function Heatmap({
   );
 }
 
-export function HamiltonianPanel({ frame }: { frame: Frame }) {
+/**
+ * 64x64 curvature mini-map. Each canvas pixel block is filled by the
+ * `diverging()` ramp applied to the matrix entry nearest to it (nearest-
+ * neighbour upscaling for small N, downsampling otherwise).
+ */
+function CurvatureMiniMap({ matrix }: { matrix: number[][] }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const SIZE = 64;
+
+  useEffect(() => {
+    const cnv = canvasRef.current;
+    if (!cnv) return;
+    const ctx = cnv.getContext('2d');
+    if (!ctx) return;
+    const n = matrix.length;
+    if (n === 0) {
+      ctx.clearRect(0, 0, SIZE, SIZE);
+      return;
+    }
+    // Normalize by peak absolute value -> [-1, 1].
+    let peak = 0;
+    for (const row of matrix) {
+      for (const v of row) {
+        const a = Math.abs(v);
+        if (Number.isFinite(a) && a > peak) peak = a;
+      }
+    }
+    const scale = peak > 0 ? peak : 1;
+    const cell = SIZE / n;
+    for (let i = 0; i < n; i++) {
+      for (let j = 0; j < n; j++) {
+        const v = matrix[i]?.[j] ?? 0;
+        ctx.fillStyle = diverging(v / scale);
+        ctx.fillRect(
+          Math.floor(j * cell),
+          Math.floor(i * cell),
+          Math.ceil(cell),
+          Math.ceil(cell),
+        );
+      }
+    }
+  }, [matrix]);
+
+  return (
+    <canvas
+      ref={canvasRef}
+      width={SIZE}
+      height={SIZE}
+      aria-label="curvature mini-map"
+      style={{
+        width: SIZE,
+        height: SIZE,
+        imageRendering: 'pixelated',
+        border: '1px solid #2f3a55',
+      }}
+    />
+  );
+}
+
+export function HamiltonianPanel({
+  frame,
+}: {
+  frame: Frame;
+  baselineFrame?: Frame;
+}) {
   const st = (frame.layer_states.hamiltonian ?? {}) as HamiltonianState;
   const curv = st.curvature;
   const matrix = Array.isArray(curv) && Array.isArray(curv[0])
     ? (curv as number[][])
     : null;
   const hasData = !!matrix && matrix.length > 0;
+  const speciesNames = (st.species as string[] | null) ?? [];
+
+  const readouts = (
+    <PanelReadouts
+      cells={[
+        { label: 'N', value: st.n_sites ?? '—' },
+        { label: 'd_local', value: st.d_local ?? '—' },
+        { label: 'species', value: speciesNames.length },
+      ]}
+    />
+  );
 
   return (
     <PanelShell
@@ -139,8 +219,58 @@ export function HamiltonianPanel({ frame }: { frame: Frame }) {
       }
       hasData={hasData}
       emptyMessage="No curvature / term matrix for this Hamiltonian."
+      readouts={readouts}
     >
-      {hasData && <Heatmap matrix={matrix!} species={st.species ?? []} />}
+      <div
+        style={{ display: 'flex', flexDirection: 'column', height: '100%' }}
+      >
+        <div style={{ flex: '1 1 auto', minHeight: 0 }}>
+          {hasData && <Heatmap matrix={matrix!} species={speciesNames} />}
+        </div>
+        <div
+          style={{
+            flex: '0 0 auto',
+            display: 'flex',
+            gap: 12,
+            alignItems: 'center',
+            padding: '8px 4px 0',
+            borderTop: '1px solid #1c2230',
+            marginTop: 6,
+          }}
+        >
+          {hasData && <CurvatureMiniMap matrix={matrix!} />}
+          <div style={{ flex: 1, minWidth: 0 }}>
+            {speciesNames.length > 0 && (
+              <table
+                style={{
+                  fontSize: 10,
+                  color: '#9aa6c8',
+                  borderCollapse: 'collapse',
+                  marginBottom: 6,
+                }}
+              >
+                <tbody>
+                  {speciesNames.map((s, i) => (
+                    <tr key={s}>
+                      <td style={{ paddingRight: 8, color: '#7f8bb0' }}>{s}</td>
+                      <td>d={st.species_dims?.[i] ?? '?'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+            <div
+              data-testid="hamiltonian-katex"
+              style={{ color: '#c8d0e0', fontSize: 12 }}
+              dangerouslySetInnerHTML={{
+                __html: tex(
+                  'H = \\sum_i h_i + \\sum_{\\langle i,j \\rangle} h_{ij}',
+                ),
+              }}
+            />
+          </div>
+        </div>
+      </div>
     </PanelShell>
   );
 }
