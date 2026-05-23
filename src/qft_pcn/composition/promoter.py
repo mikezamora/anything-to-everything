@@ -53,6 +53,14 @@ class Promoter:
     def __init__(self, library: LemmaLibrary, mode: str = "init_clamp"):
         if mode not in ("init_clamp", "projector"):
             raise ValueError(f"unknown promotion mode: {mode}")
+        if mode == "projector":
+            # Projector-energy mode (spec §5.2b) is not yet implemented —
+            # `apply_projector` / `projector_energy` machinery lands in a
+            # follow-on task. Reject at construction so a caller does not
+            # silently receive a PromotedLemma it cannot consume.
+            raise NotImplementedError(
+                "projector mode not yet implemented; only init_clamp is "
+                "supported (spec §5.2a). Pass mode='init_clamp'.")
         self.library = library
         self.mode = mode
 

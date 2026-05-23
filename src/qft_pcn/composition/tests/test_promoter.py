@@ -8,7 +8,8 @@ from src.qft_pcn.composition.lemma_library import (
     LemmaLibrary, register_lemma, DerivationMetadata)
 from src.qft_pcn.composition.promoter import Promoter, PromotedLemma
 from src.qft_pcn.composition.errors import (
-    LemmaLeafCountMismatch, ConditionalLemmaRefused, LemmaNotFound)
+    LemmaLeafCountMismatch, ConditionalLemmaRefused, LemmaNotFound,
+    LemmaSpeciesMismatch)
 from src.qft_pcn.logic.mera_encoder import encode_mera
 from src.qft_pcn.logic.ast import parse
 
@@ -72,6 +73,37 @@ def test_conditional_lemma_allowed_with_opt_in(tmp_path):
         {"kind": "use_lemma", "lemma_id": lid, "leaves": list(range(n)),
          "allow_conditional": True})
     assert promoted.lemma_id == lid
+
+
+def test_projector_mode_not_yet_implemented(tmp_path):
+    """Projector-energy mode (spec §5.2b) is deferred; constructing a
+    Promoter with mode='projector' must fail at construction so a caller
+    does not silently get a PromotedLemma they cannot consume."""
+    with pytest.raises(NotImplementedError, match="projector"):
+        Promoter(LemmaLibrary(tmp_path), mode="projector")
+
+
+def test_init_clamp_species_mismatch_raises(tmp_path):
+    """apply_init_clamp's species check (spec §5.2a) refuses a clamp
+    whose host window does not align species-wise with the lemma."""
+    lib = LemmaLibrary(tmp_path)
+    lid, lemma_meta = _register(lib)
+    p = Promoter(lib)
+    host, host_meta = encode_mera(parse(r"\x:Int. x"))
+    n = lemma_meta.n_leaves
+    promoted = p.compile_constraint(
+        {"kind": "use_lemma", "lemma_id": lid, "leaves": list(range(n))})
+    # Surgically swap one host species so the per-leaf species pattern
+    # disagrees at index 0 (lemma species[0] vs. flipped host species[0]).
+    flipped = list(host_meta.species_of_leaf)
+    original = flipped[0]
+    # Pick a different species than the lemma's leaf-0 species.
+    different = next(s for s in ("kind", "type", "bid", "value", "tobl",
+                                 "PAD") if s != original)
+    flipped[0] = different
+    object.__setattr__(host_meta, "species_of_leaf", flipped)
+    with pytest.raises(LemmaSpeciesMismatch):
+        p.apply_init_clamp(host, host_meta, promoted)
 
 
 def test_init_clamp_writes_lemma_tensors_no_rederivation(tmp_path):
