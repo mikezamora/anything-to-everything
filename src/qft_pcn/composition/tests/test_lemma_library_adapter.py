@@ -202,3 +202,76 @@ def test_cheapest_for_type_skips_primitives(tmp_path):
     # must return None (the primitive must NOT be returned).
     assert lib.cheapest_for_type(prim_prop_type) is None, (
         "cheapest_for_type must skip primitive lemmas (D28)")
+
+
+def test_save_primitive_refuses_when_avg_trace_distance_exceeds_eps_register(
+        tmp_path):
+    """D32: ``_save_primitive`` must enforce the spec §4.5 residual gate.
+    A CanonicalPrimitive whose ``avg_trace_distance > eps_register`` must
+    NOT land on disk (would otherwise leak into ``find_similar`` /
+    ``find_by_goal_id``).
+
+    Acceptance:
+    * ``adapter.register(primitive)`` returns ``None`` (mirror
+      ``register_lemma``'s ``residual_too_high`` rejection).
+    * ``library.all_ids()`` is empty afterwards (no stale primitive).
+    * A near-miss line is appended to ``near_misses.log``.
+    * Calling ``_save_primitive`` directly raises
+      :class:`PrimitiveResidualExceedsGate`.
+    """
+    from src.qft_pcn.composition.lemma_library_adapter import (
+        PrimitiveResidualExceedsGate, _primitive_deriv,
+    )
+
+    lib = LemmaLibrary(tmp_path)
+    adapter = LemmaLibraryAdapter(lib)  # eps_register default 1e-8
+
+    # Construct a noisy primitive — avg_trace_distance well above eps_register.
+    state, _ = encode_mera(parse(r"\x:Int. x"))
+    rho = np.array([[1.0 + 0j]])
+    prov = Provenance(
+        source_ids=("noisy_alpha", "noisy_beta"),
+        occurrences=(("noisy_alpha", (0, 1)), ("noisy_beta", (0, 1))),
+        discovered_in_cycle=0,
+    )
+    noisy = CanonicalPrimitive(
+        rho_canonical=rho, mera=state, chi=1,
+        avg_trace_distance=1e-3,  # >> eps_register=1e-8
+        provenance=prov,
+    )
+
+    # register(...) must return None (refusal), not propagate.
+    result = adapter.register(noisy)
+    assert result is None, (
+        "register() must refuse a primitive whose avg_trace_distance "
+        "exceeds eps_register (D32)")
+    assert list(lib.all_ids()) == [], (
+        "no primitive must land on disk when the residual gate refuses (D32)")
+
+    # Near-miss log records the rejection.
+    near_log = tmp_path / "near_misses.log"
+    assert near_log.exists(), "near_misses.log must be created on refusal"
+    log_text = near_log.read_text()
+    assert "primitive_residual_too_high" in log_text
+    assert "noisy_alpha" in log_text
+
+    # Direct call to _save_primitive raises the typed exception.
+    deriv = _primitive_deriv(noisy)
+    try:
+        adapter._save_primitive(noisy, deriv)
+    except PrimitiveResidualExceedsGate as exc:
+        assert "eps_register" in str(exc)
+    else:
+        raise AssertionError(
+            "_save_primitive must raise PrimitiveResidualExceedsGate when "
+            "avg_trace_distance > eps_register")
+
+    # Sanity: a primitive AT the gate (avg_trace_distance == 0.0) still
+    # persists fine — the gate is strictly ``>``.
+    clean = CanonicalPrimitive(
+        rho_canonical=rho, mera=state, chi=1,
+        avg_trace_distance=0.0, provenance=prov,
+    )
+    clean_id = adapter.register(clean)
+    assert clean_id is not None
+    assert clean_id in lib.all_ids()

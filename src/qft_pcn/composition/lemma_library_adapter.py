@@ -27,7 +27,7 @@ the new lemma and registers the (old_id -> new_id) pointer in
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace as replace_dataclass
 from typing import Callable
 
 from src.qft_pcn.composition._abstraction_const import LibraryContractError
@@ -37,6 +37,23 @@ from src.qft_pcn.composition.lemma_library import (
     _content_id, bundle_from_mera, register_lemma, structural_fingerprint,
 )
 from src.qft_pcn.logic.mera_encoder import MeraEncodingMeta
+
+
+# D32: spec §4.5 step 1 residual gate. ``register_lemma`` enforces this
+# for solved-problem triples (residual_energy >= eps_register =>
+# RegistrationResult(False, ..., "residual_too_high")). _save_primitive
+# bypasses register_lemma (primitives are tensor-only, no AST-level
+# encoding_meta), so it MUST enforce the gate itself or noisy clusters
+# (avg_trace_distance > eps_register) silently persist and leak into
+# find_similar / find_by_goal_id.
+_EPS_REGISTER_PRIMITIVE: float = 1e-8
+
+
+class PrimitiveResidualExceedsGate(LibraryContractError):
+    """Raised when :meth:`LemmaLibraryAdapter._save_primitive` is asked
+    to persist a CanonicalPrimitive whose ``avg_trace_distance`` exceeds
+    the spec §4.5 residual gate (``eps_register``). Mirrors the
+    ``residual_too_high`` rejection in :func:`register_lemma`."""
 
 
 def _primitive_deriv(primitive: CanonicalPrimitive) -> DerivationMetadata:
@@ -57,6 +74,34 @@ def _primitive_deriv(primitive: CanonicalPrimitive) -> DerivationMetadata:
         lemma_deps=tuple(prov.source_ids),
         conditional=False,
         source_run_id=f"cycle-{prov.discovered_in_cycle}",
+    )
+
+
+def _consolidated_deriv(primitive: CanonicalPrimitive,
+                        parent_lemma) -> DerivationMetadata:
+    """Build a :class:`DerivationMetadata` for a consolidation replacement
+    lemma ``L'`` (D35). ``L'`` inherits the parent lemma's
+    ``proposition_type`` (it proves the same proposition) and records
+    the parent's ``source_run_id`` in :attr:`lemma_deps` together with
+    the promoted-primitive source ids; ``hamiltonian_id`` is tagged
+    ``consolidated:`` to distinguish it from both wake-phase and
+    abstract-phase write paths in audit traces.
+    """
+    prov = primitive.provenance
+    src_tag = "+".join(prov.source_ids) if prov.source_ids else "abstract"
+    # Preserve the parent's source_run_id so find_by_goal_id can still
+    # reach L' under the original goal id (see D32 follow-on).
+    parent_run_id = parent_lemma.derivation.source_run_id
+    parent_id = parent_lemma.lemma_id
+    return DerivationMetadata(
+        hamiltonian_id=f"consolidated:{src_tag}",
+        residual_energy=float(primitive.avg_trace_distance),
+        energy_gap=0.0,
+        trotter_steps=parent_lemma.derivation.trotter_steps,
+        assumptions=parent_lemma.derivation.assumptions,
+        lemma_deps=tuple(prov.source_ids) + (parent_id,),
+        conditional=parent_lemma.derivation.conditional,
+        source_run_id=parent_run_id,
     )
 
 
@@ -116,6 +161,11 @@ class LemmaLibraryAdapter:
     # Adapter-side tier map: populated as the orchestrator registers entries.
     # Core entries are immune to pruning per spec §3.3.
     _tiers: dict[str, str] = field(default_factory=dict)
+    # D32: spec §4.5 step 1 residual gate for primitive persistence.
+    # ``_save_primitive`` rejects CanonicalPrimitive with
+    # ``avg_trace_distance > eps_register``. Matches the default in
+    # :func:`register_lemma` (1e-8).
+    eps_register: float = _EPS_REGISTER_PRIMITIVE
 
     def register(self, entry) -> str | None:
         """Register a solved-problem tuple or a :class:`CanonicalPrimitive`.
@@ -126,7 +176,14 @@ class LemmaLibraryAdapter:
         """
         if isinstance(entry, CanonicalPrimitive):
             deriv = _primitive_deriv(entry)
-            lemma_id = self._save_primitive(entry, deriv)
+            try:
+                lemma_id = self._save_primitive(entry, deriv)
+            except PrimitiveResidualExceedsGate:
+                # D32: spec §4.5 gate rejection. Mirror register_lemma's
+                # ``RegistrationResult(accepted=False, ...)`` contract by
+                # returning None (no-op) instead of propagating; the near-
+                # miss is already logged inside _save_primitive.
+                return None
             # Tag the primitive so cached_solutions filters it out (D26).
             # Tier is "primitive" — distinct from "dynamic" so the
             # consolidation walk can skip it without touching "core" semantics.
@@ -152,7 +209,29 @@ class LemmaLibraryAdapter:
         """Persist a CanonicalPrimitive's MERA as a Lemma. We bypass
         :func:`register_lemma` for primitives because they have no AST-level
         :class:`MeraEncodingMeta` (the abstract phase synthesises tensors,
-        not source-level ASTs)."""
+        not source-level ASTs).
+
+        D32: enforce the spec §4.5 step 1 residual gate inline. A
+        CanonicalPrimitive whose ``avg_trace_distance > eps_register``
+        is a too-noisy cluster representative; persisting it would leak a
+        stale primitive into :meth:`find_by_goal_id` / :meth:`find_similar`
+        (``cheapest_for_type`` filters by ``primitive:`` prefix, but the
+        fingerprint queries do NOT). Mirrors :func:`register_lemma`'s
+        ``residual_too_high`` rejection (which logs to ``near_misses.log``).
+        """
+        avg_td = float(primitive.avg_trace_distance)
+        if avg_td > self.eps_register:
+            near_log = self.library.root / "near_misses.log"
+            with near_log.open("a") as fh:
+                fh.write(
+                    f"primitive_residual_too_high {avg_td} "
+                    f"> eps_register={self.eps_register} "
+                    f"source_ids={list(primitive.provenance.source_ids)}\n")
+            raise PrimitiveResidualExceedsGate(
+                f"CanonicalPrimitive.avg_trace_distance={avg_td} exceeds "
+                f"eps_register={self.eps_register}; refusing to persist "
+                f"(spec §4.5 residual gate). source_ids="
+                f"{list(primitive.provenance.source_ids)}")
         bundle: MeraTensorBundle = bundle_from_mera(primitive.mera)
         fp = structural_fingerprint(primitive.mera)
         prop_type = f"primitive:{deriv.hamiltonian_id}"
@@ -201,6 +280,12 @@ class LemmaLibraryAdapter:
         self-replace the primitive with a stub copy of itself. The
         wake-sleep consolidation loop is for PARENT lemmas re-derived
         through new primitives, never primitives themselves.
+
+        Consolidated lemmas (adapter tier ``"consolidated"``, D35) are
+        NOT filtered: they are concrete proofs of the parent lemma's
+        proposition that delegate bulk substructure to a promoted
+        primitive. §10.9 iterative-compression requires them to surface
+        in subsequent consolidation passes so depth > 1 chains stack.
         """
         out: list[tuple[object, object, str]] = []
         for lemma_id in self.library.all_ids():
@@ -224,24 +309,131 @@ class LemmaLibraryAdapter:
         return self._tiers.get(lemma_id, "dynamic")
 
     def replace(self, old_id: str, new_primitive: CanonicalPrimitive) -> str:
-        """Replace ``old_id`` with a new primitive: persist the new lemma
-        (the store is append-only, so the old one stays on disk), record
-        the redirect in ``replacements`` and mark the old id pruned so
-        :meth:`cached_solutions` no longer surfaces it. Returns the new
-        lemma id."""
-        deriv = _primitive_deriv(new_primitive)
+        """Replace ``old_id`` with a consolidation replacement ``L'``:
+        persist L' (the store is append-only, so the old one stays on
+        disk), record the redirect in ``replacements`` and mark
+        ``old_id`` pruned so :meth:`cached_solutions` no longer surfaces
+        it. Returns the new lemma id.
+
+        D35 fix: when ``old_id`` is a CONCRETE lemma (carries an
+        AST-level :class:`MeraEncodingMeta` and a non-``"primitive:"``
+        :attr:`proposition_type`), L' is saved as a CONSOLIDATED lemma
+        that INHERITS the parent's ``proposition_type`` and
+        ``encoding_meta``. This makes L' reachable by:
+
+        * the §8 cache layer (:meth:`LemmaLibrary.cheapest_for_type`
+          filters out ``"primitive:"`` prefixes only), and
+        * future consolidation passes (:meth:`cached_solutions` filters
+          out adapter tiers ``{"primitive", "induction"}`` and the
+          ``"primitive:"`` proposition_type prefix; ``"consolidated"``
+          carries neither).
+
+        §10.9 iterative-compression intent restored: consolidations
+        stack to depth > 1 because L' itself is eligible as a parent in
+        a subsequent cycle.
+
+        Fallback: if ``old_id`` is itself a primitive (no AST-level
+        parent metadata to inherit — e.g. the unit-test path that calls
+        :meth:`replace` directly on a registered primitive), L' is
+        saved via the primitive path. The §10.9 iterative-compression
+        chain does not apply to tensor-only primitives.
+        """
         # Log the replacement in provenance (mutating use_log is fine; it is
         # a list and not part of the frozen primitive's identity).
         new_primitive.provenance.use_log.append(f"replace:{old_id}")
+        # D37: also stamp the consolidation cycle in use_log so the
+        # discovery timestamp survives the source_run_id inheritance below
+        # (the cycle would otherwise be lost when ``_consolidated_deriv``
+        # overrides ``source_run_id`` with the parent's goal_id).
+        new_primitive.provenance.use_log.append(
+            "consolidated_in_cycle:"
+            f"cycle-{new_primitive.provenance.discovered_in_cycle}")
+
+        parent_is_primitive_tier = (
+            self._tiers.get(old_id) in {"primitive", "induction"}
+        )
+        if not parent_is_primitive_tier:
+            try:
+                parent_lemma = self.library.load(old_id)
+            except Exception:
+                parent_lemma = None
+            if parent_lemma is not None and \
+                    not parent_lemma.proposition_type.startswith("primitive:"):
+                deriv = _consolidated_deriv(new_primitive, parent_lemma)
+                # D37: tag the inherited source_run_id in provenance so
+                # the cache-by-goal-id inheritance is auditable from the
+                # primitive's use_log alone (the derivation's
+                # source_run_id field is the load-bearing one for
+                # find_by_goal_id; this entry mirrors it for debug).
+                new_primitive.provenance.use_log.append(
+                    f"inherited_source_run_id:{deriv.source_run_id}")
+                new_id = self._save_consolidated(
+                    new_primitive, deriv, parent_lemma)
+                self.replacements[old_id] = new_id
+                self.pruned.add(old_id)
+                # L' carries the parent's proposition_type and is tagged
+                # "consolidated" — NOT "primitive". Both §8 cache filters
+                # (cheapest_for_type's "primitive:" prefix skip) and the
+                # consolidation walk (cached_solutions's tier-set skip)
+                # treat consolidated lemmas as concrete: they are
+                # reachable to future cache hits AND eligible as parents
+                # in further consolidation (D35; depth > 1 restored).
+                self._tiers[new_id] = "consolidated"
+                return new_id
+
+        # Fallback: no concrete parent metadata to inherit. D37: even on
+        # this primitive-only path, inherit the parent primitive's
+        # ``source_run_id`` if one is recorded -- otherwise the cache-by-
+        # goal-id reverse index loses every chain-of-consolidations
+        # entry. Falls back to ``_primitive_deriv``'s ``cycle-{N}`` only
+        # when the parent carries no source_run_id (e.g. a synthetic
+        # test that registers a primitive directly without going through
+        # the wake/promote pipeline).
+        deriv = _primitive_deriv(new_primitive)
+        try:
+            parent_lemma = self.library.load(old_id)
+            parent_run_id = parent_lemma.derivation.source_run_id
+        except Exception:
+            parent_run_id = None
+        if parent_run_id:
+            new_primitive.provenance.use_log.append(
+                f"inherited_source_run_id:{parent_run_id}")
+            deriv = replace_dataclass(deriv, source_run_id=parent_run_id)
         new_id = self._save_primitive(new_primitive, deriv)
         self.replacements[old_id] = new_id
         self.pruned.add(old_id)
-        # The replacement is itself a CanonicalPrimitive (the §10.9 step (1)
-        # synthesises L' as a new primitive), so it carries the same
-        # "primitive" tier semantics: tensor-only, must be filtered out of
-        # cached_solutions to avoid self-replacement (D26).
         self._tiers[new_id] = "primitive"
         return new_id
+
+    def _save_consolidated(self, primitive: CanonicalPrimitive,
+                           deriv: DerivationMetadata,
+                           parent_lemma: Lemma) -> str:
+        """Persist a consolidation replacement L' under the PARENT
+        lemma's ``proposition_type`` and ``encoding_meta`` (D35). L' is
+        the §10.9 "shorter solution": same proposition as the parent,
+        but its MERA delegates the bulk to the newly-promoted primitive
+        recorded in :attr:`primitive.provenance.use_log` via
+        ``uses_primitive:{src}`` markers.
+
+        Inheriting ``encoding_meta`` from the parent (rather than
+        synthesising the stub :meth:`_save_primitive` uses) keeps
+        :func:`_n_leaves_L` non-zero on L', so it ranks meaningfully
+        in :meth:`LemmaLibrary.cheapest_for_type`.
+        """
+        bundle: MeraTensorBundle = bundle_from_mera(primitive.mera)
+        fp = structural_fingerprint(primitive.mera)
+        prop_type = parent_lemma.proposition_type
+        # Namespace the content hash by parent source_run_id so
+        # consolidating the same parent twice (or two distinct parents
+        # to byte-identical L') do not collide in the manifest.
+        lemma_id = _content_id(bundle, prop_type,
+                               source_run_id=deriv.source_run_id)
+        lemma = Lemma(lemma_id=lemma_id, proposition_type=prop_type,
+                      mera_tensors=bundle,
+                      encoding_meta=parent_lemma.encoding_meta,
+                      derivation=deriv, fingerprint=fp)
+        self.library.save(lemma)
+        return lemma_id
 
     def prune(self, lemma_ids) -> int:
         """Mark ``lemma_ids`` as pruned. Core-tier entries are skipped (spec

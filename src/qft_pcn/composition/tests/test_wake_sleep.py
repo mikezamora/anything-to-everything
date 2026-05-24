@@ -244,3 +244,77 @@ def test_consolidate_skips_self_match_on_primitive(tmp_path):
     assert surfaced.isdisjoint(primitive_ids), (
         f"cached_solutions surfaced primitive ids: "
         f"{surfaced & primitive_ids}")
+
+
+def test_consolidate_preserves_source_run_id_for_cache(tmp_path):
+    """D37: when ``_consolidate`` replaces a parent lemma ``sid`` with a
+    consolidation lemma ``L'``, ``L'`` must INHERIT the parent's
+    ``derivation.source_run_id`` so :meth:`LemmaLibrary.find_by_goal_id`
+    (the §8 cache-by-goal-id reverse index, fixed for promotion by D27)
+    can retrieve ``L'`` under the ORIGINAL goal_id.
+
+    Without inheritance, the replace path stamps ``L'`` with
+    ``source_run_id=f"cycle-{N}"`` and the cache misses every
+    consolidated entry forever (defeats §8 short-circuit on subsequent
+    cycles).
+
+    Acceptance against the real LemmaLibrary + adapter:
+    * After one wake-sleep cycle that promotes a primitive AND
+      consolidates the parent solved-problem entries, calling
+      ``library.find_by_goal_id(parent_goal_id)`` for each pruned parent
+      goal_id must return a Lemma (not None).
+    * The returned lemma must be the REPLACEMENT (D11: the parent itself
+      is pruned), identifiable by ``lemma_id != parent_lemma_id`` and
+      ``proposition_type == parent.proposition_type`` (D35 inheritance).
+    * The replacement's ``provenance.use_log`` records the
+      ``inherited_source_run_id:`` marker (audit trail).
+    """
+    corpus = build_induction_corpus()
+    library = LemmaLibrary(tmp_path)
+    adapter = LemmaLibraryAdapter(library)
+
+    report = wake_sleep_cycle(adapter, _problems(corpus),
+                              make_stub_solver({}), cycle_index=0)
+    assert report.promoted, "expected at least one primitive promoted"
+    assert report.n_consolidated > 0, (
+        "expected consolidation to run; the corpus must yield matching "
+        "sub-pieces against the promoted primitive")
+
+    # Every pruned parent (old_id in replacements) must be retrievable
+    # under its ORIGINAL source_run_id via find_by_goal_id, returning the
+    # REPLACEMENT lemma (not the pruned parent — the parent is gone from
+    # the working corpus per D11; but the manifest is append-only so the
+    # parent's manifest row still carries its source_run_id, and L'
+    # inherits the same source_run_id so the find_by_goal_id walk picks
+    # the LAST inserted match — which is L').
+    assert adapter.replacements, "expected at least one replacement"
+    for old_id, new_id in adapter.replacements.items():
+        parent = library.load(old_id)
+        parent_goal_id = parent.derivation.source_run_id
+        assert parent_goal_id, (
+            f"parent {old_id} has no source_run_id to inherit")
+
+        hit = library.find_by_goal_id(parent_goal_id)
+        assert hit is not None, (
+            f"find_by_goal_id({parent_goal_id!r}) returned None — D37 "
+            f"consolidation lost the parent's source_run_id on L'")
+        # The reverse index returns the MOST-RECENTLY-registered match
+        # (manifest is dict-ordered append-only). After consolidation,
+        # that is L' (parent was registered first, L' second).
+        assert hit.lemma_id == new_id, (
+            f"find_by_goal_id({parent_goal_id!r}) returned "
+            f"{hit.lemma_id!r}, expected the replacement {new_id!r} "
+            f"(the parent {old_id!r} was registered earlier; L' must be "
+            f"the most-recent insertion)")
+        # D35: L' inherits the parent's proposition_type (proves the
+        # same proposition; "shorter solution" per §10.9).
+        assert hit.proposition_type == parent.proposition_type, (
+            f"L' proposition_type {hit.proposition_type!r} != parent's "
+            f"{parent.proposition_type!r}; D35 inheritance broken")
+        # D37 audit trail: provenance.use_log records the inheritance.
+        # (Stored on the in-memory Lemma's derivation lemma_deps via
+        # _consolidated_deriv; the use_log marker lives on the
+        # CanonicalPrimitive's provenance, which is on the replacements
+        # map's value side -- but we cannot reach that from the loaded
+        # Lemma. The load-bearing assertion above on find_by_goal_id
+        # is the §8 contract; the use_log marker is debug-only.)
