@@ -441,7 +441,7 @@ it unblocks.
   theorem is `pytest.mark.skip`'d with a reference to that entry.
   Commit: 1d8f942.
 
-## Missing dependency: List arithmetic in encoder substrate (`length` / `reverse`)
+## Missing dependency: List arithmetic in encoder substrate (`length` / `reverse` / `append`)
 
 - Where: `src/qft_pcn/logic/mera_encoding.py` (kind table),
   `src/qft_pcn/logic/mera_encoder.py` (AST → state walk),
@@ -449,24 +449,61 @@ it unblocks.
   terms), `src/qft_pcn/logic/mera_evaluation_hamiltonian.py`
   (reduction rules `length(Nil)=0`,
   `length(Cons h t)=Succ (length t)`, `reverse(Nil)=Nil`,
-  `reverse(Cons h t)=append (reverse t) (Cons h Nil)`).
-- Need: dedicated `KIND_LENGTH`, `KIND_REVERSE` (and likely
-  `KIND_APPEND`) species in the kind table; encoder leaf-emission
-  for unary list operators; typing-Hamiltonian terms enforcing
-  `length : List A -> Nat` and `reverse : List A -> List A`;
+  `reverse(Cons h t)=append (reverse t) (Cons h Nil)`,
+  `append Nil ys = ys`, `append (Cons x xs) ys = Cons x (append xs ys)`).
+- Need: dedicated `KIND_LENGTH`, `KIND_REVERSE`, `KIND_APPEND`
+  species in the kind table; encoder leaf-emission for the new
+  list operators; typing-Hamiltonian terms enforcing
+  `length : List A -> Nat`, `reverse : List A -> List A`,
+  `append : List A -> List A -> List A`;
   reduction-Hamiltonian terms implementing the structural-induction
   reductions above so the §10.10 list-induction theorem promotes
   through the same R-Eq-Refl + Forall-protected channel that
   `forall x:Nat. Eq (x + Zero) x` already uses. Decoder
   (`logic/decoder.py`) must parse the new kinds back to
-  `App(Var("length"), ...)` / `App(Var("reverse"), ...)` (or
-  dedicated nodes).
+  `App(Var("length"), ...)` / `App(Var("reverse"), ...)` /
+  `App(App(Var("append"), xs), ys)` (or dedicated nodes).
+- Blocker (S4 investigation, 2026-05-23): the kind table is
+  SATURATED at the substrate's leaf dimension. `MERA_LEAF_DIM = 16`
+  fixes the bond dimension across all five species (kind/type/bid/
+  value/tobl). The kind species already uses all 16 slots: base
+  kinds 0-7 (`PAD..BIN` from `encoding.py`) plus 8-15 (`ZERO`,
+  `SUCC`, `NATLIT`, `NIL`, `CONS`, `EQ`, `FORALL`, `FIX`). Adding
+  `KIND_LENGTH`/`REVERSE`/`APPEND` therefore requires bumping
+  `MERA_LEAF_DIM` (and `MERA_KIND_CUTOFF`) to ≥ 19. That cascades
+  through every gate-construction site (`_mera_eval_terms.py`,
+  `_mera_window.py`, `_mera_holes.py` whose `_WITNESS_BASE =
+  MERA_LEAF_DIM - 1` shifts), every leaf-vector construction
+  (`_mera_leaves.py`), every test that asserts the dimension
+  literally (`test_mera_encoding.py::test_leaf_dim_is_16`,
+  `test_mera_holes.py`, `test_mera_window.py`, `test_mera_leaves.py`,
+  `test_mera_acceptance.py`), and the MERA bond-dim scaling
+  expectations driven by §10.5. S4 must include a leaf-dim
+  enlargement pass before the new kinds can be added; this is a
+  substrate-wide refactor, not a localized kind-table append.
+- Second blocker (S4 investigation, 2026-05-23): even granted the
+  kind-table bump, the reductions are NOT value-rewrites like
+  R-Arith / R-AddZero / R-Eq-Refl — they are STRUCTURAL
+  unfold-and-rewrite gates. `R-Length-Cons` reduces
+  `length (Cons x xs)` to `Succ (length xs)` which introduces a
+  new `Succ` node and re-attaches a child to a fresh `length`
+  application; `R-Reverse-Cons` introduces `append`, two recursive
+  applications, and `Cons x Nil`. These need the term-growing
+  machinery already paid for by `R-Fix` (`fix_transition_gate`
+  + node-budget guard `MeraEvalBudgetExceeded`), not the
+  single-leaf transition gates the other rules use. The S4 plan
+  must reuse the R-Fix unfold pattern (encoder reserves spare
+  nodes via `n_nodes_max`; gate writes the unfolded structure
+  into the reserved leaves) rather than treat list reductions as
+  in-place value rewrites. `R-Length-Nil` and `R-Append-Nil` are
+  shape-preserving (single-node kind/value flip) and would
+  resemble `R-Eq-Refl`; the rest require the unfold path.
 - Workaround: the textual `List` / `Cons` / `Nil` surface has
-  landed (above); `length` / `reverse` remain free identifiers in
-  the parsed AST (they tokenise as `ident` and so an expression
-  like `length xs` parses as `App(Var("length"), Var("xs"))` --
-  which simply does not reduce under the current evaluation
-  Hamiltonian).
+  landed (above); `length` / `reverse` / `append` remain free
+  identifiers in the parsed AST (they tokenise as `ident` and so
+  an expression like `length xs` parses as
+  `App(Var("length"), Var("xs"))` -- which simply does not reduce
+  under the current evaluation Hamiltonian).
   `src/qft_pcn/bridge/tests/test_dsl_extended_calculus.py::test_parses_list_length_reverse_theorem`
   is `pytest.mark.skip`'d until this entry is resolved.
 - Unblocks: K-Task-8 acceptance on the spec's literal §10.10
