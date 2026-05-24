@@ -16,6 +16,7 @@ from ..errors import BadJsonError, BadSchemaError
 
 _DEFAULT_SEARCH = {
     "method": "imag_time",
+    "runtime": "mps",
     "steps": 50,
     "chi_max": 32,
     "dt": 0.05,
@@ -111,6 +112,7 @@ SCHEMA: dict[str, Any] = {
             "additionalProperties": False,
             "properties": {
                 "method":  {"enum": ["imag_time"]},
+                "runtime": {"enum": ["mps", "mera"], "default": "mps"},
                 "steps":   {"type": "integer", "minimum": 1, "maximum": 1000,
                             "default": 50},
                 "chi_max": {"type": "integer", "minimum": 2, "maximum": 64,

@@ -26,3 +26,21 @@ def test_missing_version_rejects():
     spec = _minimal_v1().replace('"version": "1",', "")
     with pytest.raises(BadSchemaError, match="version"):
         parse_and_validate(spec)
+
+
+def test_search_runtime_mera_accepted():
+    spec = _minimal_v1().replace('"method": "imag_time"', '"method": "imag_time", "runtime": "mera"')
+    dsl = parse_and_validate(spec)
+    assert dsl["search"]["runtime"] == "mera"
+
+
+def test_search_runtime_invalid_rejects():
+    spec = _minimal_v1().replace('"method": "imag_time"', '"method": "imag_time", "runtime": "tebd"')
+    with pytest.raises(BadSchemaError, match="runtime"):
+        parse_and_validate(spec)
+
+
+def test_search_runtime_default_mps_when_absent():
+    # _minimal_v1 has no runtime; default fill should set runtime to 'mps'
+    dsl = parse_and_validate(_minimal_v1())
+    assert dsl["search"]["runtime"] == "mps"
