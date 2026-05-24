@@ -57,6 +57,79 @@ describe('HamiltonianPanel readouts', () => {
     ).toBeNull();
   });
 
+  it('hides the coupling toggle and surfaces a note when both dicts are empty', () => {
+    const noCouplingsFrame = {
+      step: 0,
+      layer_states: {
+        hamiltonian: {
+          n_sites: 2,
+          d_local: 2,
+          species_dims: [2, 2],
+          species: ['a', 'b'],
+          per_species: {
+            a: { bare_mass: 1.0 },
+            b: { bare_mass: 0.5 },
+          },
+          density_couplings: {},
+          yukawa_couplings: {},
+        },
+      },
+    } as any;
+    const { container } = render(<HamiltonianPanel frame={noCouplingsFrame} />);
+    // Note is visible.
+    expect(
+      container.querySelector('[data-testid="hamiltonian-no-couplings-note"]'),
+    ).toBeTruthy();
+    // No coupling matrix rendered for either label.
+    expect(
+      container.querySelector('[data-testid="coupling-matrix-g_ab"]'),
+    ).toBeNull();
+    expect(
+      container.querySelector('[data-testid="coupling-matrix-λ_ab"]'),
+    ).toBeNull();
+    // Toolbar toggle buttons absent (the .panel-toolbar-btn elements would
+    // be present only if PanelToolbar was rendered with non-empty items).
+    expect(container.querySelectorAll('.panel-toolbar-btn').length).toBe(0);
+  });
+
+  it('renders both toggle buttons when both coupling dicts are non-empty', () => {
+    const { container } = render(<HamiltonianPanel frame={hamiltonianFrame} />);
+    // hamiltonianFrame fixture has both density_couplings and yukawa_couplings populated.
+    const btns = container.querySelectorAll('.panel-toolbar-btn');
+    expect(btns.length).toBe(2);
+    const labels = Array.from(btns).map((b) => b.textContent ?? '');
+    expect(labels.some((l) => l.includes('density'))).toBe(true);
+    expect(labels.some((l) => l.includes('Yukawa'))).toBe(true);
+  });
+
+  it('shows only the non-empty coupling matrix without a toggle when one dict is empty', () => {
+    const onlyDensityFrame = {
+      step: 0,
+      layer_states: {
+        hamiltonian: {
+          n_sites: 2,
+          d_local: 2,
+          species_dims: [2, 2],
+          species: ['a', 'b'],
+          density_couplings: { 'a|b': 0.25 },
+          yukawa_couplings: {},
+        },
+      },
+    } as any;
+    const { container } = render(<HamiltonianPanel frame={onlyDensityFrame} />);
+    expect(
+      container.querySelector('[data-testid="coupling-matrix-g_ab"]'),
+    ).toBeTruthy();
+    expect(
+      container.querySelector('[data-testid="coupling-matrix-λ_ab"]'),
+    ).toBeNull();
+    expect(screen.queryByText(/Yukawa/)).toBeNull();
+    expect(screen.queryByText(/density/)).toBeNull();
+    expect(
+      container.querySelector('[data-testid="hamiltonian-no-couplings-note"]'),
+    ).toBeNull();
+  });
+
   it('renders the 1D curvature strip aligned to the site axis', () => {
     const { container } = render(<HamiltonianPanel frame={hamiltonianFrame} />);
     const strip = container.querySelector(

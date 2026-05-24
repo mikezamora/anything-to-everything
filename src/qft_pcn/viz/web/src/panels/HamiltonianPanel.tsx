@@ -217,24 +217,39 @@ export function HamiltonianPanel({
     Object.keys(density).length > 0 ||
     Object.keys(yukawa).length > 0;
 
+  const hasDensity = Object.keys(density).length > 0;
+  const hasYukawa = Object.keys(yukawa).length > 0;
+  const hasAnyCoupling = hasDensity || hasYukawa;
+  const showToggle = hasDensity && hasYukawa;
+
   const [couplingView, setCouplingView] = useState<'density' | 'yukawa'>(
     'density',
   );
+  // Effective view: if only one dict is populated, force that one regardless
+  // of stored toggle state so users never see an all-zero matrix that's
+  // really just "wrong tab selected".
+  const effectiveCouplingView: 'density' | 'yukawa' = showToggle
+    ? couplingView
+    : hasYukawa && !hasDensity
+      ? 'yukawa'
+      : 'density';
 
-  const toolbarItems: ToolbarItem[] = [
-    {
-      key: 'density',
-      label: 'g_{ab} (density)',
-      active: couplingView === 'density',
-      onToggle: () => setCouplingView('density'),
-    },
-    {
-      key: 'yukawa',
-      label: 'λ_{ab} (Yukawa)',
-      active: couplingView === 'yukawa',
-      onToggle: () => setCouplingView('yukawa'),
-    },
-  ];
+  const toolbarItems: ToolbarItem[] = showToggle
+    ? [
+        {
+          key: 'density',
+          label: 'g_{ab} (density)',
+          active: couplingView === 'density',
+          onToggle: () => setCouplingView('density'),
+        },
+        {
+          key: 'yukawa',
+          label: 'λ_{ab} (Yukawa)',
+          active: couplingView === 'yukawa',
+          onToggle: () => setCouplingView('yukawa'),
+        },
+      ]
+    : [];
 
   const readouts = (
     <PanelReadouts
@@ -334,10 +349,13 @@ export function HamiltonianPanel({
           </table>
         )}
 
-        {/* Coupling matrix (toggle between density g_ab and Yukawa λ_ab) */}
-        {speciesNames.length > 0 && (
+        {/* Coupling matrix (toggle between density g_ab and Yukawa λ_ab).
+         * If neither dict has couplings, hide the matrix entirely and surface
+         * an honest note instead of rendering an all-zero grid that users
+         * misread as "toggle is broken". */}
+        {speciesNames.length > 0 && hasAnyCoupling && (
           <div>
-            {couplingView === 'density' ? (
+            {effectiveCouplingView === 'density' ? (
               <CouplingMatrix
                 species={speciesNames}
                 couplings={density}
@@ -350,6 +368,23 @@ export function HamiltonianPanel({
                 label="λ_ab"
               />
             )}
+          </div>
+        )}
+        {speciesNames.length > 0 && !hasAnyCoupling && (
+          <div
+            data-testid="hamiltonian-no-couplings-note"
+            style={{
+              color: '#7f8bb0',
+              fontSize: 11,
+              fontStyle: 'italic',
+              padding: '4px 6px',
+              border: '1px dashed #2f3a55',
+              borderRadius: 3,
+            }}
+          >
+            No multi-species couplings declared in this preset. Try a preset
+            with at least 2 species + a density/Yukawa term to see the
+            coupling matrix.
           </div>
         )}
 
