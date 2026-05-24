@@ -194,6 +194,46 @@ def test_qca_index_is_step_invariant():
     assert r0.support_radius == r1.support_radius == r2.support_radius
 
 
+def test_multi_cycle_sum_equals_per_cycle_sum():
+    """Two disjoint length-4 cycles with strides +1 and -1 sum to 0.
+
+    GNVW 2012 §3: the index of a multi-cycle permutation QCA is the
+    algebraic sum of per-cycle signed displacements. We engineer two
+    disjoint length-4 cycles on leaves ``{0,1,2,3}`` and ``{4,5,6,7}``
+    with opposite strides — one rotating ``0->1->2->3->0`` (stride +1)
+    and one rotating ``4->7->6->5->4`` (stride -1). Their algebraic
+    sum is zero, exhibiting the multi-cycle branch of the formula.
+    """
+    swap = _swap_gate(dim=16)
+    # Cycle (0,1,2,3) stride +1:  SWAP(0,3), SWAP(0,2), SWAP(0,1)
+    # Composes to perm[0]=1, perm[1]=2, perm[2]=3, perm[3]=0.
+    # Cycle (4,7,6,5) stride -1:  SWAP(4,5), SWAP(4,6), SWAP(4,7)
+    # Composes to perm[4]=7, perm[7]=6, perm[6]=5, perm[5]=4.
+    gates = [
+        ((0, 3), swap), ((0, 2), swap), ((0, 1), swap),
+        ((4, 5), swap), ((4, 6), swap), ((4, 7), swap),
+    ]
+    assert compute_qca_index(gates) == 0
+
+
+def test_multi_cycle_uniform_stride_sums():
+    """Three disjoint length-4 stride-+1 cycles sum to index 3.
+
+    GNVW 2012 §3 (multi-cycle formula): three disjoint length-4 cycles
+    each contributing signed displacement +1 sum to total index 3.
+    This exercises the multi-cycle branch of ``compute_qca_index`` --
+    a single-cycle implementation would return at most 1 here.
+    """
+    swap = _swap_gate(dim=16)
+    gates: list = []
+    for base in (0, 4, 8):
+        # Cycle (base, base+1, base+2, base+3) stride +1.
+        gates.append(((base, base + 3), swap))
+        gates.append(((base, base + 2), swap))
+        gates.append(((base, base + 1), swap))
+    assert compute_qca_index(gates) == 3
+
+
 def test_qca_index_independent_of_dt():
     """The GNVW index depends on gate *support*, not gate *magnitudes*.
 

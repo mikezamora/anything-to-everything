@@ -190,9 +190,22 @@ def compute_qca_index(gates_per_step: Sequence[Gate]) -> int:
     index 0 -- circuits *are* the trivial class. A non-zero index
     requires the QCA to act as a net translation on the local algebra,
     which on a finite open chain manifests as a leaf permutation with
-    a single cycle of length equal to the chain length (a periodic
-    shift). We detect this by composing the permutation contribution
-    of each SWAP-like gate and computing the cycle's net displacement.
+    a non-trivial cycle structure. We detect this by composing the
+    permutation contribution of each SWAP-like gate.
+
+    Multi-cycle formula (GNVW 2012, §3): the index is the algebraic
+    sum of per-cycle signed displacements,
+
+        index = sum_{c in cycles} disp(c)
+
+    where for a uniform-stride length-L cycle, ``disp(c)`` is the
+    signed first-hop stride (unwrapped to the symmetric range
+    ``(-L/2, L/2]``). Self-inverse cycles (those with ``2*stride == 0
+    mod L``, including any pure transposition) contribute 0 -- their
+    permutation equals its own inverse, so net leaf flow vanishes.
+    Non-uniform cycles also contribute 0: the signed hops around a
+    closed cycle sum to a multiple of L by construction, so the
+    average displacement vanishes.
     """
     if not gates_per_step:
         return 0
@@ -216,44 +229,51 @@ def compute_qca_index(gates_per_step: Sequence[Gate]) -> int:
         # with no leaf relabeling. GNVW Theorem 2: index 0.
         return 0
 
-    # Non-trivial permutation. If it has a single cycle covering every
-    # touched leaf with a uniform stride, this is a periodic shift QCA
-    # with index = stride (in units of log_2(d) -- we report the
-    # integer displacement, the GNVW index up to the dimension log).
-    if len(cycles) == 1:
-        cyc = cycles[0]
-        # A shift cycle on a periodic chain visits sites
-        # k, k+s, k+2s, ... (mod L); the stride is constant.
-        if len(cyc) >= 2:
-            stride = (cyc[1] - cyc[0])
-            uniform = all(
-                ((cyc[(i + 1) % len(cyc)] - cyc[i]) % len(cyc))
-                == (stride % len(cyc))
-                for i in range(len(cyc))
-            )
-            if uniform:
-                L = len(cyc)
-                disp = stride % L
-                # A pure transposition (L=2, disp=1) is its own inverse:
-                # the cycle is symmetric under reversal, net flow is zero.
-                # Equivalently: the displacement and its inverse are
-                # indistinguishable iff 2*disp == 0 (mod L). GNVW: such
-                # symmetric permutations are in the trivial class.
-                if (2 * disp) % L == 0:
-                    return 0
-                return int(disp)
-    # Multi-cycle / non-uniform-stride branch: returns 0
-    # unconditionally as a placeholder for the genuine multi-cycle
-    # GNVW index. This branch is *currently unused* — every real
-    # Trotter step in this codebase is strict-locality (no SWAP-like
-    # gates), so ``perm`` is identity and ``cycles`` is empty before
-    # this point is reached. The placeholder is preserved for
-    # forward-compatibility with circuits that compose SWAP-like
-    # gates non-uniformly; the genuine multi-cycle GNVW summation
-    # is deferred (see EXTENSIONS.md). Per spec §1.1 (no shortcuts):
-    # this is a tracked gap, not a stub — production paths cannot
-    # exercise it.
-    return 0
+    # Non-trivial permutation. Compute the signed total displacement
+    # by summing per-cycle contributions per GNVW 2012 §3.
+    #
+    # Formula (operator-algebraic GNVW index for a permutation QCA):
+    #     index = sum_{c in cycles} disp(c)
+    # where for a length-L cycle ``c = (k_0, k_1, ..., k_{L-1})`` we
+    # define the per-cycle displacement as
+    #     disp(c) = signed_stride(c)   if 2 * |signed_stride(c)| != L
+    #             = 0                  if 2 * signed_stride(c) == L (mod L)
+    # The second case is a self-inverse (symmetric) cycle: the
+    # permutation equals its own inverse, so the net leaf flow is zero
+    # and the cycle is in the trivial GNVW class (a pure transposition
+    # for L=2 is the canonical instance).
+    #
+    # The signed stride is read off the cycle's first hop ``k_1 - k_0``,
+    # *unwrapped* into the symmetric range (-L/2, L/2]. For non-uniform
+    # cycles (where consecutive hops differ), the contribution is the
+    # sum of signed per-bond hops divided by L -- i.e. the *average*
+    # per-step displacement, which for a closed cycle of L sites
+    # returning to its origin always vanishes (the hops sum to 0 mod L
+    # by construction). Concretely, only uniform-stride cycles
+    # contribute a non-zero per-cycle term.
+    total = 0
+    for cyc in cycles:
+        L = len(cyc)
+        if L < 2:
+            continue
+        # First-hop signed stride in symmetric range (-L/2, L/2].
+        raw = (cyc[1] - cyc[0]) % L
+        signed = raw if raw <= L // 2 else raw - L
+        # A cycle contributes only when its hops are uniform (constant
+        # stride). For non-uniform hops, the per-bond signed sum over a
+        # closed cycle is zero (it returns to its origin), so the
+        # cycle is in the trivial class.
+        uniform = all(
+            ((cyc[(i + 1) % L] - cyc[i]) % L) == raw
+            for i in range(L)
+        )
+        if not uniform:
+            continue
+        # Self-inverse cycle: 2 * disp == 0 (mod L) -> trivial class.
+        if (2 * raw) % L == 0:
+            continue
+        total += int(signed)
+    return total
 
 
 def classify_qca(state, ham, dt: float = 0.1) -> QCAClassification:

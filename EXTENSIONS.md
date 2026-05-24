@@ -879,31 +879,23 @@ already perf-optimized through the M3 perf path
 (`9aa5b17 perf(qft/mera): share identity disentangler`,
 `b3986fd perf(logic/mera-*): cache inactive term-gate skips`).
 
-## Multi-cycle GNVW summation deferred (no current corpus uses it)
+## RESOLVED — Multi-cycle GNVW summation
 
-- Where: `src/qft_pcn/composition/qca_classification.py::compute_qca_index`
-  — the multi-cycle / non-uniform-stride branch (after the single-cycle
-  uniform-shift check) returns `0` unconditionally as a placeholder for
-  the genuine multi-cycle GNVW index (signed total displacement summed
-  per cycle, with each cycle's contribution weighted by its stride
-  modulo length).
-- Need: when a circuit composes SWAP-like gates that induce a
-  permutation with multiple non-trivial cycles or non-uniform stride
-  within a single cycle, the GNVW index is the algebraic sum of
-  per-cycle displacements (Gross-Nesme-Vogts-Werner 2012, §3). The
-  placeholder returns 0 instead of computing the sum.
-- Workaround: every Trotter step in the present codebase is strict-
-  locality — `term_gates` emits only single-leaf and two-leaf non-SWAP
-  factored entanglers, so `_is_swap_like` is universally False and the
-  permutation built in `compute_qca_index` is the identity. The
-  multi-cycle branch is unreachable from any production path; the
-  single-cycle uniform-shift branch already returns the correct index
-  (0) for the strict-locality case via the empty-`cycles` early exit.
-- Unblocks: §12.17 acceptance on hypothetical future Hamiltonians that
-  intentionally compose SWAP gates to encode a non-trivial QCA shift
-  (e.g. a translation-symmetry probe). No present spec target requires
-  this; deferred per `memory/no-placeholders.md` with this entry as
-  the tracked gap.
+- Resolved at: `src/qft_pcn/composition/qca_classification.py::compute_qca_index`
+  — multi-cycle branch now computes the genuine GNVW 2012 §3 index as
+  the algebraic sum of per-cycle signed displacements. For each cycle
+  the signed first-hop stride is unwrapped into the symmetric range
+  ``(-L/2, L/2]``; uniform-stride cycles contribute their signed
+  displacement, self-inverse cycles (``2*stride == 0 mod L``) and
+  non-uniform cycles contribute 0. The single-cycle uniform-shift
+  case is now a special case of the same formula (sum over one term).
+- Tests: `test_multi_cycle_sum_equals_per_cycle_sum` (two disjoint
+  length-4 cycles with strides ±1 sum to 0) and
+  `test_multi_cycle_uniform_stride_sums` (three disjoint length-4
+  stride-+1 cycles sum to index 3) in
+  `composition/tests/test_qca_classification.py`. All pre-existing
+  single-cycle / strict-locality / step-invariance tests still pass
+  unchanged: the formula reduces correctly in those regimes.
 
 ## RESOLVED (partial) — A.3: §12.16 bond-entanglement action + orchestrator top-k
 
