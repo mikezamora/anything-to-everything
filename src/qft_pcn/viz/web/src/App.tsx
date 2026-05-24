@@ -10,6 +10,7 @@ import { CompareBar } from './components/CompareBar';
 import { ExplainerPane } from './components/ExplainerPane';
 import { RouteSwitcher } from './components/RouteSwitcher';
 import { DslRoute } from './routes/DslRoute';
+import { LearnRoute } from './routes/LearnRoute';
 import { panelFor } from './panels';
 import { useVizStore } from './store';
 import './App.css';
@@ -54,8 +55,13 @@ export default function App() {
           </div>
           <Timeline />
         </>
-      ) : (
+      ) : route === 'dsl' ? (
         <DslRoute />
+      ) : route === 'learn' ? (
+        <LearnRoute />
+      ) : (
+        // training branch — placeholder until T14
+        <div className="route-placeholder">Training route not yet implemented.</div>
       )}
     </div>
   );

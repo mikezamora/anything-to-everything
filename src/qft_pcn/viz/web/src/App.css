@@ -312,3 +312,42 @@
 .explainer-worked-example li { margin-bottom: 8px; }
 .explainer-worked-result { color: #9aedc1; font-size: 12px; margin-top: 4px; }
 .explainer-worked-eq { margin: 4px 0; }
+.learn-route { display: grid; grid-template-columns: 260px 1fr;
+               flex: 1; min-height: 0; }
+.learn-contents { background: #0a0d14; border-right: 1px solid #1c2233;
+                   color: #c8d0e0; padding: 12px; overflow-y: auto; }
+.learn-contents h3 { color: #8c97b3; font-size: 11px;
+                      text-transform: uppercase; letter-spacing: 0.05em;
+                      margin: 12px 0 4px; }
+.learn-contents ul { list-style: none; padding-left: 8px; margin: 0; }
+.learn-contents li { margin: 2px 0; }
+.learn-contents button { background: none; border: none; color: #c8d0e0;
+                          cursor: pointer; font-size: 12px; padding: 2px 4px;
+                          text-align: left; width: 100%; }
+.learn-contents button.active { color: #6cd0ff; }
+.learn-contents button:hover { background: #161b29; border-radius: 3px; }
+.learn-route-body { padding: 24px 32px; overflow-y: auto;
+                    color: #e0e6f3; background: #0d111a; }
+.learn-article { max-width: 760px; line-height: 1.6; }
+.learn-article h1 { color: #e0e6f3; margin-top: 0; }
+.learn-article-path { color: #7e8aa3; font-size: 12px; }
+.learn-article-prereq { color: #fbc66a; font-size: 12px; }
+.learn-article p { color: #c8d0e0; }
+.learn-section-prose { margin: 16px 0; }
+.learn-section-equation { margin: 16px 0; }
+.learn-eq-caption { color: #7e8aa3; font-size: 12px; font-style: italic; }
+.learn-section-worked { background: #161b29; padding: 16px; border-radius: 6px;
+                         border-left: 4px solid #9aedc1; margin: 16px 0; }
+.learn-worked-result { color: #9aedc1; }
+.learn-section-dynamics { background: #161b29; padding: 16px; border-radius: 6px;
+                          border-left: 4px solid #fbc66a; margin: 16px 0; }
+.learn-section-miniviz { background: #1a2030; padding: 12px;
+                         border-radius: 4px; margin: 16px 0; }
+.learn-miniviz-placeholder { color: #7e8aa3; font-size: 12px; }
+.learn-section-callout { padding: 12px 16px; border-radius: 4px; margin: 16px 0; }
+.learn-callout-note { background: #1a2540; border-left: 4px solid #6cd0ff; }
+.learn-callout-warn { background: #2b1a1a; border-left: 4px solid #ef9090; }
+.learn-article-cites { margin-top: 32px; border-top: 1px solid #1c2233;
+                        padding-top: 16px; font-size: 12px; color: #7e8aa3; }
+.learn-article-missing { color: #7e8aa3; }
+.route-placeholder { padding: 24px; color: #7e8aa3; }

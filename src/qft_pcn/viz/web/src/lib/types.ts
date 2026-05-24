@@ -44,7 +44,7 @@ export type ParamSchema = Record<string, {
   }>;
 }>;
 
-export type Route = 'viz' | 'dsl';
+export type Route = 'viz' | 'dsl' | 'learn' | 'training';
 
 export interface LlmModel {
   name: string;

@@ -1,18 +1,25 @@
 import { useVizStore } from '../store';
 
+const ROUTES = [
+  { key: 'viz',      label: 'Viz' },
+  { key: 'dsl',      label: 'DSL' },
+  { key: 'learn',    label: 'Learn' },
+  { key: 'training', label: 'Training' },
+] as const;
+
 export function RouteSwitcher() {
   const route = useVizStore((s) => s.route);
   const setRoute = useVizStore((s) => s.setRoute);
   return (
     <div className="route-switcher">
-      {(['viz', 'dsl'] as const).map((r) => (
+      {ROUTES.map((r) => (
         <button
-          key={r}
+          key={r.key}
           type="button"
-          className={r === route ? 'active' : ''}
-          onClick={() => setRoute(r)}
+          className={r.key === route ? 'active' : ''}
+          onClick={() => setRoute(r.key)}
         >
-          {r === 'viz' ? 'Viz' : 'DSL'}
+          {r.label}
         </button>
       ))}
     </div>
