@@ -67,6 +67,13 @@ function CurvatureStrip({ values }: { values: number[] }) {
   const H = 18;
   const W = Math.max(64, values.length * 18);
 
+  // Compute peak outside the effect so we can branch in JSX before painting.
+  let peak = 0;
+  for (const v of values) {
+    const a = Math.abs(v);
+    if (Number.isFinite(a) && a > peak) peak = a;
+  }
+
   useEffect(() => {
     const cnv = canvasRef.current;
     if (!cnv) return;
@@ -77,18 +84,36 @@ function CurvatureStrip({ values }: { values: number[] }) {
       ctx.clearRect(0, 0, W, H);
       return;
     }
-    let peak = 0;
-    for (const v of values) {
-      const a = Math.abs(v);
-      if (Number.isFinite(a) && a > peak) peak = a;
-    }
     const scale = peak > 0 ? peak : 1;
     const cellW = W / n;
     for (let i = 0; i < n; i++) {
       ctx.fillStyle = diverging(values[i] / scale);
       ctx.fillRect(Math.floor(i * cellW), 0, Math.ceil(cellW), H);
     }
-  }, [values, W]);
+  }, [values, W, peak]);
+
+  // When all curvature values are zero (uniform manifold, ξ=0, or no
+  // deformation yet) the diverging ramp maps every cell to white, which
+  // users misread as a broken render.  Surface an honest empty-state note
+  // instead — mirrors the "no couplings" pattern at lines 416-432.
+  if (peak === 0 || !Number.isFinite(peak)) {
+    return (
+      <div
+        data-testid="hamiltonian-curvature-strip-empty"
+        style={{
+          color: '#7f8bb0',
+          fontSize: 11,
+          fontStyle: 'italic',
+          padding: '4px 6px',
+          border: '1px dashed #2f3a55',
+          borderRadius: 3,
+        }}
+      >
+        R(x_k) is uniformly zero across all {values.length} sites
+        {' '}(no manifold curvature in this frame).
+      </div>
+    );
+  }
 
   const [lo, hi] = rangeOf(values);
   return (

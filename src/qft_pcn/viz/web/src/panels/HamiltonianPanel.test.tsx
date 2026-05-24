@@ -139,6 +139,28 @@ describe('HamiltonianPanel readouts', () => {
     expect(strip!.querySelector('canvas')).toBeTruthy();
   });
 
+  it('renders an empty-state note (not a canvas) when all curvature values are zero', () => {
+    const zeroCurvatureFrame = {
+      step: 0,
+      layer_states: {
+        hamiltonian: {
+          n_sites: 3,
+          d_local: 2,
+          species_dims: [2],
+          species: ['x'],
+          curvature: [0, 0, 0],
+        },
+      },
+    } as any;
+    const { getByTestId, queryByTestId } = render(
+      <HamiltonianPanel frame={zeroCurvatureFrame} />,
+    );
+    // Empty-state placeholder note is visible.
+    expect(getByTestId('hamiltonian-curvature-strip-empty')).toBeTruthy();
+    // No canvas strip rendered.
+    expect(queryByTestId('hamiltonian-curvature-strip')).toBeNull();
+  });
+
   it('still renders gracefully if a legacy recording emits a 2D curvature matrix', () => {
     // 2D legacy data: diagonal is extracted as the 1D strip.
     const legacy = {
