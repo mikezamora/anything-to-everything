@@ -1,11 +1,91 @@
 import '@testing-library/jest-dom/vitest';
 import { render, screen } from '@testing-library/react';
 import { describe, it, expect, beforeEach } from 'vitest';
-import { MultifieldPanel } from './MultifieldPanel';
+import { MultifieldPanel, as2DGrid } from './MultifieldPanel';
 import { multifieldFrame, emptyFrame } from './__fixtures__/frames';
 import { useVizStore } from '../store';
+import type { Frame } from '../lib/types';
 
 beforeEach(() => useVizStore.getState().resetAll());
+
+/**
+ * Build a fixture that mirrors the live wire shape from `snapshot_multifield`:
+ *   - `phi`/`E`/`Pi` are 3D `(channels, Nx, Ny)` nested arrays (not 2D).
+ *   - couplings is a single `a|b` entry.
+ * Used to catch the panel rendering the 3D grid as a degenerate 1xN plane and
+ * the split-layout collapse caused by the FrameInterpreter sibling.
+ */
+function makeLiveShapeMultifieldFrame(): Frame {
+  const grid8 = (fn: (x: number, y: number) => number) =>
+    Array.from({ length: 8 }, (_, y) =>
+      Array.from({ length: 8 }, (_, x) => fn(x, y)),
+    );
+  const ripple = (x: number, y: number) =>
+    Math.sin(x * 0.6) * Math.cos(y * 0.6);
+  return {
+    step: 4,
+    layer_states: {
+      multifield: {
+        fields: {
+          a: { phi: [grid8(ripple)], E: [grid8(ripple)], Pi: [grid8(() => 1)] },
+          b: {
+            phi: [grid8((x, y) => ripple(x + 2, y))],
+            E: [grid8((x, y) => 0.5 * ripple(x, y))],
+            Pi: [grid8(() => 0.8)],
+          },
+        },
+        couplings: { 'a|b': 0.1 },
+        mean_abs_coupling: 0.1,
+        step: 4,
+      },
+    },
+  };
+}
+
+describe('MultifieldPanel live-shape rendering (regression)', () => {
+  it('renders the CouplingGraph SVG when phi has the live (channels,Nx,Ny) shape', () => {
+    const frame = makeLiveShapeMultifieldFrame();
+    const { container } = render(<MultifieldPanel frame={frame} />);
+    const svg = container.querySelector('svg');
+    expect(svg, 'expected the coupling-graph <svg> to render').not.toBeNull();
+  });
+
+  it('renders the live g[a|b] coupling cell with signed value', () => {
+    const frame = makeLiveShapeMultifieldFrame();
+    render(<MultifieldPanel frame={frame} />);
+    expect(screen.getByText('g[a|b]')).toBeInTheDocument();
+  });
+});
+
+describe('as2DGrid: normalises snapshot_multifield phi shape', () => {
+  it('passes a 2D grid through unchanged', () => {
+    const grid: number[][] = [
+      [1, 2],
+      [3, 4],
+    ];
+    expect(as2DGrid(grid)).toBe(grid);
+  });
+
+  it('collapses a 3D (channels=1, Nx, Ny) grid by selecting channel 0', () => {
+    const phi: number[][][] = [
+      [
+        [1, 2, 3],
+        [4, 5, 6],
+      ],
+    ];
+    const out = as2DGrid(phi);
+    expect(out).not.toBeNull();
+    expect(out!.length).toBe(2);
+    expect(out![0].length).toBe(3);
+    expect(out![0][2]).toBe(3);
+  });
+
+  it('returns null for empty / nullish phi', () => {
+    expect(as2DGrid(null)).toBeNull();
+    expect(as2DGrid(undefined)).toBeNull();
+    expect(as2DGrid([])).toBeNull();
+  });
+});
 
 it('mounts with a frame', () => {
   render(<MultifieldPanel frame={multifieldFrame} />);

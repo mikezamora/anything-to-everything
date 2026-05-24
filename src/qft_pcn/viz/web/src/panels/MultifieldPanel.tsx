@@ -20,14 +20,34 @@ import { useSize, normGrid, speciesColor, diverging } from './common';
 import { FrameInterpreter } from '../components/FrameInterpreter';
 
 type Grid = number[][];
+/**
+ * `snapshot_multifield` emits `phi`/`E`/`Pi` as 3D `(channels, Nx, Ny)` nested
+ * arrays (Field.values is shape `(C, Nx, Ny)` in numpy and `_grid` just calls
+ * `.tolist()`). The Three.js surface needs a 2D grid, so collapse the channel
+ * axis by taking channel 0 if present. Older fixtures pass 2D grids directly
+ * and pass through unchanged.
+ */
+type PhiLike = number[][] | number[][][] | null | undefined;
+export function as2DGrid(phi: PhiLike): Grid | null {
+  if (!phi || !phi.length) return null;
+  const first = phi[0] as number | number[] | number[][] | undefined;
+  if (Array.isArray(first) && first.length && Array.isArray(first[0])) {
+    // phi is (C, Nx, Ny) -> take the first channel.
+    return phi[0] as Grid;
+  }
+  return phi as Grid;
+}
 
-const norm2 = (g?: number[][] | null) =>
-  !g ? 0 : Math.sqrt(g.flat().reduce((a, v) => a + (v || 0) ** 2, 0));
+const norm2 = (g?: PhiLike) => {
+  const grid = as2DGrid(g);
+  if (!grid) return 0;
+  return Math.sqrt(grid.flat().reduce((a, v) => a + (v || 0) ** 2, 0));
+};
 
 interface FieldEntry {
-  phi?: Grid;
-  E?: Grid;
-  Pi?: Grid;
+  phi?: PhiLike;
+  E?: PhiLike;
+  Pi?: PhiLike;
 }
 
 interface MultifieldState {
@@ -300,12 +320,12 @@ export function MultifieldPanel({
               <ambientLight intensity={0.7} />
               <directionalLight position={[4, 6, 3]} intensity={0.7} />
               {names.map((name, i) => {
-                const phi = fields[name]?.phi;
-                if (!phi) return null;
+                const grid = as2DGrid(fields[name]?.phi);
+                if (!grid) return null;
                 return (
                   <FieldSurface
                     key={name}
-                    grid={phi}
+                    grid={grid}
                     y={(i - (names.length - 1) / 2) * 1.3}
                     color={speciesColor(name, names)}
                   />
