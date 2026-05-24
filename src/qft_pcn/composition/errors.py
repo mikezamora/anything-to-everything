@@ -22,6 +22,16 @@ class LemmaSpeciesMismatch(CompositionError):
     """Re-indexing onto a host window with a misaligned species pattern."""
 
 
+class LemmaIndexOutOfRange(CompositionError):
+    """use_lemma 'leaves' contains an index outside the host MERA's
+    leaf range. Raised by ``Promoter.compile_constraint`` when invoked
+    with a ``host_meta`` argument (the principled compile-time range
+    check; spec §5 / DEVIATION D33). Surfacing this as a typed error
+    instead of letting an opaque ``IndexError`` escape from
+    ``apply_init_clamp`` makes non-`result_integrator` callers
+    (e.g. wake_sleep consolidation, ad-hoc fixtures) recoverable."""
+
+
 class ConditionalLemmaRefused(CompositionError):
     """compile_constraint of a conditional lemma without allow_conditional."""
 

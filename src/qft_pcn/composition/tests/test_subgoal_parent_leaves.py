@@ -161,9 +161,12 @@ def test_integrator_passes_non_contiguous_window_to_promoter():
         def __init__(self, lib, mode):
             captured["promoter_mode"] = mode
 
-        def compile_constraint(self, spec):
+        def compile_constraint(self, spec, host_meta=None):
             # Pin the exact ``leaves`` argument the integrator built.
+            # ``host_meta`` is the D33 compile-time range-check hook --
+            # accepted for signature parity but not used by the stub.
             captured["compile_spec"] = dict(spec)
+            captured["compile_host_meta"] = host_meta
             return {"compiled": True}
 
         def apply_init_clamp(self, parent_state, parent_meta, promoted,

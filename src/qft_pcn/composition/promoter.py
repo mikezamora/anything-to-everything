@@ -14,9 +14,26 @@ import numpy as np
 from src.qft_pcn.composition.lemma_library import (
     LemmaLibrary, mera_from_bundle)
 from src.qft_pcn.composition.errors import (
-    LemmaLeafCountMismatch, LemmaSpeciesMismatch, ConditionalLemmaRefused)
+    LemmaLeafCountMismatch, LemmaSpeciesMismatch, ConditionalLemmaRefused,
+    LemmaIndexOutOfRange)
 from src.qft_pcn.logic.mera_encoder import MeraEncodingMeta
+from src.qft_pcn.logic.mera_encoding import LEAVES_PER_NODE
 from src.qft_pcn.qft.mera import MERA
+
+
+def _host_capacity(host_meta) -> int | None:
+    """Best-effort host leaf capacity for range checks. Mirrors the
+    fallback ladder result_integrator uses (D33): prefer
+    ``host_meta.n_leaves``, fall back to
+    ``host_meta.n_nodes * LEAVES_PER_NODE``, give up (return None) on a
+    stub meta carrying neither."""
+    n_leaves_attr = getattr(host_meta, "n_leaves", None)
+    if n_leaves_attr is not None:
+        return int(n_leaves_attr)
+    n_nodes_attr = getattr(host_meta, "n_nodes", None)
+    if n_nodes_attr is not None:
+        return int(n_nodes_attr) * LEAVES_PER_NODE
+    return None
 
 LEMMA_PROJECTOR_WEIGHT = 1e3
 
@@ -61,13 +78,25 @@ class Promoter:
         self.library = library
         self.mode = mode
 
-    def compile_constraint(self, constraint: dict) -> PromotedLemma:
+    def compile_constraint(
+            self, constraint: dict,
+            host_meta: MeraEncodingMeta | None = None) -> PromotedLemma:
         """Compile a ``use_lemma`` DSL constraint into a ``PromotedLemma``.
 
         Validates referential consistency only -- the lemma exists, its
         leaf count matches the host window, and (unless explicitly opted
         in) the lemma is not conditional. Tensor content is not touched
         until ``apply_init_clamp`` / ``projector_energy``.
+
+        When ``host_meta`` is provided (DEVIATION D33), the individual
+        host-leaf indices are also range-checked against the host's leaf
+        capacity (``host_meta.n_leaves`` or
+        ``host_meta.n_nodes * LEAVES_PER_NODE``). Out-of-range indices
+        raise :class:`LemmaIndexOutOfRange` at compile time rather than
+        surfacing as an opaque ``IndexError`` from ``apply_init_clamp``'s
+        leaf-write loop. Callers that already perform their own range
+        check upstream (e.g. ``result_integrator``) may pass
+        ``host_meta=None`` to preserve the legacy compile-only contract.
         """
         assert constraint.get("kind") == "use_lemma"
         lemma_id = constraint["lemma_id"]
@@ -88,6 +117,21 @@ class Promoter:
             raise LemmaLeafCountMismatch(
                 f"lemma {lemma_id} occupies {n_leaves_L} leaves, "
                 f"constraint named {len(leaves)}")
+
+        # D33: compile-time range check against the host capacity when
+        # the caller surfaces a host_meta. Out-of-range indices land as
+        # a typed exception here instead of an opaque IndexError out of
+        # apply_init_clamp.
+        if host_meta is not None:
+            n_host = _host_capacity(host_meta)
+            if n_host is not None:
+                for hl in leaves:
+                    hl_int = int(hl)
+                    if not 0 <= hl_int < n_host:
+                        raise LemmaIndexOutOfRange(
+                            f"lemma {lemma_id} leaf index {hl_int} "
+                            f"out of range for host MERA "
+                            f"(n_host={n_host}); leaves={list(leaves)!r}")
 
         return PromotedLemma(lemma_id=lemma_id, host_leaves=leaves,
                              mode=self.mode, weight=weight)
@@ -157,6 +201,19 @@ class Promoter:
                 f"strength must be in [0.0, 1.0]; got {strength!r}")
         s = float(strength)
         lemma = self.library.load(promoted.lemma_id)
+        # D33: range-check host leaves BEFORE the species walk + tensor
+        # write. Callers that bypassed the compile-time host_meta path
+        # still get a typed LemmaIndexOutOfRange (not a raw IndexError).
+        n_host = _host_capacity(host_meta)
+        if n_host is not None:
+            for hl in promoted.host_leaves:
+                hl_int = int(hl)
+                if not 0 <= hl_int < n_host:
+                    raise LemmaIndexOutOfRange(
+                        f"lemma {promoted.lemma_id} leaf index "
+                        f"{hl_int} out of range for host MERA "
+                        f"(n_host={n_host}); "
+                        f"host_leaves={list(promoted.host_leaves)!r}")
         self._check_species(lemma.encoding_meta, host_meta,
                             promoted.host_leaves)
         cached = mera_from_bundle(lemma.mera_tensors)

@@ -510,3 +510,36 @@ already catalogued in `EXTENSIONS.md` are not re-listed here.
   `inner(m_a, m_b)` match the materialize-then-dot reference to
   1e-9.
 - Audit source: §5.4 / §5.5 D5+D25 sister sweep
+
+### D33 — `Promoter.compile_constraint` doesn't range-check leaf indices — RESOLVED
+- Location: `src/qft_pcn/composition/promoter.py` `compile_constraint`
+  + `apply_init_clamp` (lines 64-178)
+- Spec: §5.2a operator-algebraic clamp; D33 audit pass 3 §6-§9
+- Issue: `compile_constraint` parity-checked `len(leaves)` against
+  `lemma.encoding_meta.n_leaves` (typed `LemmaLeafCountMismatch`) but
+  did NOT range-check the individual host-leaf indices against the
+  host MERA. A bad index landed as a raw Python `IndexError` from
+  `apply_init_clamp`'s `host.leaves[hl] = ...` write. Inside
+  `result_integrator.integrate_child` the upstream range check
+  (lines 216-230) caught it first, but any non-integrator caller
+  (wake_sleep consolidation, ad-hoc fixtures, the bridge runner)
+  surfaced the opaque IndexError + the integrator's "clamp failed:
+  index N is out of bounds" string.
+- Resolution: `compile_constraint` now accepts an optional
+  ``host_meta`` argument and, when supplied, range-checks every
+  ``constraint["leaves"]`` index against the host capacity
+  (``host_meta.n_leaves`` -> ``host_meta.n_nodes * LEAVES_PER_NODE``
+  fallback ladder mirroring the integrator's). A bad index raises the
+  new typed `LemmaIndexOutOfRange` (sibling of
+  `LemmaLeafCountMismatch` / `LemmaSpeciesMismatch`).
+  Defense-in-depth: `apply_init_clamp` does the same range check
+  BEFORE the species walk + leaf-write loop, so even callers that
+  forged a `PromotedLemma` directly or compiled without `host_meta`
+  get the typed exception (never an `IndexError`).
+  `result_integrator.integrate_child` now passes
+  ``host_meta=parent_meta`` so the compile-time gate fires at
+  registration. Three new pinning tests:
+  `test_compile_constraint_rejects_out_of_range_leaf`,
+  `test_compile_constraint_rejects_count_mismatch`,
+  `test_apply_init_clamp_rejects_out_of_range_leaf_typed`.
+- Audit source: pass 3 §6-§9

@@ -255,7 +255,7 @@ def _make_register_lemma_stub(monkeypatch):
 
     class _NoopPromoter:
         def __init__(self, lib, mode): pass
-        def compile_constraint(self, spec): return {}
+        def compile_constraint(self, spec, host_meta=None): return {}
         def apply_init_clamp(self, *a, **kw): pass
 
     monkeypatch.setattr(ri, "register_lemma", _stub_reg)

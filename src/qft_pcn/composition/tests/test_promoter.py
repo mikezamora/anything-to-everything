@@ -9,7 +9,7 @@ from src.qft_pcn.composition.lemma_library import (
 from src.qft_pcn.composition.promoter import Promoter, PromotedLemma
 from src.qft_pcn.composition.errors import (
     LemmaLeafCountMismatch, ConditionalLemmaRefused, LemmaNotFound,
-    LemmaSpeciesMismatch)
+    LemmaSpeciesMismatch, LemmaIndexOutOfRange)
 from src.qft_pcn.logic.mera_encoder import encode_mera
 from src.qft_pcn.logic.ast import parse
 
@@ -179,6 +179,60 @@ def test_init_clamp_strength_out_of_range_raises(tmp_path):
         p.apply_init_clamp(host, host_meta, promoted, strength=-0.1)
     with pytest.raises(ValueError, match="strength"):
         p.apply_init_clamp(host, host_meta, promoted, strength=1.5)
+
+
+def test_compile_constraint_rejects_out_of_range_leaf(tmp_path):
+    """DEVIATION D33: compile_constraint with a host_meta range-checks
+    each leaf index and raises a typed LemmaIndexOutOfRange instead of
+    letting an opaque IndexError surface from apply_init_clamp's leaf
+    write."""
+    lib = LemmaLibrary(tmp_path)
+    lid, lemma_meta = _register(lib)
+    p = Promoter(lib)
+    host, host_meta = encode_mera(parse(r"\x:Int. x"))
+    n = lemma_meta.n_leaves
+    bad_leaves = list(range(n - 1)) + [host_meta.n_leaves + 1000]
+    with pytest.raises(LemmaIndexOutOfRange):
+        p.compile_constraint(
+            {"kind": "use_lemma", "lemma_id": lid, "leaves": bad_leaves},
+            host_meta=host_meta)
+
+
+def test_compile_constraint_rejects_count_mismatch(tmp_path):
+    """DEVIATION D33: compile_constraint's leaf-count parity check
+    fires with a typed LemmaLeafCountMismatch, even when a host_meta
+    is supplied (count check precedes the per-leaf range check)."""
+    lib = LemmaLibrary(tmp_path)
+    lid, lemma_meta = _register(lib)
+    p = Promoter(lib)
+    host, host_meta = encode_mera(parse(r"\x:Int. x"))
+    # All indices are in-range, but the cardinality is wrong.
+    wrong_count = [0]
+    with pytest.raises(LemmaLeafCountMismatch):
+        p.compile_constraint(
+            {"kind": "use_lemma", "lemma_id": lid,
+             "leaves": wrong_count},
+            host_meta=host_meta)
+
+
+def test_apply_init_clamp_rejects_out_of_range_leaf_typed(tmp_path):
+    """DEVIATION D33 defense-in-depth: callers that compiled without
+    passing host_meta (legacy path) still get a typed
+    LemmaIndexOutOfRange at apply_init_clamp time -- never an opaque
+    IndexError from the leaf write loop."""
+    lib = LemmaLibrary(tmp_path)
+    lid, lemma_meta = _register(lib)
+    p = Promoter(lib)
+    host, host_meta = encode_mera(parse(r"\x:Int. x"))
+    # Forge a PromotedLemma directly (bypassing compile_constraint's
+    # host_meta check) to exercise the apply-time guard.
+    n = lemma_meta.n_leaves
+    bad_host_leaves = tuple(list(range(n - 1)) +
+                            [host_meta.n_leaves + 1000])
+    promoted = PromotedLemma(lemma_id=lid, host_leaves=bad_host_leaves,
+                             mode="init_clamp", weight=1.0)
+    with pytest.raises(LemmaIndexOutOfRange):
+        p.apply_init_clamp(host, host_meta, promoted)
 
 
 def test_init_clamp_writes_lemma_tensors_no_rederivation(tmp_path):
