@@ -273,3 +273,6 @@
 .section-title.active { color: #6cd0ff; }
 .section-collapse-toggle { background: none; border: none; color: #8c97b3;
                             cursor: pointer; font-size: 10px; }
+
+.chat-error { padding: 4px 8px; background: #2b1a1a; color: #ef9090;
+              border-bottom: 1px solid #5a2a2a; font-size: 11px; }

@@ -152,3 +152,18 @@ Additionally: pause/resume/step, baseline compare, JSONL export, MP4 export.
 - Export: pin a run as baseline, click "Export DSL" in the right pane,
   confirm a `.dsl.json` downloads with the expected structure.
 
+
+## Running with Ollama on a Windows host (WSL viz server)
+
+Ollama listens on the Windows host; WSL's `localhost` does NOT reach it. Use
+the WSL→Windows gateway IP. The helper script computes it for you:
+
+    OLLAMA_HOST=$(./scripts/ollama-host.sh) ./scripts/viz.sh
+
+Or set it permanently in your shell rc:
+
+    export OLLAMA_HOST=http://$(ip route show | awk '/^default/ {print $3}'):11434
+
+When the DSL route's model picker shows `(no models — is Ollama running?)`,
+the most likely cause is that `OLLAMA_HOST` is not set and the server defaulted
+to `http://localhost:11434` which never reaches the Windows host.

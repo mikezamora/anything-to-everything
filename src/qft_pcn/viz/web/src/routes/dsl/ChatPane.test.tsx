@@ -39,4 +39,27 @@ describe('ChatPane', () => {
       expect(useVizStore.getState().dslText).toContain('"name": "A"');
     });
   });
+
+  it('renders "(loading models…)" before /dsl/models resolves', async () => {
+    // Override fetch to NEVER resolve so the loading state sticks.
+    (globalThis as any).fetch = vi.fn(() => new Promise(() => {}));
+    render(<ChatPane />);
+    expect(await screen.findByText(/loading models/i)).toBeInTheDocument();
+  });
+
+  it('renders "(no models — is Ollama running?)" + chat-error span on /dsl/models 503',
+     async () => {
+    _resetLlmCache();
+    (globalThis as any).fetch = vi.fn(async (url: any) => {
+      const u = String(url);
+      if (u.endsWith('/dsl/models'))
+        return { ok: false, status: 503,
+                 json: async () => ({}) } as any;
+      throw new Error('unexpected ' + u);
+    });
+    render(<ChatPane />);
+    expect(await screen.findByText(/no models — is Ollama running\?/i))
+      .toBeInTheDocument();
+    expect(document.querySelector('.chat-error')).toBeInTheDocument();
+  });
 });

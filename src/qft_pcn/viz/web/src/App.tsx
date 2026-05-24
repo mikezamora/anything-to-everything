@@ -42,11 +42,11 @@ export default function App() {
   return (
     <div className="app">
       <RouteSwitcher />
+      {error && <div className="error-bar" role="alert">{error}</div>}
       {route === 'viz' ? (
         <>
           <RunControls />
           <CompareBar />
-          {error && <div className="error-bar" role="alert">{error}</div>}
           <div className="body">
             <SectionedLayerSelector />
             <PanelArea />
