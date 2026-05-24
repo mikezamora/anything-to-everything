@@ -15,6 +15,7 @@ import { PanelShell } from './PanelShell';
 import { PanelReadouts } from './PanelReadouts';
 import { MetricsStrip } from './MetricsStrip';
 import { useSize } from './common';
+import { FrameInterpreter } from '../components/FrameInterpreter';
 
 interface MpsState {
   bond_dims?: number[] | null;
@@ -230,6 +231,7 @@ export function MpsPanel({
       readouts={readouts}
       metricsStrip={metricsStrip}
     >
+      <FrameInterpreter layer="mps" />
       <div
         style={{ display: 'flex', flexDirection: 'column', height: '100%' }}
       >

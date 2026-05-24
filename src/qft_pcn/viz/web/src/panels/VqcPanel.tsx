@@ -14,6 +14,7 @@ import * as THREE from 'three';
 import type { Frame } from '../lib/types';
 import { PanelShell } from './PanelShell';
 import { useSize } from './common';
+import { FrameInterpreter } from '../components/FrameInterpreter';
 
 interface VqcState {
   /** theta shape: n_layers x n_qubits x 2 */
@@ -179,6 +180,7 @@ export function VqcPanel({
       hasData={hasData}
       emptyMessage="No VQC substrate active — start a run with the 'vqc' layer."
     >
+      <FrameInterpreter layer="vqc" />
       <div className="viz-panel__split" style={{ height: '100%' }}>
         <Circuit theta={theta} />
         <div style={{ position: 'relative' }}>

@@ -28,6 +28,7 @@ import * as d3 from 'd3';
 import type { Frame } from '../lib/types';
 import { PanelShell } from './PanelShell';
 import { useSize } from './common';
+import { FrameInterpreter } from '../components/FrameInterpreter';
 
 interface LogicTerm {
   rule_id: string;
@@ -313,6 +314,7 @@ export function LogicPanel({
       hasData={hasData}
       emptyMessage="No logic substrate active — start a run with the 'logic' layer."
     >
+      <FrameInterpreter layer="logic" />
       {hasData && (
         <div
           style={{

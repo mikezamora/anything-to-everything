@@ -50,6 +50,33 @@ it unblocks.
 - Unblocks: §12.6 substrate completeness (line 1582 "standard numerical
   linear algebra" of the actual Hessian).
 
+## RESOLVED — Substrate task S2: CVXPY-based SDP solver integration
+
+- Resolution: `src/qft_pcn/qft/sdp_solver.py` ships a thin CVXPY wrapper
+  providing `SDPProblem` (PSD `PSDVariable`s + lazy `LinearConstraint`
+  builders + linear/scalar objective builder), `solve_sdp(problem,
+  solver=None, verbose=False) -> SDPSolution` (returns
+  `SDPStatus.OPTIMAL / INFEASIBLE / UNBOUNDED / INACCURATE / ERROR`,
+  optimal value, per-variable numpy matrices, raw CVXPY status), and
+  `psd_constraint_from_operator(operator, name, hermitize, tol)` which
+  projects a Hermitian substrate-operator block to a PSD variable +
+  equality constraint pair (§1.6: SDPs are numerical but the *problem
+  encoding* is operator-derived).
+- Dependency: `cvxpy>=1.4` declared in `pyproject.toml` `[project]
+  dependencies`. `uv sync` resolved CVXPY 1.7.5 cleanly along with
+  Clarabel 0.11.1 / SCS 3.2.11 / OSQP 1.1.1; no compilation needed on
+  WSL2.
+- Tests: `src/qft_pcn/qft/tests/test_sdp_solver.py` — 6 cases, all pass
+  in ~5 s. `test_trivial_psd_min` (min tr(X) s.t. X[0,0]=1, X PSD →
+  optimum 1.0), `test_infeasible_sdp_returns_infeasible` (X PSD with
+  X[0,0] = -1), `test_max_eigenvalue_sdp` (λ_max via SDP cross-checked
+  against `numpy.linalg.eigvalsh` on a random symmetric 5×5),
+  `test_psd_constraint_from_operator_psd_input` /
+  `..._indefinite_input_infeasible` /
+  `..._rejects_nonsquare` for the operator-helper surface.
+- Unblocks: §12.4 conformal bootstrap (`composition/bootstrap.py`,
+  spec line 1486 "Solve using SDPB ... or CVXPY for prototype.").
+
 ## RESOLVED — I-Task-10 blocker #1: `relax_program` driver in M3
 
 - Resolution: `src/qft_pcn/logic/mera_synthesis/runner.py` gains a

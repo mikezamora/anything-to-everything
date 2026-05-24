@@ -17,6 +17,7 @@ import { PanelToolbar, type ToolbarItem } from './PanelToolbar';
 import { PanelReadouts } from './PanelReadouts';
 import { MetricsStrip } from './MetricsStrip';
 import { diverging, normGrid } from './common';
+import { FrameInterpreter } from '../components/FrameInterpreter';
 
 type Grid = number[][];
 
@@ -246,6 +247,7 @@ export function ManifoldPanel({
       readouts={readouts}
       metricsStrip={metricsStrip}
     >
+      <FrameInterpreter layer="manifold" />
       <div style={{ position: 'absolute', inset: 0 }}>
         {hasData && (
           <Canvas camera={{ position: [3.5, 3.5, 3.5], fov: 50 }}>

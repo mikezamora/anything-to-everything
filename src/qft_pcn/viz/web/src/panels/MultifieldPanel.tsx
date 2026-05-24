@@ -17,6 +17,7 @@ import { PanelShell } from './PanelShell';
 import { PanelReadouts } from './PanelReadouts';
 import { MetricsStrip } from './MetricsStrip';
 import { useSize, normGrid, speciesColor, diverging } from './common';
+import { FrameInterpreter } from '../components/FrameInterpreter';
 
 type Grid = number[][];
 
@@ -290,6 +291,7 @@ export function MultifieldPanel({
       readouts={readouts}
       metricsStrip={metricsStrip}
     >
+      <FrameInterpreter layer="multifield" />
       <div className="viz-panel__split" style={{ height: '100%' }}>
         <div style={{ position: 'relative' }}>
           {hasData && (

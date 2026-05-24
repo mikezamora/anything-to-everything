@@ -12,6 +12,7 @@ import { PanelShell } from './PanelShell';
 import { PanelToolbar } from './PanelToolbar';
 import { PanelReadouts } from './PanelReadouts';
 import { diverging, normGrid } from './common';
+import { FrameInterpreter } from '../components/FrameInterpreter';
 
 type Grid = number[][];
 
@@ -81,6 +82,7 @@ export function PcnFieldsPanel({ frame, baselineFrame: _baselineFrame }: {
         { label: 'mean Π', value: meanPi.toFixed(3) },
       ]} />}
     >
+      <FrameInterpreter layer="pcn-fields" />
       <div style={{ padding: 8, overflowY: 'auto' }}>
         {layers.map((layer, i) => {
           const g = field === 'phi' ? layer.phi

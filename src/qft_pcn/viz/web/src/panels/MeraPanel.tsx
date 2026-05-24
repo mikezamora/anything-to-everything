@@ -20,6 +20,7 @@ import { Line } from '@react-three/drei';
 import type { Frame } from '../lib/types';
 import { PanelShell } from './PanelShell';
 import { PanelReadouts } from './PanelReadouts';
+import { FrameInterpreter } from '../components/FrameInterpreter';
 
 interface MeraState {
   n_leaves?: number | null;
@@ -299,6 +300,7 @@ export function MeraPanel({
       hasData={hasData}
       readouts={readouts}
     >
+      <FrameInterpreter layer="mera" />
       {hasData && (
         <div
           data-testid="mera-layout"

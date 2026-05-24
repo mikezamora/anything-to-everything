@@ -16,6 +16,7 @@ import type { Frame } from '../lib/types';
 import { PanelShell } from './PanelShell';
 import { PanelReadouts } from './PanelReadouts';
 import { MetricsStrip } from './MetricsStrip';
+import { FrameInterpreter } from '../components/FrameInterpreter';
 
 interface MeraRelaxResidual {
   rule_id: string;
@@ -191,6 +192,7 @@ export function MeraRelaxPanel({
       readouts={readouts}
       metricsStrip={metricsStrip}
     >
+      <FrameInterpreter layer="mera_relax" />
       <div
         style={{
           display: 'flex',

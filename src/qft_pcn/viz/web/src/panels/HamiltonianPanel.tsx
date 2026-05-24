@@ -19,6 +19,7 @@ import { PanelShell } from './PanelShell';
 import { PanelReadouts } from './PanelReadouts';
 import { PanelToolbar, type ToolbarItem } from './PanelToolbar';
 import { tex, diverging } from './common';
+import { FrameInterpreter } from '../components/FrameInterpreter';
 
 interface HamiltonianState {
   n_sites?: number | null;
@@ -256,6 +257,7 @@ export function HamiltonianPanel({
       readouts={readouts}
       toolbar={toolbarItems.length > 0 ? <PanelToolbar items={toolbarItems} /> : undefined}
     >
+      <FrameInterpreter layer="hamiltonian" />
       <div
         style={{
           display: 'flex',

@@ -19,6 +19,7 @@ import type { Frame } from '../lib/types';
 import { PanelShell } from './PanelShell';
 import { MetricsStrip } from './MetricsStrip';
 import { useVizStore } from '../store';
+import { FrameInterpreter } from '../components/FrameInterpreter';
 
 // The QPCN substrate's Hamiltonian exposes parameters by `<species>.<attr>`
 // (e.g. `A.mass`). The viz schema marks the per-attribute slots that are safe
@@ -324,6 +325,7 @@ export function QpcnPanel({
       readouts={readouts}
       metricsStrip={metricsStrip}
     >
+      <FrameInterpreter layer="qpcn" />
       <div
         style={{
           display: 'grid',

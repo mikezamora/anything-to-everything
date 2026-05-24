@@ -13,6 +13,7 @@ import type { Frame } from '../lib/types';
 import { PanelShell } from './PanelShell';
 import { PanelReadouts } from './PanelReadouts';
 import { MetricsStrip } from './MetricsStrip';
+import { FrameInterpreter } from '../components/FrameInterpreter';
 
 interface PcnCouplingState {
   kappa_R?: number | null;
@@ -58,6 +59,7 @@ export function PcnCouplingPanel({ frame, baselineFrame: _baselineFrame }: {
           select: (ls) => ls.mean_abs_ricci as number | null | undefined },
       ]} />}
     >
+      <FrameInterpreter layer="pcn-coupling" />
       <svg viewBox="0 0 400 220" width="100%" height="220">
         {/* PCN box */}
         <rect x={20} y={70} width={120} height={80}

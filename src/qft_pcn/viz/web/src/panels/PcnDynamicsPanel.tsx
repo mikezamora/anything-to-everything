@@ -10,6 +10,7 @@ import type { Frame } from '../lib/types';
 import { PanelShell } from './PanelShell';
 import { PanelReadouts } from './PanelReadouts';
 import { MetricsStrip } from './MetricsStrip';
+import { FrameInterpreter } from '../components/FrameInterpreter';
 
 interface PcnDynamicsState {
   total_free_energy?: number | null;
@@ -45,6 +46,7 @@ export function PcnDynamicsPanel({ frame, baselineFrame: _baselineFrame }: {
         select: (ls) => ls.total_free_energy as number | null | undefined,
       }]} />}
     >
+      <FrameInterpreter layer="pcn-dynamics" />
       <table className="pcn-dynamics-table">
         <thead><tr>
           <th>layer</th><th>F</th><th>‖E‖₂</th><th>mean Π</th>

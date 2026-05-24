@@ -15,6 +15,7 @@
 import type { Frame } from '../lib/types';
 import { PanelShell } from './PanelShell';
 import { PanelReadouts } from './PanelReadouts';
+import { FrameInterpreter } from '../components/FrameInterpreter';
 
 interface MpsMiniature {
   bond_dims?: number[] | null;
@@ -103,6 +104,7 @@ export function BridgePanel({
       emptyMessage="No bridge result available — start a run with the 'bridge' layer."
       readouts={readouts}
     >
+      <FrameInterpreter layer="bridge" />
       <div
         style={{
           display: 'flex',
