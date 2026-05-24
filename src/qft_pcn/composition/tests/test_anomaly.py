@@ -139,8 +139,15 @@ def test_unprovable_theorem_surfaces_nonzero_anomaly():
     assert cert.is_obstructed
     assert cert.total_anomaly > DEFAULT_ANOMALY_FLOOR
     rule_node_pairs = {(r, n) for (r, n, _a) in cert.generators}
-    assert (RULE_T_LIT_INT, 1) in rule_node_pairs, (
-        f"§12.1 anomaly failed to localize on (T-Lit-Int, 1); "
+    # EXCLUSIVITY (not just containment): the substrate mutation targets
+    # exactly the T-Lit-Int(node=1) projector triple. Any other firing
+    # generator (e.g. T-Zero, T-NatLit) would indicate a spurious anomaly
+    # — most likely from an encoding-basis collision where the matrix-
+    # equality check misidentified the type-leaf projector. The §12.1
+    # contract demands that the impossibility certificate localize the
+    # obstruction precisely.
+    assert rule_node_pairs == {(RULE_T_LIT_INT, 1)}, (
+        f"§12.1 anomaly failed to localize EXCLUSIVELY on (T-Lit-Int, 1); "
         f"fired on {rule_node_pairs}"
     )
 

@@ -110,6 +110,14 @@ class SymmetryGenerator:
     # unlisted leaves. Stored as a tuple of (leaf, ndarray) pairs to
     # remain hashable; reconstructed to a dict at the use site.
     projectors: tuple[tuple[int, np.ndarray], ...]
+    # The substrate's canonical leaf index for the node's *type* species
+    # (§1.2 bond addressing). Carried explicitly so :func:`compute_anomaly`
+    # can identify the type-leaf projector by index — robust against
+    # encoding-basis collisions (e.g. ``KIND_ZERO == TYPE_NAT == 8`` share
+    # the same |8><8| matrix in the 16-dim local Hilbert space, so a
+    # matrix-equality test would complement both projectors and produce a
+    # spurious anomaly on well-typed programs).
+    type_leaf: int = -1
 
     def as_window(self) -> dict[int, np.ndarray]:
         return {leaf: op for leaf, op in self.projectors}
@@ -195,6 +203,7 @@ def extract_symmetries(typing_H: MeraTypingHamiltonian) -> list[SymmetryGenerato
             rule_id=term.rule_id,
             node=term.node,
             projectors=tuple(projs),
+            type_leaf=type_leaf,
         ))
     return generators
 
@@ -278,29 +287,18 @@ def compute_anomaly(G: SymmetryGenerator, state: MERA) -> float:
     _kind_idx, type_idx, _value_subset = sig
     anomalous_projs: list[tuple[int, np.ndarray]] = []
     for leaf, op in G.projectors:
-        # Identify the type-leaf entry by matrix shape and content:
-        # P[type_idx] is diagonal with a single 1.0. Replace it with
-        # I - P[type_idx]. Kind and value projectors are passed through.
-        if _is_type_leaf_projector(op, type_idx):
+        # Identify the type-leaf entry by the substrate's canonical
+        # *leaf index* (§1.2 bond addressing), NOT by matrix content.
+        # Matrix-equality would misfire on encoding-basis collisions —
+        # e.g. ``KIND_ZERO == TYPE_NAT == 8`` produces identical |8><8|
+        # projectors on the kind and type leaves of a T-Zero node, and
+        # complementing both yields a spurious anomaly on a well-typed
+        # program. The leaf index is unique by construction.
+        if leaf == G.type_leaf:
             anomalous_projs.append((leaf, leaf_proj_one_minus(type_idx)))
         else:
             anomalous_projs.append((leaf, op))
     return _three_leaf_trace(state, tuple(anomalous_projs))
-
-
-def _is_type_leaf_projector(op: np.ndarray, type_idx: int) -> bool:
-    """Recognize the rule's type-leaf projector ``|type_idx><type_idx|``.
-
-    The kind and value projectors are by construction different from
-    ``|type_idx><type_idx|`` (the value subset is never a singleton of a
-    type index, and the kind index lives in a disjoint basis sector per
-    the spec §B encoding). We identify the type-leaf projector by direct
-    matrix comparison against ``leaf_proj(type_idx)`` rather than by
-    leaf-index inspection — the latter would require re-deriving the
-    layout addressing the SymmetryGenerator already encodes.
-    """
-    expected = leaf_proj(type_idx)
-    return op.shape == expected.shape and np.allclose(op, expected)
 
 
 # ---------------------------------------------------------------------------
