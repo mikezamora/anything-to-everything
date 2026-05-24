@@ -55,6 +55,20 @@ export const article: ArticleSpec = {
       caption: 'The shared coupling-descent rule that both sides obey — the upstairs/downstairs symmetry that makes the bridge truly bidirectional.',
     },
     {
+      kind: 'prose',
+      body: [
+        '**Why bidirectional and not just one-way.** A naive architecture would treat the PCN as the "model" and the QFT as the "data" (or vice versa): one side has parameters, the other side has targets, and learning is the projection of one onto the other. The §4 architecture rejects this asymmetry deliberately. Neither side is privileged. The PCN supplies priors and reports errors; the QFT supplies operator readouts and updates its Hamiltonian. Each side learns from the other, and the bridge\'s job is to keep the two languages in sync, not to translate one into the other.',
+        'The architectural reason for this insistence is in §1.1 of the architecture: *belief* and *evidence* are not different kinds of thing in the QPCN — they are two views of the same underlying entanglement structure. A unidirectional bridge would silently pick one view as canonical and demote the other to "input." The bidirectional bridge refuses to make that choice. In practice, this means you can run the §4.2 panel "data-first" (load observations, let the PCN drive) or "theory-first" (set a Hamiltonian, let the QFT drive) and both reach valid coupled fixed points — the system has no preferred direction of fit.',
+      ],
+    },
+    {
+      kind: 'prose',
+      body: [
+        '**Reading the bridge diagram.** The two arrows in the §4.2 panel are not decoration — they are an instantaneous diagnostic of where the system sits in its trajectory. Arrow width is proportional to the magnitude of the source term in each direction: the upward arrow scales with the integrated stress-energy `kappa_R * integral T_{mu nu}[E] dx`, the downward arrow with the gradient-update magnitude `||d<O>/d theta||` driving the Hamiltonian. Three characteristic patterns appear over a training run. (i) **Early — both arrows fat and roughly equal:** the system is far from any fixed point; errors are large on both sides, the coupling is doing real work, and the geometry is actively reorganising. (ii) **Mid-training — one arrow dominates briefly:** typically the upward arrow leads, meaning the PCN has found structure the QFT has not yet absorbed; the downward arrow swells a few frames later as the Hamiltonian update catches up. This "lag handoff" is the visible signature of the bidirectional loop closing. (iii) **Late — both arrows thin and matched:** the coupled system is near a fixed point; residual flow is just stochastic fluctuation around equilibrium.',
+        'Persistent asymmetries are diagnostic. A permanently fat upward arrow means the QFT is undersized for the structure the PCN is finding (raise bond dimension or enrich the Hamiltonian ansatz). A permanently fat downward arrow means the PCN is treating QFT readouts as gospel (lower the observation noise or raise prior strength). A permanently thin pair with high free energy means the system is stuck — neither side has the capacity to move the other, and you need to perturb one of them.',
+      ],
+    },
+    {
       kind: 'workedExample',
       example: {
         title: 'Rate equation for h_xx given an E-field spike',

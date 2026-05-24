@@ -59,6 +59,20 @@ export const article: ArticleSpec = {
       caption: 'The parameter-shift rule we use to evaluate Hamiltonian-coefficient gradients — exact, hardware-friendly, and cheap on an MPS.',
     },
     {
+      kind: 'prose',
+      body: [
+        '**MPS-as-belief vs MPS-as-state.** In the standard tensor-network literature an MPS represents a *physical* state — the literal wavefunction of an actual quantum system. The QPCN repurposes the same data structure to play a different role: the MPS is the QPCN\'s *belief* about a state, a Bayesian posterior over many-body configurations, not the system itself. The bond dimension `chi` is then a hyperparameter of belief richness, not a property of physics; the bond indices carry *epistemic* correlation (how much joint information the model holds across sites) rather than *ontic* entanglement (how much the underlying system is actually entangled).',
+        'The conceptual shift matters because it changes what convergence means. For an MPS-as-state, convergence is faithfulness — the MPS matches the true state. For an MPS-as-belief, convergence is *posterior consistency* — the MPS reaches a fixed point under the combined action of imag-time relaxation (prior pull) and prediction-error updates (evidence pull). Two QPCNs trained on the same data with different `chi` can converge to different beliefs; both are "right" relative to their own representational capacity, exactly as two Bayesian models with different prior families would be. The §4.3 panel\'s `<H>` trace is the energy of the *belief* under the *current model*, not the energy of any external physical system.',
+      ],
+    },
+    {
+      kind: 'prose',
+      body: [
+        '**The role of imag-time in inference.** Imaginary-time evolution `|psi> -> exp(-tau H) |psi> / norm` is best known as the standard recipe for finding a Hamiltonian\'s ground state: it monotonically suppresses high-energy components and leaves the lowest-energy survivor. In the QPCN it does double duty as a *Bayesian posterior projection*. Reading `H` as `-log p(state | model)` (Boltzmann form), `exp(-tau H)` is a partial Bayesian update — it multiplies the current belief by a fractional power of the prior likelihood and renormalises. As `tau -> infinity`, this collapses onto the maximum-likelihood configuration; as `tau -> 0`, the belief barely moves.',
+        'This dual reading is why the same Trotter-TEBD machinery used for ground-state finding works unmodified for inference. The Hamiltonian *is* the negative log-prior; the MPS *is* the belief; the imag-time step *is* the soft Bayes update. Hard observation conditioning (a true posterior given evidence) is recovered as the `tau -> infinity` limit of imag-time evolution under an evidence-augmented Hamiltonian; partial updating, which is what the QPCN actually wants frame to frame, is just the finite-`tau` version of the same procedure. The PCN-side bridge does not need to know any of this — it just hands targets to the QPCN and reads expectations back — but the conceptual unification is what makes the architecture coherent rather than a hack.',
+      ],
+    },
+    {
       kind: 'workedExample',
       example: {
         title: 'One Trotter step of imag-time on a single-site state',

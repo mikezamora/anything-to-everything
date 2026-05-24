@@ -55,6 +55,20 @@ export const article: ArticleSpec = {
       caption: 'The rule-coefficient update — letting some rules carry more weight can speed up convergence on programs that need them.',
     },
     {
+      kind: 'prose',
+      body: [
+        '**Programs as Hamiltonians.** The construction in this article has a clean type-theoretic reading. Under Curry–Howard, a well-typed term is a proof; under the QPCN, a well-typed term is *the ground state of an evaluation Hamiltonian*. The two readings match: a configuration that violates a typing rule is a non-proof and carries energy from the typing projectors; a configuration that violates a reduction rule is an unfinished proof and carries energy from the reduction projectors; the ground state is the unique configuration that violates neither, i.e. a fully-reduced, well-typed term — a proof in normal form. Computation, in this picture, is not a sequence of state transitions performed by an external interpreter; it is the natural relaxation of a physical system toward its lowest-energy configuration.',
+        'This reframing matters because it turns "running a program" into the same kind of activity as "finding the ground state of a Hamiltonian" — a problem the QFT-side machinery already knows how to do. The §4.3 imag-time evolution, the §4.5 MERA relaxation, the §4.1 manifold all become directly applicable to evaluation. There is no special "interpreter subsystem" — the substrate that does inference is the substrate that does computation. The cost is that the Hamiltonian has to be carefully constructed (every typing and reduction rule must contribute exactly the right projector); the benefit is that everything we learn about relaxing physical systems transfers immediately to evaluating logical ones.',
+      ],
+    },
+    {
+      kind: 'prose',
+      body: [
+        '**Why imag-time relaxation equals beta-reduction.** Conventional beta-reduction is a discrete rewrite: spot a redex `(lambda x. body) arg`, substitute `arg` for `x` in `body`, repeat. The QPCN replaces this with a continuous-time relaxation. The beta-rule contributes a projector `P_beta` that is nonzero on configurations containing an un-reduced redex; the imag-time step `exp(-tau H_eval)` suppresses exactly those configurations and amplifies the substituted form. As `tau` grows, the unreduced amplitude shrinks exponentially, and the state converges to the reduced configuration — the same final state classical beta-reduction would produce, reached as a fixed point rather than a sequence of edits.',
+        'The dynamical-systems view has three practical consequences. (i) **Evaluation order is emergent, not prescribed.** Multiple redexes in the same term are reduced in parallel, weighted by how strongly each appears in the current amplitude; the system finds *an* order that drives the energy down, with no fixed left-to-right or innermost-first policy. (ii) **Non-terminating reductions show as energy plateaus, not as infinite loops.** A term that classically diverges (e.g. `Omega = (lambda x. x x)(lambda x. x x)`) produces a Hamiltonian whose ground state lies outside the bond-dimension envelope of the MPS; the energy plateaus above zero, signalling non-termination without hanging the interpreter. (iii) **Confluence becomes a spectral statement.** Two reduction strategies that reach the same normal form correspond to two paths in the imag-time flow that converge on the same ground state; if they converge on different ground states, the rule system is non-confluent and the Hamiltonian has degenerate minima — which the panel exposes as a residual that the dynamics cannot drive uniformly to zero.',
+      ],
+    },
+    {
       kind: 'workedExample',
       example: {
         title: 'Residual for R-AddZero on NatLit(5) + Zero',

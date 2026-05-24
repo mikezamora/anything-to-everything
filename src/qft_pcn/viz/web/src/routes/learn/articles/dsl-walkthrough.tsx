@@ -56,6 +56,20 @@ export const article: ArticleSpec = {
       caption: 'Once the DSL\'s hamiltonian terms have learnable coefficients, this is the update rule that adjusts them — same rule as §4.3, sourced via DSL.',
     },
     {
+      kind: 'prose',
+      body: [
+        '**The DSL as a serialization boundary.** The DSL is not merely a convenient input format — it is the *contract* between the LLM (or any external agent) and the QPCN substrate. Three properties make it the right contract surface. (i) **Closed schema.** Every valid DSL document is finitely describable; the LLM cannot smuggle behaviour in through arbitrary code, only through field values whose meanings are pinned down by the schema. (ii) **Side-effect-free.** Parsing a DSL produces a RunSpec value; building a substrate from a RunSpec is the only place where side effects happen, and that step is under the Bridge\'s control. The LLM emits a value, not a command. (iii) **Round-trippable.** Every running configuration can be serialised back to a DSL document, which means the LLM can be shown the *current* state as well as asked for a *next* state, and the two are in the same language.',
+        'These three properties together are what make the LLM round-trip safe rather than reckless. If the DSL were code (executed Python, say), an LLM-emitted spec could do anything; instead, the parser is the firewall, and the worst an LLM can do is emit a DSL that fails validation. They are also what makes the DSL a useful *cite-able artefact*: a DSL document fully reproduces a run, can be diffed against another run, can be stored as a preset, and can be embedded in documentation. The Python substrate could be rewritten, ported to a different backend, or replaced entirely, and the same DSL document would still describe the same intended computation — that is what it means for the DSL to be a serialization boundary rather than an implementation detail.',
+      ],
+    },
+    {
+      kind: 'prose',
+      body: [
+        '**Versioning and schema evolution.** Every DSL document carries an `$id` field whose value is a versioned schema URI (`qpcn-dsl/v1`, `qpcn-dsl/v2`, …). The `$id` is the single source of truth for which parser to invoke; documents with no `$id` are rejected outright, and documents with an unknown `$id` are rejected with a "schema unknown, upgrade your parser" error. This is a deliberate choice: the cost of explicit versioning at the top of every document is paid once, but the cost of ambiguous-version parsing — where the parser has to *guess* whether a missing field means "old schema" or "user typo" — is paid every run, forever. We pay the small cost up front.',
+        'Schema evolution follows a few rules. **Additive changes** (a new optional field, a new Hamiltonian term type) bump the `$id` minor version and are backward-compatible: a v1.0 document still parses under the v1.1 parser. **Renames or removals** bump the major version and are *not* backward-compatible: the parser will refuse a v1 document under a v2 parser, and a migration tool (`dsl_migrate v1 v2 doc.yaml`) is provided. **Semantic changes to existing fields** (the meaning of `kappa_R` shifts, a default value changes) always bump the major version, never the minor — silent semantic drift is the most expensive kind of breakage and the schema versioning is designed specifically to prevent it. The current production schema is v1; the migration plan to v2 is tracked in `EXTENSIONS.md`, not embedded in this article (this article describes the schema you are actually running against).',
+      ],
+    },
+    {
       kind: 'workedExample',
       example: {
         title: 'A 2-field DSL through to the first frame\'s snapshot',

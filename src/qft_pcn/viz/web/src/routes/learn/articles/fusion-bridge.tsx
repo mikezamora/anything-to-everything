@@ -56,6 +56,20 @@ export const article: ArticleSpec = {
       caption: 'The coupling-descent step (5) — the parameter trajectory is one of the most-watched fields in the inspector, since it shows whether learning is happening.',
     },
     {
+      kind: 'prose',
+      body: [
+        '**The bridge\'s role in the overall pipeline.** The Bridge occupies a very specific seat between the upstream DSL/LLM emission layer and the downstream substrate execution. Upstream, an LLM (or a preset, or a hand-written file) produces a DSL payload describing a run — what fields, what Hamiltonian, what observables, what coupling constants. That payload is parsed and validated against the DSL schema by code that does not know anything about QFTs or PCNs. Downstream, the substrate executes the validated RunSpec and produces a stream of Snapshots; that code does not know anything about WebSockets, JSON serialisation, or browsers. The Bridge sits exactly between these two and is the only layer that knows about both.',
+        'This sandwich position has architectural consequences. The Bridge is the *contract surface* of the whole system: every panel, every external client, every preset, every LLM-emitted DSL run flows through it. If the contract is well-defined here, the upstream and downstream can evolve independently — new panels can be added without touching the substrate, and new substrate features (a new field, a new Hamiltonian term) only ripple outward if the Bridge\'s Snapshot schema needs to grow. The pipeline diagram for any run is therefore: `LLM/preset -> DSL string -> RunSpec -> [Bridge resolves] -> Snapshot stream -> WebSocket -> panels`. The Bridge is the only `[ ... ]` step — everything else is mechanical translation.',
+      ],
+    },
+    {
+      kind: 'prose',
+      body: [
+        '**One-shot vs streamed resolution: when each is appropriate.** The two streaming modes are not interchangeable; they target different workflows. **One-shot** is appropriate when (i) the run is short enough to fit comfortably in memory (default presets are O(200) frames at O(10 KB) each, so ~2 MB — fine); (ii) the user wants to scrub *backwards* as well as forwards through the timeline, which only the buffered-all-frames mode supports cheaply; (iii) the run is reproducible and the user is comparing two completed runs side-by-side. **Streamed** (per-frame) is appropriate when (i) the run is long enough that buffering everything is wasteful or impossible; (ii) the user wants to watch convergence happen *live*, which is genuinely informative for diagnosing pathologies (oscillating `<H>`, runaway parameters, stuck residuals — these show up better in motion than in a static plot); (iii) the run is exploratory and the user may want to abort early.',
+        'A deliberate v1 choice: **bridge runs from emitted DSL are always one-shot.** When an LLM emits a DSL fragment via the §5 DSL channel and the Bridge resolves it, the resulting RunResult is delivered as a single payload, not streamed. The reason is contractual: a streamed run is a *live process* that can be inspected, paused, and reasoned about by the LLM only with significant coordination machinery (cursors, ack protocols, partial-result schemas) that v1 does not have. A one-shot RunResult is a *value* — completed, immutable, addressable — and that is exactly the kind of thing an LLM can pass around, cite, and reason about in a single turn. The streamed mode remains available for interactive panel use, where a human is the consumer; the one-shot mode is what the agent-facing path uses, and the asymmetry is intentional.',
+      ],
+    },
+    {
       kind: 'workedExample',
       example: {
         title: 'Trace `physics-relax` preset through bridge -> builders -> snapshot',

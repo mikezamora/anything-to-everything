@@ -55,6 +55,20 @@ export const article: ArticleSpec = {
       caption: 'After the metric updates, subsequent beliefs diffuse under this operator on the new geometry — closing the loop between errors and information flow.',
     },
     {
+      kind: 'prose',
+      body: [
+        '**Why a dynamic metric at all.** The architectural case for a learnable geometry, made in §1 of `QFT_PCN_ARCHITECTURE.md`, is that *belief geometry is the right primitive*. A classical PCN already has an implicit geometry — the Fisher metric on its variational posterior, the precision-weighting that decides which prediction errors matter — but it is buried in scalar variance hyperparameters and never made explicit. By promoting this geometry to a first-class object `g_{mu nu}(x, t)` that lives on the same grid as the beliefs themselves, two things become possible. First, structurally distinct regions of the input domain can develop structurally distinct precision profiles without needing separate hyperparameters per region: the metric *is* the precision profile, indexed by location. Second, the dynamics of that metric — how it deforms under error, how it relaxes under diffusion — become a directly observable, directly tunable part of training, rather than a side-effect of optimiser tricks.',
+        'This is the load-bearing departure from §1.1. The metric is not a backdrop for computation; it is *what learns*. Errors curve it; curvature reshapes how subsequent errors propagate; the architecture as a whole is just this loop running indefinitely. Every other Fusion-section construction (the operator coupling in §4.2, the MPS belief state in §4.3, the relaxation dynamics in §4.5) presupposes that the geometry has this status. Drop dynamic geometry and you have two independent systems sharing a grid; keep it and you have a single coupled system whose state lives in the geometry.',
+      ],
+    },
+    {
+      kind: 'prose',
+      body: [
+        '**The kappa_R coupling constant in depth.** `kappa_R` is the single scalar that sets the strength with which PCN errors deform the substrate. At `kappa_R = 0` the manifold is decoupled — it stays flat forever and the QPCN is just a PCN and a QFT running in adjacent windows. As `kappa_R` grows, the regime changes qualitatively in three stages. (i) **Weak coupling** (`kappa_R << 0.01`): curvature ripples appear briefly where errors spike, but diffusion erases them within a frame or two. The metric is essentially a noisy version of flat space. (ii) **Critical coupling** (`kappa_R ~ 0.01–0.1` for default presets): curvature persists in regions of repeated error, forming stable wells that subsequent beliefs flow into. This is the interesting regime — it is where the manifold genuinely accumulates structure from data. (iii) **Strong coupling** (`kappa_R > 0.1`): the metric perturbation magnitude can grow faster than diffusion can drain it, and the linearisation `g = eta + h` breaks down.',
+        'A useful intuition: `kappa_R` controls how much *memory* the geometry has for the error history. Small `kappa_R` = forgetful manifold (only sees the current frame). Large `kappa_R` = sticky manifold (carries error history for many frames). The §4.2 panel\'s parameter-update rule depends on this memory — if the manifold cannot remember an error long enough for the QFT to respond to it, the bidirectional loop never closes. Tuning `kappa_R` is therefore the primary architectural knob for setting the timescale of the coupled dynamics.',
+      ],
+    },
+    {
       kind: 'workedExample',
       example: {
         title: 'A Gaussian error hot-spot on a 4x4 patch',

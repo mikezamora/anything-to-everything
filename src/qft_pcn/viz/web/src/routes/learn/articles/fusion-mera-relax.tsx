@@ -54,6 +54,20 @@ export const article: ArticleSpec = {
       caption: 'Imag-time evolution restricted to the non-protected subspace — protected leaves stay at their initial values exactly.',
     },
     {
+      kind: 'prose',
+      body: [
+        '**The §10.10 demo\'s significance.** This is the first end-to-end inductive theorem the QPCN can prove using nothing but the substrate itself — no external interpreter, no hand-coded proof-search heuristic, no manual case split. `forall x : Nat. Eq (x + Zero) x` is small as theorems go, but it is the smallest one whose proof requires a *universal* claim about an infinite domain (every natural number), not merely a closed-form rewrite. Producing the proof from the bare evaluation Hamiltonian — protected leaves plus the standard rule set — closes the loop opened by the §10 logic-as-Hamiltonian construction: it demonstrates that the same physical relaxation that performs reduction can also perform *deduction*, on an inductively defined type.',
+        'The significance for the broader architecture is twofold. First, it constitutes the smallest existence proof that the QPCN is computationally adequate for *proof* and not merely for *evaluation* — these are different competences, and many evaluation-by-relaxation systems can do the former without the latter. Second, it gives a concrete benchmark for everything that follows: if the §4.5 panel can drive this term to `Forall(x, Nat, True)` with the protected-leaf delta at machine zero, then more elaborate inductive proofs (associativity, distributivity, the §10 standard library) are differences of degree rather than kind. The demo is the floor of the architecture\'s logical reach, not its ceiling.',
+      ],
+    },
+    {
+      kind: 'prose',
+      body: [
+        '**Why protected leaves matter for universal quantification.** The §1.1 architecture-soul directive is that variable binding *is* bond entanglement — never a classical name-lookup table. Protected leaves are the operational consequence of this directive when a binder is universal. If `x` is a free name in a closed term, classical evaluators substitute a value for it; the QPCN entangles its leaf positions and lets the rules act on the entangled superposition. For `forall x. P(x)`, the bound positions hold a uniform superposition over the entire type (here `Nat` truncated to bit-width B), and the bond entanglement encodes the constraint *every occurrence of `x` carries the same value across the superposition*. Without that entanglement, two occurrences of `x` would be independent, and the dynamics could collapse them to different values — `forall x. Eq x x` would become `forall x, y. Eq x y`, an entirely different (and false) claim.',
+        'Protection enforces this by freezing the protected tensors against the dynamics. The rule projectors are still allowed to *match patterns containing* the protected positions (otherwise R-Eq-Refl could never fire on `Eq x x`), but they are not allowed to *modify* those positions. The combination — entangled superposition + bitwise freeze — is the QPCN\'s mechanism for honest universal quantification. The result is that any rule that succeeds on a protected term has succeeded on *every* instantiation of the bound variable simultaneously, which is exactly what universal quantification means. The "protected-leaf delta" trace in the panel is therefore not a diagnostic of the simulator\'s numerical health; it is a diagnostic of whether the proof is honest. A nonzero delta means the system has secretly weakened the claim, and the resulting normal form is not a proof of the original term.',
+      ],
+    },
+    {
       kind: 'workedExample',
       example: {
         title: 'Identify protected leaves for forall x : Nat. Eq (x + Zero) x',
