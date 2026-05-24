@@ -76,6 +76,50 @@ SCHEMA: dict[str, Any] = {
                                       "default": 1.0},
                         },
                     },
+                    {
+                        "type": "object",
+                        "required": ["kind", "root"],
+                        "additionalProperties": False,
+                        "properties": {
+                            "kind":   {"const": "well_typed_subtree"},
+                            "root":   {"type": "integer", "minimum": 0},
+                            "weight": {"type": "number", "minimum": 0, "default": 1.0},
+                        },
+                    },
+                    {
+                        "type": "object",
+                        "required": ["kind", "input", "output"],
+                        "additionalProperties": False,
+                        "properties": {
+                            "kind":   {"const": "example"},
+                            "input":  {"type": "string"},
+                            "output": {"type": "string"},
+                            "weight": {"type": "number", "minimum": 0, "default": 1.0},
+                        },
+                    },
+                    {
+                        "type": "object",
+                        "required": ["kind", "primitives"],
+                        "additionalProperties": False,
+                        "properties": {
+                            "kind":       {"const": "vocabulary"},
+                            "primitives": {"type": "array", "items": {"type": "string"},
+                                           "minItems": 1, "uniqueItems": True},
+                            "weight":     {"type": "number", "minimum": 0, "default": 1.0},
+                        },
+                    },
+                    {
+                        "type": "object",
+                        "required": ["kind", "lemma_id", "sites"],
+                        "additionalProperties": False,
+                        "properties": {
+                            "kind":     {"const": "use_lemma"},
+                            "lemma_id": {"type": "string", "minLength": 1},
+                            "sites":    {"type": "array", "items": {"type": "integer", "minimum": 0},
+                                         "minItems": 1, "uniqueItems": True},
+                            "weight":   {"type": "number", "minimum": 0, "default": 1.0},
+                        },
+                    },
                 ]
             },
         },

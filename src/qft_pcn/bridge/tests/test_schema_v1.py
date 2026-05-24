@@ -50,3 +50,45 @@ def test_observable_argmax_accepted():
     spec = _minimal_v1().replace('"op": "n"', '"op": "argmax"')
     dsl = parse_and_validate(spec)
     assert dsl["observables"][0]["op"] == "argmax"
+
+
+def _v1_with_constraint(c: str) -> str:
+    return _minimal_v1().replace(
+        '"constraints": [{"kind": "local", "site": 0, "term": "n == 1", "weight": 1.0}]',
+        f'"constraints": [{c}]'
+    )
+
+
+def test_well_typed_subtree_accepted():
+    dsl = parse_and_validate(_v1_with_constraint(
+        '{"kind": "well_typed_subtree", "root": 0, "weight": 10.0}'
+    ))
+    assert dsl["constraints"][0]["kind"] == "well_typed_subtree"
+
+
+def test_example_constraint_accepted():
+    dsl = parse_and_validate(_v1_with_constraint(
+        '{"kind": "example", "input": "[]", "output": "0", "weight": 5.0}'
+    ))
+    assert dsl["constraints"][0]["kind"] == "example"
+
+
+def test_vocabulary_constraint_accepted():
+    dsl = parse_and_validate(_v1_with_constraint(
+        '{"kind": "vocabulary", "primitives": ["Match", "Cons", "Nil"]}'
+    ))
+    assert dsl["constraints"][0]["primitives"] == ["Match", "Cons", "Nil"]
+
+
+def test_use_lemma_constraint_accepted():
+    dsl = parse_and_validate(_v1_with_constraint(
+        '{"kind": "use_lemma", "lemma_id": "length-base", "sites": [0, 1], "weight": 8.0}'
+    ))
+    assert dsl["constraints"][0]["lemma_id"] == "length-base"
+
+
+def test_use_lemma_requires_nonempty_sites():
+    with pytest.raises(BadSchemaError):
+        parse_and_validate(_v1_with_constraint(
+            '{"kind": "use_lemma", "lemma_id": "x", "sites": [], "weight": 1.0}'
+        ))
