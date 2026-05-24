@@ -8,23 +8,23 @@ import { ROLE_COLOR } from '../lib/equations';
 describe('AnnotatedEquation', () => {
   it('renders KaTeX for a registered equation', () => {
     const { container } = render(
-      <AnnotatedEquation id="__test_free_energy_functional__" />,
+      <AnnotatedEquation id="free-energy-functional" />,
     );
     expect(container.querySelector('.katex')).toBeInTheDocument();
   });
 
   it('renders the natural-language gloss', () => {
-    render(<AnnotatedEquation id="__test_free_energy_functional__" />);
+    render(<AnnotatedEquation id="free-energy-functional" />);
     expect(screen.getByText(/precision-weighted squared error/i))
       .toBeInTheDocument();
   });
 
   it('renders one swatch + gloss per symbol with the role colour', () => {
     const { container } = render(
-      <AnnotatedEquation id="__test_free_energy_functional__" />,
+      <AnnotatedEquation id="free-energy-functional" />,
     );
     const swatches = container.querySelectorAll('.annotated-eq-swatch');
-    expect(swatches.length).toBe(3);
+    expect(swatches.length).toBe(5);
     const styles = Array.from(swatches).map(
       (s) => (s as HTMLElement).style.background,
     );
@@ -34,7 +34,7 @@ describe('AnnotatedEquation', () => {
   });
 
   it('renders the citation footer', () => {
-    render(<AnnotatedEquation id="__test_free_energy_functional__" />);
+    render(<AnnotatedEquation id="free-energy-functional" />);
     expect(screen.getByText(/Arch §3\.1/)).toBeInTheDocument();
   });
 
