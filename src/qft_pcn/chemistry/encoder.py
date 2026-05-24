@@ -77,6 +77,80 @@ class ChemEncodingMeta:
     def n_orb(self) -> int:
         return self.integrals.n_orb
 
+    def __repr__(self) -> str:
+        # Compact, layout-aware repr: callers debugging a non-contiguous
+        # active-space encoding need ``orbital_layout`` surfaced (the leaf
+        # mapping is otherwise easy to misread when ghosts are present).
+        n_ghost = sum(1 for g in self.is_ghost if g)
+        return (
+            f"ChemEncodingMeta(n_orb={self.n_orb}, "
+            f"n_spin_orbitals={self.n_spin_orbitals}, "
+            f"n_leaves={self.n_leaves}, L={self.L}, "
+            f"leaf_dim={self.leaf_dim}, chi_layer={self.chi_layer}, "
+            f"orbital_layout={self.orbital_layout!r}, "
+            f"n_ghost={n_ghost})"
+        )
+
+    def to_dict(self) -> dict:
+        """Layout + bookkeeping as a JSON-friendly dict.
+
+        Captures every layout-defining field — in particular
+        ``orbital_layout``, ``site_of_spin_orbital``, and ``is_ghost`` — so
+        a downstream reload can reconstruct the leaf mapping byte-for-byte
+        without re-running the encoder. The full ``integrals`` payload is
+        emitted as nested arrays / scalars (PySCF MO data is the only
+        non-plain field on :class:`MolecularIntegrals`).
+        """
+        ints = self.integrals
+        return {
+            "n_spin_orbitals": self.n_spin_orbitals,
+            "n_leaves": self.n_leaves,
+            "leaf_dim": self.leaf_dim,
+            "L": self.L,
+            "site_of_spin_orbital": list(self.site_of_spin_orbital),
+            "is_ghost": list(self.is_ghost),
+            "chi_layer": self.chi_layer,
+            "orbital_layout": self.orbital_layout,
+            "integrals": {
+                "n_orb": ints.n_orb,
+                "n_electrons": ints.n_electrons,
+                "n_alpha": ints.n_alpha,
+                "n_beta": ints.n_beta,
+                "h1": np.asarray(ints.h1).tolist(),
+                "eri": np.asarray(ints.eri).tolist(),
+                "nuc_repulsion": float(ints.nuc_repulsion),
+                "hf_energy": float(ints.hf_energy),
+            },
+        }
+
+    @classmethod
+    def from_dict(cls, payload: dict) -> "ChemEncodingMeta":
+        """Inverse of :meth:`to_dict`. Reconstructs both the meta and its
+        :class:`MolecularIntegrals` payload exactly (modulo float-array
+        round-trip through Python lists)."""
+        ints_d = payload["integrals"]
+        integrals = MolecularIntegrals(
+            n_orb=int(ints_d["n_orb"]),
+            n_electrons=int(ints_d["n_electrons"]),
+            n_alpha=int(ints_d["n_alpha"]),
+            n_beta=int(ints_d["n_beta"]),
+            h1=np.asarray(ints_d["h1"], dtype=float),
+            eri=np.asarray(ints_d["eri"], dtype=float),
+            nuc_repulsion=float(ints_d["nuc_repulsion"]),
+            hf_energy=float(ints_d["hf_energy"]),
+        )
+        return cls(
+            n_spin_orbitals=int(payload["n_spin_orbitals"]),
+            n_leaves=int(payload["n_leaves"]),
+            leaf_dim=int(payload["leaf_dim"]),
+            L=int(payload["L"]),
+            site_of_spin_orbital=list(payload["site_of_spin_orbital"]),
+            is_ghost=[bool(g) for g in payload["is_ghost"]],
+            integrals=integrals,
+            chi_layer=int(payload["chi_layer"]),
+            orbital_layout=payload["orbital_layout"],
+        )
+
     def hf_occupation(self) -> list[int]:
         """Return the RHF occupation list, length n_leaves, entries 0/1.
 
@@ -132,12 +206,22 @@ def encode_molecule(mol: Molecule | None = None,
         site_of_spin_orbital = list(range(n_spin))
     elif orbital_layout == "alpha_then_beta":
         # Alpha block first (s=0): leaves [0..n_orb).
-        # Beta block second (s=1): leaves [n_orb..2*n_orb).
-        # Spin-orbital index 2*p + 0 -> leaf p; 2*p + 1 -> leaf (n_orb + p).
+        # Beta block second (s=1): leaves [n_leaves//2 .. n_leaves//2 + n_orb).
+        # Spin-orbital index 2*p + 0 -> leaf p; 2*p + 1 -> leaf (n_leaves//2 + p).
+        # The symmetric half-split puts ghost padding at the END of EACH spin
+        # block (leaves [n_orb..n_leaves//2) and [n_leaves//2 + n_orb..n_leaves))
+        # so the MERA top-tier isometry sees alpha in its left subtree and beta
+        # in its right subtree — the §1.1 bond structure encodes the
+        # alpha/beta partition as the highest-tier entanglement boundary.
+        # For n_orb already a power of two (e.g. H2 STO-3G n_orb=2,
+        # n_leaves=4, n_leaves//2=2) this reduces to the contiguous packing
+        # used previously; only padded cases (e.g. n_orb=3 -> n_leaves=8)
+        # see ghost leaves interleaved between the two spin blocks.
+        half = n_leaves // 2
         site_of_spin_orbital = [0] * n_spin
         for p in range(n_orb):
             site_of_spin_orbital[2 * p] = p
-            site_of_spin_orbital[2 * p + 1] = n_orb + p
+            site_of_spin_orbital[2 * p + 1] = half + p
     else:
         raise ValueError(
             f"orbital_layout must be 'interleaved' or 'alpha_then_beta', "
