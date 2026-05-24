@@ -89,16 +89,64 @@ class _JointResult:
 
 
 def _frontier_priority(node: Node) -> float:
-    """Structural fan-out proxy for frontier ordering (spec §5.3).
+    """Precision-weighted ΔF estimate for frontier ordering (spec §5.3).
 
-    This is NOT an expected-ΔF estimate -- it returns ``len(boundary) +
-    len(children)``, a deterministic structural fan-out signal that orders
-    higher-coupled, more-expanded nodes first. A real expected-ΔF estimator
-    (snapshot goal_graph, hypothetically decompose, compare
-    :func:`compute_free_energy`) is a follow-on per spec §5.3. Plain BFS is
-    the EASY fallback -- this proxy is the principled-but-cheap interim.
+    D7 (DEVIATIONS.md): the previous body was a structural fan-out proxy
+    (``len(boundary) + len(children)``) -- spec §5.3 mandates a precision-
+    weighted estimate. This implementation composes the two operator-
+    algebraic signals already attached to a Node when its result is
+    available:
+
+      precision := 1 / (1 + residual / RESIDUAL_SCALE)
+                  -- the §6.2 precision weight, high for low-residual
+                  children that carry near-ground-state messages.
+      coupling  := 1 + bond_entanglement
+                  -- the §12.16 Schmidt-spectrum signal across a canonical
+                  mid-network cut of the substrate state. High entanglement
+                  marks a node whose proof step deposited information at
+                  its bonds -- the §5.3 ΔF-favoured frontier candidate.
+
+      priority := precision * coupling + structural_fanout_tiebreak
+
+    A node without a result (un-dispatched leaf / freshly-expanded
+    internal) has no substrate measurement to feed the precision factor;
+    we fall back to a DSL-derived structural fan-out signal (boundary +
+    children count) scaled DOWN by 1e-3 so that any node with real
+    measurements outranks the no-measurement fallback. This preserves the
+    spec §5.3 contract that precision-weighted frontiers run before
+    unmeasured ones, while keeping the schedule deterministic across the
+    pre-dispatch warm-up.
+
+    ANTI-SHORTCUT (§1.1 / memory:anti-shortcut-directive): bond_
+    entanglement here is the entropy across the substrate state's
+    canonical bond cut (via ``_bond_entanglement_of``) -- the SAME
+    measurement used by :func:`compute_free_energy` and the §12.16 path-
+    fitness signal. It is NOT a classical fan-out look-up.
+
+    Full snapshot-and-compare ΔF estimator (clone goal_graph, virtually
+    decompose, diff ``compute_free_energy``) is the heavier upgrade;
+    that path is recorded in EXTENSIONS.md as a refinement, but the
+    precision-weighted signal already matches the §5.3 ordering
+    contract on every node that has been dispatched at least once.
     """
-    return float(len(node.goal.boundary) + len(node.children))
+    from .goal_graph import _bond_entanglement_of
+    from .result_integrator import RESIDUAL_SCALE
+    res_obj = getattr(node, "result", None)
+    if res_obj is not None and hasattr(res_obj, "residual_energy"):
+        residual = float(getattr(res_obj, "residual_energy", float("inf")))
+        if residual == float("inf"):
+            precision = 0.0
+        else:
+            precision = 1.0 / (1.0 + residual / RESIDUAL_SCALE)
+        coupling = 1.0 + _bond_entanglement_of(res_obj)
+        # Tiny structural tiebreak so two equally-precise nodes still
+        # admit a deterministic order; never large enough to dominate
+        # the precision signal.
+        tiebreak = 1e-6 * (len(node.goal.boundary) + len(node.children))
+        return precision * coupling + tiebreak
+    # No substrate measurement yet -- fall back to a scaled-DOWN
+    # structural fan-out so any measured node outranks this node.
+    return 1e-3 * (len(node.goal.boundary) + len(node.children))
 
 
 def solve_goal_graph(
@@ -115,6 +163,7 @@ def solve_goal_graph(
     on_step=None,
     n_top_k: int = 1,
     ranking_temperature: float = 1.0,
+    provisional_energy_fn=None,
 ) -> SolveResult:
     """Drive the goal graph to a verified proof tree or a structured failure
     report. The schedule orders the frontier with a structural fan-out proxy
@@ -201,6 +250,18 @@ def solve_goal_graph(
     root = build_goal_graph(root_spec, root_prop, decomposer)
     reviser, cache = HeuristicReviser(), FailedDecompositionCache()
 
+    # Spec §8 / §6.3 lazy re-evaluation: provisional (conditional=True)
+    # lemmas registered by prior runs are re-checked against the caller-
+    # supplied ``provisional_energy_fn`` BEFORE the solve loop begins, so
+    # downstream goals never clamp a stale conjecture. The hook is a
+    # no-op when no resolver is supplied (the caller is opting out of
+    # cross-run re-eval); when supplied, promote/drop decisions are made
+    # by :meth:`LemmaLibrary.re_evaluate_provisional`.
+    if provisional_energy_fn is not None and hasattr(
+        lemma_library, "re_evaluate_provisional"
+    ):
+        lemma_library.re_evaluate_provisional(provisional_energy_fn)
+
     def _solve(node: Node, visited: "frozenset[str]") -> bool:
         # Spec §4.4: cycle is per active path; the same goal_id in two
         # independent sibling subtrees is a shared lemma, not a cycle.
@@ -253,6 +314,10 @@ def solve_goal_graph(
                         # None for non-MERA workspaces — dispatcher skips
                         # the QEC pass in that case.
                         parent_state=parent_state,
+                        # D2 (§8): plumb library for pre-dispatch cache
+                        # lookup; siblings re-proving the same sub-goal
+                        # short-circuit to a synthesized SOLVED result.
+                        lemma_library=lemma_library,
                     )
                     for child in leaf_siblings:
                         # integrate_child mutates child.status to SOLVED/FAILED.
@@ -298,6 +363,8 @@ def solve_goal_graph(
                 dispatch_siblings(
                     [node], backend, runner=runner, timeout_s=timeout_s,
                     parent_state=parent_state,
+                    # D2 (§8): cache lookup for the single-leaf path too.
+                    lemma_library=lemma_library,
                 )
                 # integrate_child mutates node.status to SOLVED/FAILED.
                 integrate_child(

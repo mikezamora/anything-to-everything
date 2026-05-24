@@ -1095,3 +1095,38 @@ already perf-optimized through the M3 perf path
 - Workaround: scope-limit to real-block lower-level Hs. Document the
   restriction in callers.
 - Unblocks: full §12.9 acceptance on Hs with complex Pauli-Y terms.
+
+## Tensor-network typechecker for lemma decode validation
+
+- Where: `src/qft_pcn/composition/lemma_library.py::_validate_decoded`
+  (spec §4.5 step-2 validation pass). The function currently returns
+  `(True, "no-checker-available")` -- a deliberate tautology. The §1.6
+  operator-algebraic anti-shortcut directive forbids the obvious "fix"
+  (an inline Python AST typecheck on the decoded result): admission of a
+  lemma must be gated by physics (residual energy under the
+  Hamiltonian), not by a classical type tree walk. The residual gate
+  (`eps_register`, §4.5 step-1) currently carries the full validation
+  load.
+- Need: a tensor-network-side typechecker that confirms the decoded
+  state satisfies the proposition's type signature without dropping back
+  into Python AST traversal. Candidate shape: an operator
+  `Π_type` (projector onto well-typed states) constructed from the
+  encoder's type-signature meta-Hamiltonian, applied as a final
+  validation measurement `<Psi|Π_type|Psi> ≈ 1`. The existing
+  `MeraTypingHamiltonian` (`src/qft_pcn/logic/mera_typing_hamiltonian.py`)
+  already encodes the type-discipline penalties; what's missing is the
+  "validation projector" surface that consumes the converged state and
+  returns a {0,1}-valued type-correctness verdict in the operator
+  algebra, not as a Python tree walk.
+- Workaround: the §4.5 step-1 residual gate. A lemma whose decoded
+  state would fail a classical typecheck overwhelmingly also fails the
+  residual gate (the type-discipline penalties are part of the
+  Hamiltonian), so the soft tautology rarely admits a bad candidate in
+  practice. Tests that need the rejection branch monkeypatch
+  `_validate_decoded` directly.
+- Unblocks: closing the gap between the residual gate's "approximately
+  ground state" verdict and the spec §4.5's "well-typed decoded AST"
+  acceptance criterion. Strictly speaking the current pipeline is
+  residual-only; a real `Π_type` measurement would let `register_lemma`
+  reject a state that minimised the energy but landed in a non-type-
+  inhabiting branch.

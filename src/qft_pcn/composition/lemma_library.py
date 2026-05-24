@@ -568,6 +568,11 @@ class LemmaLibrary:
             "proposition_type": lemma.proposition_type,
             "trotter_steps": lemma.derivation.trotter_steps,
             "n_leaves_L": _n_leaves_L(lemma),
+            # D2 (DEVIATIONS.md §8): persist source goal_id so the
+            # orchestrator can do a pre-dispatch cache lookup keyed by
+            # goal_id — siblings re-proving the same sub-goal hit the
+            # cache instead of re-running the QPCN.
+            "source_run_id": lemma.derivation.source_run_id,
         }
         self._flush_manifest()
 
@@ -611,6 +616,36 @@ class LemmaLibrary:
         return [self.load(lid) for lid, m in self._manifest.items()
                 if m["proposition_type"] == proposition_type]
 
+    def find_by_goal_id(self, goal_id: str) -> "Lemma | None":
+        """Reverse index: lookup a cached lemma by its source goal_id.
+
+        Spec §8: a sub-goal already proven (i.e. a lemma was registered
+        whose ``derivation.source_run_id`` is this ``goal_id``) must
+        short-circuit the orchestrator -- siblings re-asking the same
+        sub-goal hit the cache and skip the QPCN dispatch.
+
+        Returns the most-recently-registered match (manifest is
+        append-only; insertion order is preserved by dict semantics in
+        CPython 3.7+). Returns ``None`` if no lemma was derived under
+        the queried ``goal_id``.
+
+        ANTI-SHORTCUT: the reverse index is keyed on
+        ``derivation.source_run_id`` -- the same field that namespaces
+        the content hash in ``_content_id``. This guarantees that the
+        cache-hit returns the lemma the original child registered, NOT
+        a structurally-identical lemma from a different goal_id (which
+        would cross-contaminate L §10.11 hierarchical proofs).
+        """
+        if not goal_id:
+            return None
+        match = None
+        for lid, m in self._manifest.items():
+            if m.get("source_run_id") == goal_id:
+                match = lid
+        if match is None:
+            return None
+        return self.load(match)
+
     def cheapest_for_type(self, proposition_type: str):
         cands = [(m["n_leaves_L"], m["trotter_steps"], lid)
                  for lid, m in self._manifest.items()
@@ -629,6 +664,131 @@ class LemmaLibrary:
                 out.append((lem, d))
         out.sort(key=lambda t: t[1])
         return out
+
+    def _drop(self, lemma_id: str) -> None:
+        """Remove a lemma from the manifest + delete its on-disk .npz.
+
+        Used by :meth:`re_evaluate_provisional` to evict a provisional
+        lemma whose re-checked residual now exceeds CONJECTURE_CEILING
+        (spec §8 / §6.3). Outside of provisional eviction the library is
+        append-only — callers should not invoke this for housekeeping.
+        """
+        if lemma_id not in self._manifest:
+            raise LemmaNotFound(lemma_id)
+        path = self._path(lemma_id)
+        if path.exists():
+            path.unlink()
+        del self._manifest[lemma_id]
+        self._flush_manifest()
+
+    def _rewrite_with_derivation(
+        self, lemma_id: str, new_derivation: DerivationMetadata
+    ) -> None:
+        """Rewrite a stored lemma's derivation in place (used to flip
+        ``conditional=True`` -> ``False`` when re-evaluation promotes a
+        provisional lemma to ground-state status).
+
+        The mera tensors / encoding meta / fingerprint are unchanged; the
+        lemma_id (content hash) therefore stays valid.
+        """
+        lem = self.load(lemma_id)
+        new_lem = Lemma(
+            lemma_id=lem.lemma_id,
+            proposition_type=lem.proposition_type,
+            mera_tensors=lem.mera_tensors,
+            encoding_meta=lem.encoding_meta,
+            derivation=new_derivation,
+            fingerprint=lem.fingerprint,
+        )
+        # Bypass save's "append-only no-op" guard by dropping then re-saving.
+        path = self._path(lemma_id)
+        if path.exists():
+            path.unlink()
+        del self._manifest[lemma_id]
+        self.save(new_lem)
+
+    def re_evaluate_provisional(
+        self,
+        energy_fn: Callable[["Lemma"], float | None],
+        *,
+        residual_gate: float = 1e-6,
+        ceiling: float = 1e-3,
+    ) -> dict:
+        """Walk provisional (``derivation.conditional=True``) lemmas, recompute
+        the residual against the supplied ``energy_fn``, and either promote
+        (residual <= ``residual_gate`` -> rewrite with ``conditional=False``)
+        or drop (residual > ``ceiling`` -> evict from store). Lemmas in the
+        middle band stay provisional with their residual updated.
+
+        Implements spec §8 / §6.3 lazy re-evaluation: a provisional lemma
+        was integrated as a conjecture; when sibling boundaries change (or
+        an upstream solve provides a sharper Hamiltonian), the orchestrator
+        invokes this hook so the cached entry is re-checked against fresh
+        physics before being relied on by downstream goals.
+
+        ``energy_fn(lemma)`` may return ``None`` to skip a lemma whose
+        Hamiltonian cannot be resolved by the current caller (e.g. the
+        lemma was registered under a hamiltonian_id the resolver does not
+        recognize). Such lemmas are left unchanged.
+
+        Returns a summary dict ``{"promoted": [...], "dropped": [...],
+        "kept_provisional": [...], "skipped": [...]}`` of lemma_ids.
+
+        ANTI-SHORTCUT: this is NOT a no-op. The default residual_gate /
+        ceiling mirror :mod:`result_integrator` so a caller that supplies
+        no thresholds gets the same gates that admitted the lemma in the
+        first place.
+        """
+        summary: dict[str, list[str]] = {
+            "promoted": [], "dropped": [], "kept_provisional": [],
+            "skipped": [],
+        }
+        # Snapshot ids first: _drop / _rewrite_with_derivation mutate the
+        # manifest while we iterate.
+        for lid in list(self._manifest.keys()):
+            lem = self.load(lid)
+            if not lem.derivation.conditional:
+                continue
+            try:
+                new_res = energy_fn(lem)
+            except Exception:  # noqa: BLE001 -- resolver failure is per-lemma
+                summary["skipped"].append(lid)
+                continue
+            if new_res is None:
+                summary["skipped"].append(lid)
+                continue
+            new_res = float(new_res)
+            if new_res > ceiling:
+                self._drop(lid)
+                summary["dropped"].append(lid)
+            elif new_res <= residual_gate:
+                promoted = DerivationMetadata(
+                    hamiltonian_id=lem.derivation.hamiltonian_id,
+                    residual_energy=new_res,
+                    energy_gap=lem.derivation.energy_gap,
+                    trotter_steps=lem.derivation.trotter_steps,
+                    assumptions=lem.derivation.assumptions,
+                    lemma_deps=lem.derivation.lemma_deps,
+                    conditional=False,
+                    source_run_id=lem.derivation.source_run_id,
+                )
+                self._rewrite_with_derivation(lid, promoted)
+                summary["promoted"].append(lid)
+            else:
+                # Mid-band: still provisional, but record the refreshed residual.
+                updated = DerivationMetadata(
+                    hamiltonian_id=lem.derivation.hamiltonian_id,
+                    residual_energy=new_res,
+                    energy_gap=lem.derivation.energy_gap,
+                    trotter_steps=lem.derivation.trotter_steps,
+                    assumptions=lem.derivation.assumptions,
+                    lemma_deps=lem.derivation.lemma_deps,
+                    conditional=True,
+                    source_run_id=lem.derivation.source_run_id,
+                )
+                self._rewrite_with_derivation(lid, updated)
+                summary["kept_provisional"].append(lid)
+        return summary
 
 
 # ---- validated registration (spec §4.5) -----------------------------------

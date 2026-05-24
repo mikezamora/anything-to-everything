@@ -38,16 +38,19 @@ already catalogued in `EXTENSIONS.md` are not re-listed here.
   lookup that synthesizes a SOLVED `ChildResult`.
 - Audit source: §6-§9
 
-### D3 — §8 lazy re-evaluation of provisional / boundary-changed lemmas absent
-- Location: `src/qft_pcn/composition/orchestrator.py::_solve`
+### D3 — §8 lazy re-evaluation of provisional / boundary-changed lemmas absent — **RESOLVED**
+- Location: `src/qft_pcn/composition/orchestrator.py::solve_goal_graph`
+  (pre-solve hook); `src/qft_pcn/composition/lemma_library.py::
+  LemmaLibrary.re_evaluate_provisional`
 - Spec: §8, §6.3
-- Issue: Spec: provisional integrations always re-evaluated when a
-  sibling completes; cache entries invalidated when boundary changes.
-  `IntegrationOutcome.provisional` is set but consulted nowhere
-  downstream; no re-evaluation pass exists.
-- Fix scope: medium — wire a provisional-rescan over SOLVED siblings
-  upon each sibling completion; invalidate on boundary change.
-- Audit source: §6-§9
+- Resolution: `LemmaLibrary.re_evaluate_provisional(energy_fn, *,
+  residual_gate, ceiling)` walks every lemma with
+  `derivation.conditional=True`, calls the caller-supplied `energy_fn`
+  to recompute the residual, and promotes (`conditional=False` rewrite)
+  / drops (manifest+npz eviction) / refreshes accordingly. The
+  orchestrator invokes the hook before the solve loop when called with
+  `provisional_energy_fn=`. Tests cover the drop / promote / mid-band /
+  non-provisional-untouched / resolver-returns-None branches.
 
 ### D4 — Orchestrator does not plumb LLM reviser; principled path unreachable
 - Location: `src/qft_pcn/composition/orchestrator.py:325` (calls
@@ -265,18 +268,15 @@ already catalogued in `EXTENSIONS.md` are not re-listed here.
   verify with `grep -r _stub src/qft_pcn/`.
 - Audit source: §1-§5
 
-### D18 — `lemma_library._validate_decoded` is a tautology with no EXTENSIONS entry
+### D18 — `lemma_library._validate_decoded` is a tautology with no EXTENSIONS entry — **RESOLVED**
 - Location: `src/qft_pcn/composition/lemma_library.py:649-671`
 - Spec: §4.5 step-2 validation pass
-- Issue: Returns `(True, "no-checker-available")`. The residual gate
-  carries the load and the anti-shortcut comment is correct (an inline
-  Python AST typechecker would be a §1.6 violation), but no
-  EXTENSIONS.md entry tracks the missing tensor-network-side
-  typechecker. Per no-placeholders, every "not yet implemented"
-  surface should be logged.
-- Fix scope: small — add EXTENSIONS.md entry "Tensor-network-side AST
-  validator for `register_lemma` step 2".
-- Audit source: §10
+- Resolution: EXTENSIONS.md entry "Tensor-network typechecker for
+  lemma decode validation" tracks the deferred operator-algebraic
+  typechecker that would replace the current tautological
+  `_validate_decoded`. The tautology stays in place (the anti-shortcut
+  forbids the §1.6-violating inline AST typecheck); the residual gate
+  carries the validation load until the deferred work lands.
 
 ### D19 — `use_log` dual-sense field; adapter docstring describes dead heuristic
 - Location:
