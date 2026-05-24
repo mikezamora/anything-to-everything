@@ -40,6 +40,11 @@ class RunSpec:
     grid: int = _DEFAULT_GRID
     seed: int | None = None
     params: dict = field(default_factory=dict)
+    # Optional companion holding the original DSL dict this spec was derived
+    # from. Set by `dsl_to_runspec` so `runspec_to_dsl` can round-trip
+    # losslessly. Plain RunSpecs constructed by hand leave this `None`, and
+    # `runspec_to_dsl` falls back to its best-effort reverse.
+    dsl: dict | None = None
 
     @classmethod
     def from_dict(cls, d: dict) -> "RunSpec":
@@ -55,8 +60,10 @@ class RunSpec:
         seed = d.get("seed")
         seed = int(seed) if seed is not None else None
         params = dict(d.get("params") or {})
+        dsl = d.get("dsl")
+        dsl = dict(dsl) if dsl is not None else None
         return cls(layers=layers, steps=steps, grid=grid, seed=seed,
-                   params=params)
+                   params=params, dsl=dsl)
 
 
 class RunRegistry:

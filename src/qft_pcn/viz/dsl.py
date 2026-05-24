@@ -68,21 +68,31 @@ def dsl_to_runspec(dsl: dict) -> RunSpec:
             qpcn_params.setdefault("target_n0", float(obs["target"]))
 
     run_cfg = dsl.get("run", {}) or {}
+    # Stash the original DSL verbatim on the spec so `runspec_to_dsl` can
+    # round-trip losslessly. We deep-copy via json round-trip so later mutation
+    # of either side cannot leak into the other.
+    dsl_copy = json.loads(json.dumps(dsl))
     return RunSpec(
         layers=["qpcn", "mps", "hamiltonian"],
         steps=int(run_cfg.get("steps", 30)),
         grid=12,
         seed=run_cfg.get("seed"),
         params={"qpcn": qpcn_params},
+        dsl=dsl_copy,
     )
 
 
 def runspec_to_dsl(spec: RunSpec) -> dict:
-    """Reverse-translate a RunSpec back to a DSL dict (best-effort).
+    """Reverse-translate a RunSpec back to a DSL dict.
 
-    Documented in EXTENSIONS.md as lossy: RunSpec.params is flat, so any
-    structure not captured by the standard qpcn keys is dropped.
+    If the spec carries its original DSL on `spec.dsl` (set by
+    `dsl_to_runspec`), return that verbatim (deep-copied) for a lossless
+    round-trip. Otherwise fall back to a best-effort reverse from the flat
+    qpcn params -- which is intentionally lossy, since `RunSpec.params`
+    doesn't preserve every DSL feature.
     """
+    if spec.dsl is not None:
+        return json.loads(json.dumps(spec.dsl))
     qp = (spec.params or {}).get("qpcn") or {}
     names = list(qp.get("species") or ["A"])
     dsl: dict[str, Any] = {

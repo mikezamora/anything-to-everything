@@ -57,3 +57,23 @@ def test_runspec_to_dsl_preserves_field_names():
 def test_examples_are_all_valid():
     for ex in EXAMPLES:
         assert validate(ex) == [], f"EXAMPLES contains invalid DSL: {ex}"
+
+
+def test_runspec_to_dsl_round_trips_examples_losslessly():
+    # With the RunSpec.dsl companion, every EXAMPLE survives the
+    # dsl -> RunSpec -> dsl trip byte-for-byte (no flat-params lossy reverse).
+    for ex in EXAMPLES:
+        spec = dsl_to_runspec(ex)
+        back = runspec_to_dsl(spec)
+        assert back == ex, f"round-trip lost data for: {ex}"
+
+
+def test_runspec_to_dsl_falls_back_when_no_dsl_companion():
+    # A hand-built RunSpec (no `dsl` companion) still gets a best-effort
+    # reverse from the flat qpcn params; the result is valid DSL.
+    spec = RunSpec(layers=["qpcn"], steps=20, grid=12, seed=0,
+                   params={"qpcn": {"species": ["A"], "mass": 1.0,
+                                    "kinetic": 0.5, "target_n0": 0.25}})
+    back = runspec_to_dsl(spec)
+    assert validate(back) == []
+    assert {f["name"] for f in back["fields"]} == {"A"}
