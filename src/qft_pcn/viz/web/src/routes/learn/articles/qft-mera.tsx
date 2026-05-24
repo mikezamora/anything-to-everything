@@ -100,7 +100,7 @@ export const article: ArticleSpec = {
           },
           {
             description:
-              'Total: 16 + 24 + 2 = 42 real parameters for a 4-site MERA at χ = 2. For comparison, the full 4-qubit pure-state manifold has 2^5 - 2 = 30 real DOF — so this MERA *over-parameterises* the 4-site Hilbert space (the redundancy is gauge from the disentangler / isometry constraints not being fully tight). At χ = 4 the same count balloons to roughly 4² + 2 · (2 · 4 · 4 - 4²) + (2 · 4 - 2) = 16 + 32 + 6 = 54 — but at χ = 4 it can now represent volume-law-ish entanglement that χ = 2 cannot.',
+              'Total: 16 + 24 + 2 = 42 real parameters for a 4-site MERA at χ = 2. For comparison, the full 4-qubit pure-state manifold has 2^5 - 2 = 30 real DOF — so this MERA *over-parameterises* the 4-site Hilbert space (the redundancy is gauge from the disentangler / isometry constraints not being fully tight). The scaling law is what matters as χ grows: a disentangler at χ acts on a χ²×χ² Hilbert space so its parameter cost is O(χ⁴), while a two-site → one-site isometry living on the Stiefel manifold V_χ(C^{χ²}) costs O(χ³). Doubling χ therefore multiplies per-tensor parameter count by 8-to-16, which is the principled way to spend parameters where the entanglement actually lives (architecture §2.3).',
             result: '42 real parameters at χ = 2. Per-layer χ controls a power-of-χ scaling of the parameter count.',
           },
         ],
