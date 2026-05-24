@@ -1,7 +1,7 @@
 """§2.4 four new constraint-kind compilers — Hermiticity + ground-state checks."""
 import numpy as np
 
-from src.qft_pcn.bridge.runtime.hamiltonian_compiler import compile_vocabulary
+from src.qft_pcn.bridge.runtime.hamiltonian_compiler import compile_vocabulary, compile_well_typed_subtree
 
 
 def test_vocabulary_hermitian_psd():
@@ -30,3 +30,19 @@ def test_vocabulary_disallowed_label_costs_one_weight():
     state = np.zeros(dim); state[idx_3_3] = 1.0
     e = float(state @ H @ state)
     assert abs(e - 6.0) < 1e-9, f"|3,3⟩ should cost 2 violations × weight 3.0 = 6.0, got {e}"
+
+
+def test_well_typed_subtree_hermitian_psd():
+    H = compile_well_typed_subtree(
+        root=0, n_sites=3,
+        kind_cutoff=4, type_cutoff=4,
+        vocab=["Var", "App", "Lambda", "Const"],
+        types=["Nat", "Bool", "NatToNat", "BoolToBool"],
+        weight=10.0,
+    )
+    d = (4 * 4) ** 3
+    assert H.shape == (d, d)
+    assert np.allclose(H, H.conj().T)
+    eigs = np.linalg.eigvalsh(H)
+    assert eigs[0] >= -1e-9
+    assert eigs[0] < 1e-9

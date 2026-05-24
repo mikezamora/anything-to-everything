@@ -1419,3 +1419,11 @@ already perf-optimized through the M3 perf path
   to `wired=False`; row excluded from per-ablation stats via
   `not_yet_wired=True` diagnostic until the real gating lands.
 
+
+## DSL constraint gaps
+
+### `well_typed_subtree` first-cut (W3.T2)
+
+- **Status:** simplified projector — penalises typed-kind sites with `type == "unknown"`.
+- **Needed:** full §10.2 T-Var / T-App / T-Abs elaboration (W3.T2b).
+- **Unused parameter:** `root` is currently a no-op; the full elaboration will scope per-site projectors to the subtree rooted at `root`.

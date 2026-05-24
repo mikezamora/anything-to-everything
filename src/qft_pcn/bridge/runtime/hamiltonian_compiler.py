@@ -49,3 +49,53 @@ def compile_vocabulary(
             term = np.kron(term, op)
         H = H + weight * term
     return H
+
+
+def compile_well_typed_subtree(
+    *,
+    root: int,
+    n_sites: int,
+    kind_cutoff: int,
+    type_cutoff: int,
+    vocab: Sequence[str],
+    types: Sequence[str],
+    weight: float,
+) -> np.ndarray:
+    """First-cut well-typed-subtree projector (§10.2 simplified).
+
+    Penalises sites whose `node_kind` is in {Var, App, Lambda} but whose
+    `type` is "unknown". Full T-Var/T-App/T-Abs elaboration is W3.T2b.
+
+    PSD by construction (each per-site term is a rank-1 projector ⊗ I).
+
+    Note: `root` is currently unused in the first cut; the full §10.2
+    elaboration (W3.T2b) will scope per-site projectors to the subtree
+    rooted at `root`. See EXTENSIONS.md for the documented gap.
+    """
+    # If 'unknown' isn't a declared type or no typed kinds are in vocab,
+    # the constraint is vacuous → return zero op (still Hermitian and PSD).
+    if "unknown" not in types:
+        unknown_idx = -1
+    else:
+        unknown_idx = types.index("unknown")
+    typed_kinds = {vocab.index(k) for k in ("Var", "App", "Lambda") if k in vocab}
+    d_site = kind_cutoff * type_cutoff
+    dim = d_site ** n_sites
+    H = np.zeros((dim, dim), dtype=float)
+    if unknown_idx < 0 or not typed_kinds:
+        return H
+    proj_kind = np.zeros((kind_cutoff, kind_cutoff))
+    for k in typed_kinds:
+        proj_kind[k, k] = 1.0
+    proj_type = np.zeros((type_cutoff, type_cutoff))
+    proj_type[unknown_idx, unknown_idx] = 1.0
+    p_site = np.kron(proj_kind, proj_type)
+    I = np.eye(d_site)
+    for s in range(n_sites):
+        ops = [I] * n_sites
+        ops[s] = p_site
+        term = ops[0]
+        for op in ops[1:]:
+            term = np.kron(term, op)
+        H = H + weight * term
+    return H
