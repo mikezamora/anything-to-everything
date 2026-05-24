@@ -66,6 +66,7 @@ def compute_action(
     *,
     alpha: float = 1.0,
     beta: float = 1.0,
+    gamma: float = 1.0,
 ) -> float:
     """Compute the worldline action ``S[tree]`` (spec §12.16).
 
@@ -83,12 +84,15 @@ def compute_action(
       weighted by ``beta``. A deeper hierarchy traverses more state-space
       transitions and so accumulates more action.
 
-    The action is exactly ``residual + alpha*complexity + beta*depth`` --
-    *node count (complexity) and tree depth and residual energy only*.
-    Spec §12.16 also envisions a bond-entanglement contribution; that
-    term is deferred (see ``EXTENSIONS.md``: "§12.16 bond-entanglement
-    action term + §10.10 orchestrator integration"). The current
-    implementation makes no bond-entanglement claim.
+    * **bond entanglement** -- the sum of per-node
+      :attr:`ProofTreeNode.bond_entanglement` (von-Neumann entropy across
+      a canonical mid-network cut of each node's converged substrate
+      state, spec §12.16 path-fitness signal). Weighted by ``gamma``.
+      This is a real Schmidt-spectrum measurement read directly from the
+      §5.8 substrate surface (anti-shortcut §1.1: not an AST proxy).
+
+    The action is exactly
+    ``residual + alpha*complexity + beta*depth + gamma*sum(bond_entanglement)``.
 
     Parameters
     ----------
@@ -99,12 +103,16 @@ def compute_action(
         Weight on the lemma-complexity term (default ``1.0``).
     beta
         Weight on the path-length term (default ``1.0``).
+    gamma
+        Weight on the bond-entanglement term (default ``1.0``). Entropies
+        are nonnegative by construction, so this term raises S monotonically
+        in bond entanglement for ``gamma >= 0``.
 
     Returns
     -------
     float
         The action ``S[tree]`` -- nonnegative whenever residuals,
-        ``alpha``, and ``beta`` are nonnegative.
+        ``alpha``, ``beta``, and ``gamma`` are nonnegative.
     """
     if not isinstance(tree, ProofTree):
         raise TypeError(
@@ -114,7 +122,15 @@ def compute_action(
     residual_sum = sum(n.residual_energy for n in _walk(tree.root))
     complexity = sum(1 for _ in _walk(tree.root))
     depth = _max_depth(tree.root)
-    return float(residual_sum) + alpha * float(complexity) + beta * float(depth)
+    bond_entanglement_sum = sum(
+        float(getattr(n, "bond_entanglement", 0.0)) for n in _walk(tree.root)
+    )
+    return (
+        float(residual_sum)
+        + alpha * float(complexity)
+        + beta * float(depth)
+        + gamma * float(bond_entanglement_sum)
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -141,6 +157,7 @@ def bayesian_rank_proofs(
     T: float = 1.0,
     alpha: float = 1.0,
     beta: float = 1.0,
+    gamma: float = 1.0,
 ) -> list[ProofRanking]:
     """Rank candidate proofs by ``exp(-S/T)`` (spec §12.16).
 
@@ -168,7 +185,7 @@ def bayesian_rank_proofs(
         alternative decomposition strategies.
     T
         Temperature. Must be ``>= 0``. ``T == 0`` triggers the MAP branch.
-    alpha, beta
+    alpha, beta, gamma
         Forwarded to :func:`compute_action`.
 
     Returns
@@ -187,7 +204,10 @@ def bayesian_rank_proofs(
             "(the partition function over an empty set is undefined)"
         )
 
-    actions = [compute_action(t, alpha=alpha, beta=beta) for t in candidates]
+    actions = [
+        compute_action(t, alpha=alpha, beta=beta, gamma=gamma)
+        for t in candidates
+    ]
 
     if T == 0.0:
         # T -> 0 collapses to argmax on -S; equivalent to argmin on S.

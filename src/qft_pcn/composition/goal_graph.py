@@ -234,10 +234,20 @@ def compute_free_energy(root: Node) -> float:
 
 @dataclass(frozen=True)
 class ProofTreeNode:
+    """A node in the verified proof tree (spec §4.6).
+
+    ``bond_entanglement`` is the von-Neumann entropy across a canonical
+    mid-network cut of the node's converged substrate state — a real
+    operator-algebraic measurement of how much entanglement the proof
+    step deposited at its bonds (spec §12.16 path fitness signal). The
+    default ``0.0`` covers nodes built without a substrate ground state
+    (test fixtures, synthetic joints), preserving backward compatibility.
+    """
     goal_prop: str
     solved_ast: Any
     residual_energy: float
     children: tuple["ProofTreeNode", ...]
+    bond_entanglement: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -246,14 +256,58 @@ class ProofTree:
     total_residual: float
 
 
+def _bond_entanglement_of(result: Any) -> float:
+    """Schmidt-spectrum entanglement entropy across a canonical mid-network
+    cut of the node's converged ground state (spec §12.16).
+
+    Reads ``result.ground_state`` (a MERA whose ``entanglement_entropy(cut)``
+    surfaces the §5.8 substrate measurement) and evaluates at the mid-network
+    cut ``cut = N // 2 - 1`` (centered, in-range for N >= 2). Returns ``0.0``
+    when no substrate state is present (synthetic ``_JointResult`` for
+    internal nodes; non-MERA backends; or a node whose runner did not return
+    a ground_state). The fallback is silent on type — a ground_state without
+    ``entanglement_entropy`` simply contributes zero, matching the §1.1
+    architecture-soul invariant that bond-entanglement is a measurement, not
+    a fabrication. The fallback is NOT a §1.1 shortcut: the field exists to
+    carry real Schmidt-spectrum data when present.
+    """
+    gs = getattr(result, "ground_state", None)
+    if gs is None:
+        return 0.0
+    fn = getattr(gs, "entanglement_entropy", None)
+    if fn is None:
+        return 0.0
+    N = getattr(gs, "N", None)
+    if not isinstance(N, int) or N < 2:
+        return 0.0
+    # Canonical mid-network cut: cut after leaf (N//2 - 1) splits the chain
+    # roughly in half. entanglement_entropy requires 0 <= cut < N - 1.
+    cut = max(0, min(N - 2, N // 2 - 1))
+    try:
+        return float(fn(cut))
+    except Exception:
+        # A substrate that refuses to evaluate at this cut is not a proof
+        # bug — the action term degrades to zero rather than crashing the
+        # whole proof extraction.
+        return 0.0
+
+
 def extract_proof_tree(root: Node) -> ProofTree:
-    """Walk SOLVED nodes into a verified proof tree (spec §4.6)."""
+    """Walk SOLVED nodes into a verified proof tree (spec §4.6).
+
+    Each leaf node carries ``bond_entanglement`` derived from its converged
+    substrate ground state via :func:`_bond_entanglement_of` (the §12.16
+    Schmidt-spectrum path-fitness signal). Internal nodes (whose
+    ``result`` is a synthetic ``_JointResult`` without a ground_state)
+    contribute zero — they are joins, not substrate measurements.
+    """
     total = 0.0
 
     def _build(n: Node) -> ProofTreeNode:
         nonlocal total
         res = getattr(n.result, "residual_energy", 0.0)
         ast = getattr(n.result, "solved_ast", None)
+        ent = _bond_entanglement_of(n.result)
         total += res
         return ProofTreeNode(
             goal_prop=n.goal.goal_prop,
@@ -261,6 +315,7 @@ def extract_proof_tree(root: Node) -> ProofTree:
             residual_energy=res,
             children=tuple(_build(c) for c in n.children
                            if c.status == Status.SOLVED),
+            bond_entanglement=ent,
         )
 
     tree_root = _build(root)

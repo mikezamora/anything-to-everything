@@ -32,18 +32,22 @@ from src.qft_pcn.composition.worldline_pi import (
 # ---------------------------------------------------------------------------
 
 
-def _leaf(prop: str, residual: float) -> ProofTreeNode:
+def _leaf(prop: str, residual: float,
+          bond_entanglement: float = 0.0) -> ProofTreeNode:
     return ProofTreeNode(
         goal_prop=prop, solved_ast=None,
         residual_energy=float(residual), children=(),
+        bond_entanglement=float(bond_entanglement),
     )
 
 
 def _node(prop: str, residual: float,
-          children: tuple[ProofTreeNode, ...]) -> ProofTreeNode:
+          children: tuple[ProofTreeNode, ...],
+          bond_entanglement: float = 0.0) -> ProofTreeNode:
     return ProofTreeNode(
         goal_prop=prop, solved_ast=None,
         residual_energy=float(residual), children=children,
+        bond_entanglement=float(bond_entanglement),
     )
 
 
@@ -229,6 +233,49 @@ def test_compute_action_type_guarded():
     bare = _node("t", 0.0, ())
     with pytest.raises(TypeError):
         compute_action(bare)
+
+
+def test_compute_action_includes_bond_entanglement():
+    """Spec §12.16: the action functional carries a bond-entanglement
+    contribution gated by ``gamma``. Holding topology + residuals fixed,
+    a proof tree with larger summed bond_entanglement must have action
+    raised by EXACTLY ``gamma * delta_S`` (the Schmidt-spectrum readout
+    is the load-bearing path-fitness signal, anti-shortcut §1.1)."""
+    # Two trees with identical topology, residuals, depth, and complexity;
+    # only the bond_entanglement fields differ.
+    base = _tree(_node("t", 1e-7, (_leaf("a", 1e-7, bond_entanglement=0.0),),
+                       bond_entanglement=0.0))
+    entangled = _tree(_node("t", 1e-7,
+                            (_leaf("a", 1e-7, bond_entanglement=0.6),),
+                            bond_entanglement=0.3))
+    delta_S_bond = 0.6 + 0.3   # root + leaf
+
+    # gamma = 1.0
+    diff_unit = compute_action(entangled, gamma=1.0) - compute_action(base, gamma=1.0)
+    assert math.isclose(diff_unit, 1.0 * delta_S_bond,
+                        rel_tol=1e-9, abs_tol=1e-12), (
+        f"gamma=1 contribution should be {delta_S_bond}; got {diff_unit}"
+    )
+
+    # gamma = 2.5
+    diff_scaled = (
+        compute_action(entangled, gamma=2.5)
+        - compute_action(base, gamma=2.5)
+    )
+    assert math.isclose(diff_scaled, 2.5 * delta_S_bond,
+                        rel_tol=1e-9, abs_tol=1e-12), (
+        f"gamma=2.5 contribution should be {2.5 * delta_S_bond}; "
+        f"got {diff_scaled}"
+    )
+
+    # gamma = 0 -> term drops out entirely (action identical).
+    s_off_base = compute_action(base, gamma=0.0)
+    s_off_ent = compute_action(entangled, gamma=0.0)
+    assert math.isclose(s_off_base, s_off_ent,
+                        rel_tol=0.0, abs_tol=1e-12), (
+        f"gamma=0 should null the bond-entanglement term; got "
+        f"{s_off_base} vs {s_off_ent}"
+    )
 
 
 def test_ranking_dataclass_carries_action_and_tree():

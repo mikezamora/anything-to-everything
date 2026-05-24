@@ -12,6 +12,8 @@ integrator tests use.
 """
 from __future__ import annotations
 
+import math
+
 import pytest
 
 from src.qft_pcn.composition.dispatcher import ChildResult, ThreadPoolBackend
@@ -303,3 +305,112 @@ def test_revision_exhausted_is_a_typed_error_from_composition_errors():
     assert e.goal_id == "g_test"
     assert e.attempts == 4
     assert isinstance(e, Exception)
+
+
+# ---------------------------------------------------------------------------
+# §12.16 / A.3 top-k ranking API surface.
+# ---------------------------------------------------------------------------
+
+
+def _stub_runner_for(cstate, cmeta):
+    def stub_runner(sub_goal, timeout_s):
+        return ChildResult(
+            goal_id=sub_goal.goal_id,
+            converged=True,
+            residual_energy=1e-9,
+            ground_state=cstate,
+            solved_ast=f"ast::{sub_goal.goal_prop}",
+            run_diagnostic={"spectral_gap": 1.0},
+            error=None,
+            meta=cmeta,
+            hamiltonian=None,
+            trotter_steps=0,
+        )
+    return stub_runner
+
+
+def test_orchestrator_top_k_default_is_single_proof(
+    lib, child_state_meta, parent_state_meta,
+):
+    """Default ``n_top_k=1``: the orchestrator returns the solved proof
+    tree and ``ranked_proofs`` is the single-element ranking with weight
+    1.0. No behaviour change vs prior callers (spec §12.16 / A.3
+    plumbing)."""
+    cstate, cmeta = child_state_meta
+    pstate, pmeta = parent_state_meta
+    table = {
+        "Thm":     [({"g": "ind"}, "IndCase")],
+        "IndCase": [({"g": "L1a"}, "LemmaA"), ({"g": "L1b"}, "LemmaB")],
+    }
+    result = solve_goal_graph(
+        {"g": "root"}, root_prop="Thm",
+        decomposer=StubDecomposer(table),
+        backend=ThreadPoolBackend(max_workers=2),
+        lemma_library=lib,
+        runner=_stub_runner_for(cstate, cmeta), timeout_s=5.0,
+        parent_state=pstate, parent_meta=pmeta,
+    )
+    assert result.solved is True
+    assert result.proof_tree is not None
+    assert len(result.ranked_proofs) == 1
+    r0 = result.ranked_proofs[0]
+    assert r0.tree is result.proof_tree
+    assert r0.weight == 1.0
+
+
+def test_orchestrator_top_k_when_multiple_candidates_ranks_via_worldline_pi(
+    lib, child_state_meta, parent_state_meta,
+):
+    """``n_top_k > 1`` is plumbed at the API surface. Multi-candidate
+    generation requires revision-tracking and is deferred per
+    EXTENSIONS.md A.3; the surface still returns a sorted ``ranked_proofs``
+    list (currently size 1) so downstream callers depend only on the
+    invariant ``ranked_proofs`` is non-empty + sorted by weight descending
+    on success."""
+    cstate, cmeta = child_state_meta
+    pstate, pmeta = parent_state_meta
+    table = {"Thm": [({"g": "ind"}, "LemmaA")]}
+    result = solve_goal_graph(
+        {"g": "root"}, root_prop="Thm",
+        decomposer=StubDecomposer(table),
+        backend=ThreadPoolBackend(max_workers=1),
+        lemma_library=lib,
+        runner=_stub_runner_for(cstate, cmeta), timeout_s=5.0,
+        parent_state=pstate, parent_meta=pmeta,
+        n_top_k=3,
+        ranking_temperature=0.5,
+    )
+    assert result.solved is True
+    assert len(result.ranked_proofs) >= 1
+    # Sorted by weight descending.
+    weights = [r.weight for r in result.ranked_proofs]
+    assert weights == sorted(weights, reverse=True)
+    # And every ranking is computed via bayesian_rank_proofs (action +
+    # weight populated, weight in [0, 1], action is the §12.16 action).
+    from src.qft_pcn.composition.worldline_pi import (
+        ProofRanking, compute_action,
+    )
+    for r in result.ranked_proofs:
+        assert isinstance(r, ProofRanking)
+        assert 0.0 <= r.weight <= 1.0
+        assert math.isclose(r.action, compute_action(r.tree),
+                            rel_tol=1e-9, abs_tol=1e-12)
+
+
+def test_orchestrator_rejects_n_top_k_below_one(
+    lib, child_state_meta, parent_state_meta,
+):
+    """``n_top_k < 1`` is nonsense (the top-k surface ranks at least one
+    proof); the API surfaces a ValueError instead of silently coercing."""
+    cstate, cmeta = child_state_meta
+    pstate, pmeta = parent_state_meta
+    with pytest.raises(ValueError):
+        solve_goal_graph(
+            {"g": "root"}, root_prop="Thm",
+            decomposer=StubDecomposer({"Thm": []}),
+            backend=ThreadPoolBackend(max_workers=1),
+            lemma_library=lib,
+            runner=_stub_runner_for(cstate, cmeta), timeout_s=2.0,
+            parent_state=pstate, parent_meta=pmeta,
+            n_top_k=0,
+        )

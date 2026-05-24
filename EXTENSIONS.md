@@ -876,22 +876,47 @@ already perf-optimized through the M3 perf path
   this; deferred per `memory/no-placeholders.md` with this entry as
   the tracked gap.
 
-## Missing dependency: §12.16 bond-entanglement action term + §10.10 orchestrator integration
+## RESOLVED (partial) — A.3: §12.16 bond-entanglement action + orchestrator top-k
 
-- Where: `src/qft_pcn/composition/worldline_pi.py::compute_action` at
-  commit ae6aec4 uses S = sum(residual) + alpha*complexity + beta*depth.
-  Spec §12.16 also calls for a bond-entanglement contribution (path's
-  total entanglement is a fitness signal).
-- Need:
-  - `ProofTreeNode.bond_entanglement: float` populated by
-    `extract_proof_tree` from substrate state's Schmidt spectrum.
-  - `bayesian_rank_proofs` wired into §10.10 orchestrator's top-k output.
+- Resolved at: `src/qft_pcn/composition/worldline_pi.py::compute_action`
+  + `goal_graph.ProofTreeNode` + `orchestrator.solve_goal_graph`.
+- Landed:
+  - `ProofTreeNode.bond_entanglement: float = 0.0` carries Schmidt-
+    spectrum von-Neumann entropy across a canonical mid-network cut
+    (`cut = N // 2 - 1`), populated by `extract_proof_tree` via
+    `goal_graph._bond_entanglement_of` reading
+    `n.result.ground_state.entanglement_entropy(cut)`. Synthetic
+    `_JointResult` internal nodes contribute zero (no substrate state,
+    by design).
+  - `compute_action` adds `gamma * sum(bond_entanglement)` over the
+    proof tree (default `gamma=1.0`); provably zero when `gamma=0`,
+    scales linearly with gamma at fixed topology, nonnegative for
+    nonnegative gamma. Verified by
+    `test_compute_action_includes_bond_entanglement`.
+  - `bayesian_rank_proofs(..., gamma=1.0)` forwards to `compute_action`.
+  - Orchestrator: `solve_goal_graph(..., n_top_k=1,
+    ranking_temperature=1.0)` plumbed. `SolveResult.ranked_proofs:
+    tuple[ProofRanking, ...]` populated via `bayesian_rank_proofs` on
+    success (single-element list when one proof is produced; weight
+    1.0). `n_top_k < 1` raises `ValueError`.
+- Remainder (deferred):
+  - Multi-candidate generation: producing >1 *distinct* solved proof
+    trees from a single `solve_goal_graph` call requires substantial
+    revision-tracking refactor (orchestrator currently returns the
+    first solved decomposition; near-misses are logged but not retained
+    as ProofTrees). The API surface is ready: callers can pass
+    `n_top_k > 1` today and receive a single-element `ranked_proofs`
+    list — once near-miss tree retention lands, the list will grow
+    without any caller change. Approach: snapshot each `_JointResult`
+    at revision boundary into a candidate ProofTree, retain top-k by
+    partial-action lower bound, surface in `SolveResult.ranked_proofs`.
   - Spec §12.16 acceptance test: correlation >= 0.7 between bayesian
-    ranking and mathematician-preferred proofs on a corpus.
-- Workaround: unit-test landing at commit ae6aec4 covers the action-
-  functional + softmax surface; integration with orchestrator + corpus
-  test deferred.
-- Unblocks: §12.16 production acceptance.
+    ranking and mathematician-preferred proofs on a corpus (requires
+    a curated mathematician-preference corpus that does not yet exist).
+- Unblocks (now): downstream consumers can rely on
+  `SolveResult.ranked_proofs` + `ProofRanking.action/weight` surfaces
+  unconditionally.
+- Unblocks (after remainder): §12.16 production acceptance.
 
 ## RESOLVED: §12.2 real Jones polynomial / Kauffman-bracket evaluation (A.5)
 

@@ -44,6 +44,7 @@ from .goal_graph import (
     expand_node,
     extract_proof_tree,
 )
+from .worldline_pi import ProofRanking, bayesian_rank_proofs
 
 MAX_REVISIONS = 3   # spec §6.5
 
@@ -54,11 +55,20 @@ class SolveResult:
 
     Exactly one of ``proof_tree`` / ``failure_report`` is non-None. The
     invariant is enforced by construction in :func:`solve_goal_graph`.
+
+    ``ranked_proofs`` is the §12.16 Bayesian-ranked list of candidate
+    proofs (Boltzmann-weighted by ``exp(-S/T)``). When the orchestrator
+    is called with ``n_top_k == 1`` (default) the list contains the
+    single solved :class:`ProofTree` (weight ``1.0``) if any; on failure
+    it is empty. ``n_top_k > 1`` is plumbed at the API surface; producing
+    multiple distinct candidate proofs from a single solve requires
+    additional revision-tracking and is deferred (see EXTENSIONS.md A.3).
     """
     solved: bool
     proof_tree: "ProofTree | None"
     failure_report: dict | None
     final_free_energy: float
+    ranked_proofs: tuple[ProofRanking, ...] = ()
 
 
 class _JointResult:
@@ -103,6 +113,8 @@ def solve_goal_graph(
     runner=None,
     timeout_s: float,
     on_step=None,
+    n_top_k: int = 1,
+    ranking_temperature: float = 1.0,
 ) -> SolveResult:
     """Drive the goal graph to a verified proof tree or a structured failure
     report. The schedule orders the frontier with a structural fan-out proxy
@@ -133,6 +145,17 @@ def solve_goal_graph(
         Optional callback invoked with the current ``F_hierarchy`` after
         every integration step. Callers verify the §9.5 monotonicity
         invariant by inspecting the recorded values.
+    n_top_k:
+        Number of candidate proofs to surface via Bayesian ranking
+        (spec §12.16). The default ``1`` preserves prior behaviour:
+        ``ranked_proofs`` carries the single solved proof at weight 1.0.
+        ``n_top_k > 1`` is plumbed at the API surface but currently still
+        yields the single solved tree — multi-candidate generation via
+        revision-tracking is deferred (EXTENSIONS.md A.3 remainder).
+    ranking_temperature:
+        Boltzmann temperature ``T`` forwarded to
+        :func:`composition.worldline_pi.bayesian_rank_proofs`. Only takes
+        effect when more than one candidate is surfaced.
     parent_state, parent_meta:
         The parent QPCN's MERA state + encoding meta -- REQUIRED. The
         integrator clamps each converged child's lemma onto
@@ -167,6 +190,11 @@ def solve_goal_graph(
             "solve_goal_graph requires a parent workspace: "
             "parent_state and parent_meta must both be non-None "
             "(§6.1 / §8.6 clamp is the orchestrator's load-bearing step)"
+        )
+    if n_top_k < 1:
+        raise ValueError(
+            f"n_top_k must be >= 1 (the §12.16 top-k surface ranks at least "
+            f"one proof); got n_top_k={n_top_k!r}"
         )
 
     runner = runner or run_child
@@ -338,11 +366,23 @@ def solve_goal_graph(
         # assertion turns it into a typed GoalGraphError rather than a
         # silent corrupt proof tree.
         assert_acyclic(root)
+        proof_tree = extract_proof_tree(root)
+        # §12.16 Bayesian ranking surface. With a single candidate the
+        # ranking is trivially (proof_tree, weight=1.0) regardless of T.
+        # Multi-candidate generation (n_top_k > 1) requires revision-
+        # tracking and is deferred per EXTENSIONS.md A.3; we still
+        # populate ``ranked_proofs`` so downstream callers can rely on
+        # the API surface unconditionally.
+        candidates = [proof_tree]
+        ranked = tuple(
+            bayesian_rank_proofs(candidates, T=ranking_temperature)
+        )
         return SolveResult(
             solved=True,
-            proof_tree=extract_proof_tree(root),
+            proof_tree=proof_tree,
             failure_report=None,
             final_free_energy=f_final,
+            ranked_proofs=ranked,
         )
     return SolveResult(
         solved=False,
