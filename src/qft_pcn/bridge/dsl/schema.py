@@ -26,9 +26,10 @@ SCHEMA: dict[str, Any] = {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "title": "QPCN Bridge DSL",
     "type": "object",
-    "required": ["fields", "sites", "constraints", "observables"],
+    "required": ["version", "fields", "sites", "constraints", "observables"],
     "additionalProperties": False,
     "properties": {
+        "version": {"const": "1"},
         "fields": {
             "type": "array", "minItems": 1,
             "items": {
