@@ -12,6 +12,21 @@ import numpy as np
 
 from src.qft_pcn.logic.mera_encoder import MeraEncodingMeta
 
+# FINGERPRINT_DIM: §4.3 truncation parameter for the leaf-bond Gram
+# spectrum. ``structural_fingerprint`` computes the eigenvalues of the
+# leaf-Gram matrix (``G[i,j] = <v_i|v_j>`` over leaf vectors), sorts
+# them in descending magnitude, and pads/truncates to this length. The
+# value 32 is calibrated against M1 leaf counts: the M1 encoder
+# (``logic.mera_encoder.encode_mera``) produces MERAs with leaf counts
+# bounded above by the AST node count, which for the M1 acceptance
+# corpus rarely exceeds 16. A 32-dim ceiling gives headroom for M2/M3
+# multi-statement programs (leaf count scales with statement count via
+# the §5 leaf-bond fusion) while keeping the fingerprint vector small
+# enough that the §12.18 library covariance ``C`` (FINGERPRINT_DIM x
+# FINGERPRINT_DIM) diagonalizes in microseconds. If a future encoder
+# generates programs with >32 leaves, increasing this constant is the
+# correct knob -- the §4.3 distance metric and the §10.8 index are
+# both length-agnostic.
 FINGERPRINT_DIM = 32
 
 
