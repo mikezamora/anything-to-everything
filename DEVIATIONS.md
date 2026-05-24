@@ -343,3 +343,17 @@ already catalogued in `EXTENSIONS.md` are not re-listed here.
   primitives as "core". The deferred proper `tier` field on `Lemma` is
   now recorded in `EXTENSIONS.md`.
 - Audit source: §10
+
+### D29 — §10.11 spec mandates `composition/demo_hierarchical_proof.py` — RESOLVED
+- Location: `src/qft_pcn/composition/demo_hierarchical_proof.py` (now
+  present); load-bearing acceptance remains
+  `src/qft_pcn/composition/tests/test_hierarchical_proof_demo.py`
+- Spec: §10.11 hierarchical proof composition demo (runnable module)
+- Resolution: a thin runnable wrapper imports the SAME substrate
+  plumbing (`_ast_theorem`, `_HierarchicalDecomposer`, `_runner`) from
+  the acceptance test and exposes a `run_demo()` entry point plus a
+  `__main__` block that prints a concise narrative report. No
+  duplication of the real-substrate logic — the wrapper re-uses the
+  test module's symbols verbatim. Runnable via
+  `python -m src.qft_pcn.composition.demo_hierarchical_proof`.
+- Audit source: §10.11 deviation sweep
