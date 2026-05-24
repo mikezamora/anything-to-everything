@@ -63,7 +63,7 @@ export const article: ArticleSpec = {
     {
       kind: 'prose',
       body: [
-        '**Why protected leaves matter for universal quantification.** The §1.1 architecture-soul directive is that variable binding *is* bond entanglement — never a classical name-lookup table. Protected leaves are the operational consequence of this directive when a binder is universal. If `x` is a free name in a closed term, classical evaluators substitute a value for it; the QPCN entangles its leaf positions and lets the rules act on the entangled superposition. For `forall x. P(x)`, the bound positions hold a uniform superposition over the entire type (here `Nat` truncated to bit-width B), and the bond entanglement encodes the constraint *every occurrence of `x` carries the same value across the superposition*. Without that entanglement, two occurrences of `x` would be independent, and the dynamics could collapse them to different values — `forall x. Eq x x` would become `forall x, y. Eq x y`, an entirely different (and false) claim.',
+        '**Why protected leaves matter for universal quantification.** The §8.1 architecture-soul directive is that variable binding *is* bond entanglement — never a classical name-lookup table. Protected leaves are the operational consequence of this directive when a binder is universal. If `x` is a free name in a closed term, classical evaluators substitute a value for it; the QPCN entangles its leaf positions and lets the rules act on the entangled superposition. For `forall x. P(x)`, the bound positions hold a uniform superposition over the entire type (here `Nat` truncated to bit-width B), and the bond entanglement encodes the constraint *every occurrence of `x` carries the same value across the superposition*. Without that entanglement, two occurrences of `x` would be independent, and the dynamics could collapse them to different values — `forall x. Eq x x` would become `forall x, y. Eq x y`, an entirely different (and false) claim.',
         'Protection enforces this by freezing the protected tensors against the dynamics. The rule projectors are still allowed to *match patterns containing* the protected positions (otherwise R-Eq-Refl could never fire on `Eq x x`), but they are not allowed to *modify* those positions. The combination — entangled superposition + bitwise freeze — is the QPCN\'s mechanism for honest universal quantification. The result is that any rule that succeeds on a protected term has succeeded on *every* instantiation of the bound variable simultaneously, which is exactly what universal quantification means. The "protected-leaf delta" trace in the panel is therefore not a diagnostic of the simulator\'s numerical health; it is a diagnostic of whether the proof is honest. A nonzero delta means the system has secretly weakened the claim, and the resulting normal form is not a proof of the original term.',
       ],
     },
@@ -87,7 +87,7 @@ export const article: ArticleSpec = {
           },
           {
             description:
-              'In the MPS encoding, each Var("x") leaf is represented as a uniform superposition over all naturals up to the bit-width B: |x_uniform> = (1/sqrt(2^B)) * sum_{n=0..2^B-1} |n>. The two protected positions hold this state; they are also entangled together (same x), which is the bond-entanglement encoding of variable binding from §1.1.',
+              'In the MPS encoding, each Var("x") leaf is represented as a uniform superposition over all naturals up to the bit-width B: |x_uniform> = (1/sqrt(2^B)) * sum_{n=0..2^B-1} |n>. The two protected positions hold this state; they are also entangled together (same x), which is the bond-entanglement encoding of variable binding from §8.1.',
             result: 'Each protected leaf holds |x_uniform>; the two are bond-entangled, encoding name equality.',
           },
           {
@@ -98,7 +98,7 @@ export const article: ArticleSpec = {
           },
           {
             description:
-              'Apply Stage 2: R-Eq-Refl. Pattern matches Eq(a, a) for syntactically identical a. The two Var("x") leaves are entangled and (by §1.1) represent the *same* x — they are syntactically identical in the protected encoding. The rule fires, rewriting Eq(Var("x"), Var("x")) to True. The protected leaves are released (no more occurrences) and the term is now Forall(x, Nat, True), the proof term.',
+              'Apply Stage 2: R-Eq-Refl. Pattern matches Eq(a, a) for syntactically identical a. The two Var("x") leaves are entangled and (by §8.1) represent the *same* x — they are syntactically identical in the protected encoding. The rule fires, rewriting Eq(Var("x"), Var("x")) to True. The protected leaves are released (no more occurrences) and the term is now Forall(x, Nat, True), the proof term.',
             result: 'After Stage 2: term = Forall(x, Nat, True). Protected-leaf check throughout: delta = 0 at every frame.',
             equationId: 'imag-time-evolution',
           },
