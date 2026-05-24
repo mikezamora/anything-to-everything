@@ -36,7 +36,7 @@ def test_search_runtime_mera_accepted():
 
 def test_search_runtime_invalid_rejects():
     spec = _minimal_v1().replace('"method": "imag_time"', '"method": "imag_time", "runtime": "tebd"')
-    with pytest.raises(BadSchemaError, match="runtime"):
+    with pytest.raises(BadSchemaError, match=r"not one of"):
         parse_and_validate(spec)
 
 
