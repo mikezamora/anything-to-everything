@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import os
 import re
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -28,6 +29,62 @@ from .dsl import validate as dsl_validate
 OLLAMA_URL = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
 
 _THINK_RE = re.compile(r"<think>.*?</think>\s*", re.DOTALL)
+
+_EXAMPLES_DIR = Path(__file__).resolve().parent / "llm_examples"
+
+
+def _load_few_shot() -> list[tuple[str, dict]]:
+    """Load the canonical few-shot example DSLs.
+
+    Returns list of (name, parsed-dict). Sorted for deterministic prompt
+    ordering."""
+    items = []
+    for path in sorted(_EXAMPLES_DIR.glob("*.json")):
+        items.append((path.stem, json.loads(path.read_text())))
+    return items
+
+
+def build_system_prompt() -> str:
+    """Build the §9.2 v1 DSL system prompt with inlined few-shot examples."""
+    preamble = (
+        "You are a translator from natural-language programming and proof "
+        "tasks into a JSON DSL consumed by the QPCN reasoning substrate. "
+        "Output ONLY a single JSON object — no prose, no markdown fences.\n"
+        "\n"
+        "Schema (v1):\n"
+        "  - version: \"1\" (required)\n"
+        "  - fields: list of {name, cutoff} per quantum species\n"
+        "  - sites: integer site count\n"
+        "  - boundary: {site_idx_str: {field_name: value}} clamps (optional)\n"
+        "  - constraints: list (see below)\n"
+        "  - observables: list of {site, field, op}\n"
+        "  - search: {method, runtime, steps, chi_max, dt}\n"
+        "  - decomposition: {children, execution} (optional, §10.10)\n"
+        "\n"
+        "Constraint kinds:\n"
+        "  - local: {kind, site, term, weight} — predicate over one site\n"
+        "  - two_site: {kind, sites, term, weight} — predicate over a pair\n"
+        "  - well_typed_subtree: {kind, root, weight} — §10.2 typing rules at root\n"
+        "  - example: {kind, input, output, weight} — input/output evaluation\n"
+        "  - vocabulary: {kind, primitives, weight} — restrict node_kind labels\n"
+        "  - use_lemma: {kind, lemma_id, sites, weight} — §10.8 cached lemma clamp\n"
+        "\n"
+        "Search runtime:\n"
+        "  - mera: hierarchical TEBD; pick for recursive / nested-scope tasks\n"
+        "  - mps: flat TEBD; pick for small or non-recursive tasks\n"
+        "\n"
+        "Observable ops: argmax | n | phi | pi | a | adag | identity\n"
+        "(argmax returns the dominant basis label — use it for AST decode.)\n"
+    )
+    examples = _load_few_shot()
+    few_shot = "\n\nExamples:\n\n" + "\n\n".join(
+        f"# {name}\n{json.dumps(spec, indent=2)}"
+        for name, spec in examples
+    )
+    return preamble + few_shot
+
+
+SYSTEM_PROMPT = build_system_prompt()
 
 
 def list_models() -> list[dict]:
@@ -40,22 +97,6 @@ def list_models() -> list[dict]:
 def _strip_think(text: str) -> str:
     return _THINK_RE.sub("", text).strip()
 
-
-def _system_prompt_for_dsl(schema: dict, examples: list[dict]) -> str:
-    ex_block = "\n\n".join(
-        f"Example {i + 1}:\n```json\n{json.dumps(ex, indent=2)}\n```"
-        for i, ex in enumerate(examples)
-    )
-    return (
-        "You are a QPCN DSL emitter. Given a problem in natural language, "
-        "you respond with ONLY a JSON object conforming to this schema:\n\n"
-        f"```json\n{json.dumps(schema, indent=2)}\n```\n\n"
-        "Do not include any prose, markdown, or explanation. Return raw JSON. "
-        "Use the cutoff field to bound the per-site Fock truncation (default 2). "
-        "Available hamiltonian term kinds: mass, kinetic, quartic, yukawa, "
-        "density, curvature_coupling. Available observable operators: n, phi, phi2.\n\n"
-        f"{ex_block}"
-    )
 
 
 def _attempt_generate_dsl(prompt: str, *, model: str, system: str) -> dict:
@@ -101,9 +142,11 @@ def generate_dsl(prompt: str, *, model: str, schema: dict,
     validation errors, asking the LLM to emit a corrected DSL. Retry up to
     `max_retries` additional times. Return the first success or the final
     failure dict (so callers always see the *last* raw/errors).
+
+    Note: `schema` and `examples` are accepted for API compatibility but the
+    §9.2 v1 schema and canonical few-shot examples are baked into SYSTEM_PROMPT.
     """
-    system = _system_prompt_for_dsl(schema, examples)
-    result = _attempt_generate_dsl(prompt, model=model, system=system)
+    result = _attempt_generate_dsl(prompt, model=model, system=SYSTEM_PROMPT)
     if "dsl" in result or max_retries <= 0:
         return result
 
@@ -116,7 +159,7 @@ def generate_dsl(prompt: str, *, model: str, schema: dict,
             "Emit a corrected DSL that satisfies the schema."
         )
         result = _attempt_generate_dsl(retry_prompt, model=model,
-                                       system=system)
+                                       system=SYSTEM_PROMPT)
         if "dsl" in result:
             return result
     return result
