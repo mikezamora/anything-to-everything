@@ -44,3 +44,9 @@ def test_search_runtime_default_mps_when_absent():
     # _minimal_v1 has no runtime; default fill should set runtime to 'mps'
     dsl = parse_and_validate(_minimal_v1())
     assert dsl["search"]["runtime"] == "mps"
+
+
+def test_observable_argmax_accepted():
+    spec = _minimal_v1().replace('"op": "n"', '"op": "argmax"')
+    dsl = parse_and_validate(spec)
+    assert dsl["observables"][0]["op"] == "argmax"

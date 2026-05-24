@@ -103,7 +103,7 @@ SCHEMA: dict[str, Any] = {
                     "site":  {"type": "integer", "minimum": 0},
                     "field": {"type": "string"},
                     "op":    {"enum": ["n", "phi", "pi", "a", "adag",
-                                       "identity"]},
+                                       "identity", "argmax"]},
                 },
             },
         },
