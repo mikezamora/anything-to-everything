@@ -87,10 +87,16 @@ class LemmaLibraryAdapter:
     library:
         The underlying file-backed :class:`LemmaLibrary` instance.
     tier_of_callable:
-        Optional callable ``(lemma_id) -> tier``. When ``None``, a primitive
-        registered with a non-empty ``use_log`` is classified ``"core"``,
-        and everything else is ``"dynamic"``. The use-log proxy is a
-        stand-in until a proper tier field lands on :class:`Lemma`.
+        Optional callable ``(lemma_id) -> tier``. When provided, it takes
+        precedence over both the explicit ``_tiers`` map and any heuristic.
+        When ``None``, :meth:`tier_of` consults the explicit ``_tiers`` map
+        (populated by :meth:`register` / :meth:`replace`) and falls back to
+        ``"dynamic"`` for unknown ids. Note: ``use_log`` is *not* a tier
+        signal — it carries provenance plus ``"replace:{old_id}"`` markers
+        for subsumed primitives, and conflating non-empty ``use_log`` with
+        "core" would misclassify replaced/subsumed entries (a §3.3
+        violation). A proper tier field on :class:`Lemma` is deferred; see
+        ``EXTENSIONS.md``.
 
     Attributes
     ----------

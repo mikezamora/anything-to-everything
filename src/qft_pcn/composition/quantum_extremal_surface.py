@@ -28,10 +28,24 @@ API
   region of a MERA state.
 - :func:`compute_geometric_rt_area` — classical RT minimum-cut bond
   count weighted by log(bond_dim); upper bound on QES.
-- :func:`find_minimum_complexity_proof` — rank candidate proof MERAs
-  by their QES area (smaller = simpler proof).
+- :func:`rank_completed_proofs_by_qes_area` — *post-hoc* ranking of
+  already-encoded candidate proof MERAs by their QES area (smaller =
+  simpler proof). This is operational but does NOT predict complexity
+  before search — see :func:`compute_qes_lower_bound`.
+- :func:`compute_qes_lower_bound` — *a-priori* lower bound on proof
+  complexity from the theorem state alone (no candidates needed). Used
+  as a search-budget gate. The bound is loose — the tight minimum over
+  all proof-MERA topologies is an EXTENSIONS item (see
+  ``EXTENSIONS.md``: "§12.12 full a-priori complexity bound").
 - :class:`ProofComplexityRanking` — structured result with per-candidate
   QES, RT-area upper bound, and chosen minimum.
+
+Honest scope (post §12.12 review): the post-hoc ranking is fully
+operational. The a-priori bound is *partially* implemented:
+:func:`compute_qes_lower_bound` returns a valid lower bound from the
+theorem encoding alone, but the bound may be slack compared to the
+exact minimum-complexity proof MERA's QES area. Tightening requires
+variational optimization over proof-MERA topologies (EXTENSIONS).
 
 Complexity: For a binary MERA on N=2^L leaves, the minimum-cut on the
 tree is computed by a single post-order recursion in O(N) bond visits.
@@ -339,11 +353,61 @@ class ProofComplexityRanking:
     sorted_by_complexity: tuple[str, ...]
 
 
-def find_minimum_complexity_proof(
+def compute_qes_lower_bound(theorem_state: MERA) -> float:
+    """A-priori lower bound on proof complexity from the theorem alone.
+
+    Per §12.12, the QES area on the theorem's encoding region gives a
+    holographic lower bound on the complexity of any proof state with
+    the same boundary support. This function takes ONLY the theorem (no
+    candidate proofs) and computes the QES on the canonical midpoint
+    bipartition of the theorem's MERA bulk.
+
+    The bound is valid (any proof MERA sharing the theorem's boundary
+    must support at least the theorem's boundary entanglement, hence
+    its QES on the same region is >= the theorem's QES — via subadditivity
+    of entanglement entropy under unitary boundary preparation). The
+    bound is generally *loose*: the tight bound is the minimum over all
+    proof-MERA topologies of their QES area, which requires variational
+    optimization (see ``EXTENSIONS.md`` "§12.12 full a-priori complexity
+    bound").
+
+    Use this as a search-budget gate: if a candidate proof's complexity
+    budget is below ``compute_qes_lower_bound(theorem)``, that budget
+    cannot support any valid proof — abort before search.
+
+    Parameters
+    ----------
+    theorem_state : MERA
+        The theorem's MERA encoding (BEFORE any proof attempt).
+
+    Returns
+    -------
+    float
+        QES-derived lower bound on proof complexity in nats, >= 0.
+    """
+    if not isinstance(theorem_state, MERA):
+        raise TypeError(
+            f"theorem_state must be MERA, got "
+            f"{type(theorem_state).__name__} (§1.1: real bulk geometry, "
+            f"not classical surrogate)")
+    N = theorem_state.N
+    # Canonical region: left half of the boundary (midpoint cut).
+    region = list(range(N // 2))
+    return compute_qes_complexity(theorem_state, region)
+
+
+def rank_completed_proofs_by_qes_area(
     theorem_state: MERA,
     candidates: Mapping[str, MERA],
 ) -> ProofComplexityRanking:
-    """Rank candidate proof MERAs by their QES area for the theorem region.
+    """Post-hoc ranking of already-completed candidate proof MERAs by QES area.
+
+    .. note::
+       This is **post-hoc** ranking — every candidate must already be a
+       fully-encoded proof MERA. For an **a-priori** lower bound on
+       complexity from the theorem alone (before any proof exists), see
+       :func:`compute_qes_lower_bound`.
+
 
     The "theorem region" is the canonical bipartition of the theorem
     state at the midpoint cut — leaves ``[0 .. N/2 - 1]``. Per §12.12,

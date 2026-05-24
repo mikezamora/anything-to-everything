@@ -25,7 +25,23 @@ class LLMReviser(Protocol):
     ) -> list[dict]: ...
 
 # Fixed catalogue of structural permutations the heuristic reviser cycles
-# through. Each entry rewrites the failed goal into a distinct decomposition.
+# through. Each entry rewrites the failed goal into a SUBSTRATE-distinct
+# decomposition (different parent_leaves footprint, different sub-goal count,
+# or different boundary content) -- NOT just a metadata tag. A pure-tag
+# rewrite (D8) leaves the downstream compiler with identical compilable
+# work, so retries fail identically; the FailedDecompositionCache cannot
+# guard. The current entries vary:
+#   * swap_induction_variable  -> single child, same footprint, perturbed
+#                                  boundary (records an explicit induction
+#                                  axis flip the compiler reads).
+#   * split_conjunction_other_way -> TWO children splitting the parent_leaves
+#                                    window in half (requires >= 2 leaves).
+#   * strengthen_induction_hypothesis -> single child, footprint widened by
+#                                        one fresh leaf (requires room to
+#                                        grow).
+# `HeuristicReviser.decompose` skips entries whose substrate precondition
+# does not hold for the failing node and signals exhaustion by returning
+# an empty list when nothing is feasible.
 _HEURISTIC_CATALOGUE = (
     "swap_induction_variable",
     "split_conjunction_other_way",
@@ -56,18 +72,90 @@ class HeuristicReviser:
         self._cursor: dict[str, int] = {}
 
     def decompose(self, node: Node) -> list[SubGoal]:
+        """Cycle through the catalogue, returning the first SUBSTRATE-feasible
+        permutation for this node. Returns ``[]`` when no remaining entry can
+        produce a substrate-different decomposition (caller treats this as
+        ``RevisionExhausted``).
+        """
         gid = node.goal.goal_id
         idx = self._cursor.get(gid, 0)
-        strategy = _HEURISTIC_CATALOGUE[idx % len(_HEURISTIC_CATALOGUE)]
-        self._cursor[gid] = idx + 1
-        spec = dict(node.goal.dsl_spec)
-        spec["revision_strategy"] = strategy
-        # Revision proposes a single replacement sub-goal; inherit the
-        # parent's leaf footprint so the integrator clamps onto the same
-        # window the original decomposition targeted.
-        return [make_sub_goal(spec, goal_prop=f"{node.goal.goal_prop}::{strategy}",
-                              boundary=node.goal.boundary,
-                              parent_leaves=node.goal.parent_leaves)]
+        for offset in range(len(_HEURISTIC_CATALOGUE)):
+            strategy = _HEURISTIC_CATALOGUE[
+                (idx + offset) % len(_HEURISTIC_CATALOGUE)
+            ]
+            alt = self._build(node, strategy)
+            if alt is not None:
+                self._cursor[gid] = idx + offset + 1
+                return alt
+        # No remaining catalogue entry is feasible -- exhausted.
+        self._cursor[gid] = idx + len(_HEURISTIC_CATALOGUE)
+        return []
+
+    def _build(self, node: Node, strategy: str) -> list[SubGoal] | None:
+        """Materialise ``strategy`` as a substrate-different decomposition.
+
+        Returns ``None`` when the strategy's substrate precondition fails
+        for this node (e.g., split needs >= 2 parent leaves). The cursor in
+        ``decompose`` then advances to the next catalogue entry.
+        """
+        base_prop = node.goal.goal_prop
+        leaves = node.goal.parent_leaves
+
+        if strategy == "swap_induction_variable":
+            # Single child, same footprint, but boundary records the
+            # explicit axis flip so the compiler sees a different problem.
+            spec = dict(node.goal.dsl_spec)
+            spec["induction_axis"] = "flipped"
+            boundary = dict(node.goal.boundary)
+            boundary["induction_axis"] = "flipped"
+            return [make_sub_goal(
+                spec,
+                goal_prop=f"{base_prop}::swap_induction_variable",
+                boundary=boundary,
+                parent_leaves=leaves,
+            )]
+
+        if strategy == "split_conjunction_other_way":
+            # Two children covering disjoint halves of the parent footprint.
+            # Substrate precondition: need at least 2 leaves to split.
+            if len(leaves) < 2:
+                return None
+            mid = len(leaves) // 2
+            left, right = leaves[:mid], leaves[mid:]
+            spec = dict(node.goal.dsl_spec)
+            return [
+                make_sub_goal(
+                    spec,
+                    goal_prop=f"{base_prop}::split_lhs",
+                    boundary=node.goal.boundary,
+                    parent_leaves=left,
+                ),
+                make_sub_goal(
+                    spec,
+                    goal_prop=f"{base_prop}::split_rhs",
+                    boundary=node.goal.boundary,
+                    parent_leaves=right,
+                ),
+            ]
+
+        if strategy == "strengthen_induction_hypothesis":
+            # Single child whose footprint is widened by one fresh leaf
+            # (next index after the current max). Substrate precondition:
+            # the existing footprint must be non-empty (we need a max to
+            # extend from).
+            if not leaves:
+                return None
+            extended = tuple(leaves) + (max(leaves) + 1,)
+            spec = dict(node.goal.dsl_spec)
+            return [make_sub_goal(
+                spec,
+                goal_prop=f"{base_prop}::strengthen_induction_hypothesis",
+                boundary=node.goal.boundary,
+                parent_leaves=extended,
+            )]
+
+        # Unknown strategy name -- treated as not feasible.
+        return None
 
 
 def revise(node: Node, *, llm: LLMReviser | None = None,
@@ -99,9 +187,16 @@ def revise(node: Node, *, llm: LLMReviser | None = None,
         if not cache.is_failed(node.goal.goal_id, alt):
             return alt
 
-    # heuristic fallback; skip known-dead decompositions
+    # heuristic fallback; skip known-dead decompositions and substrate-
+    # infeasible catalogue entries. ``decompose`` returns ``[]`` once the
+    # cursor has cycled the full catalogue without finding a feasible
+    # entry; the caller (Task 7) lifts that empty result into
+    # ``RevisionExhausted``.
+    alt: list[SubGoal] = []
     for _ in range(len(_HEURISTIC_CATALOGUE)):
         alt = reviser.decompose(node)
+        if not alt:
+            return []  # exhausted -- no remaining feasible variation
         if not cache.is_failed(node.goal.goal_id, alt):
             return alt
-    return alt  # exhausted: caller (Task 7) turns this into RevisionExhausted
+    return alt

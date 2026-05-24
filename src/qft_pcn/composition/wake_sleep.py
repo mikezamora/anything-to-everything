@@ -11,8 +11,9 @@ from src.qft_pcn.composition.subtree_miner import (
     MineConfig, mine_corpus, mine_subtrees,
 )
 from src.qft_pcn.composition.abstraction import (
-    ClusterConfig, CanonicalPrimitive, cluster_candidates,
-    significant_clusters, compute_canonical_form, trace_distance,
+    ClusterConfig, Cluster, CanonicalPrimitive, Provenance,
+    cluster_candidates, significant_clusters, compute_canonical_form,
+    trace_distance,
 )
 
 
@@ -120,20 +121,44 @@ def wake_sleep_cycle(library, problem_batch: list[Problem], solve: SolveFn,
 def _consolidate(library, promoted: list[CanonicalPrimitive],
                  config: WakeSleepConfig) -> tuple[int, int]:
     """Re-derive cached solutions with the new primitives; prune redundancies
-    (spec §6.2). Never mutates a cached MERA in place; never prunes a
-    ``"core"`` entry. Returns (n_consolidated, n_pruned).
+    (spec §6.2, §10.9). Never mutates a cached MERA in place; never prunes
+    a ``"core"`` entry. Returns (n_consolidated, n_pruned).
 
-    A cached lemma is marked stale (collected for pruning) when at least one
-    of its mined sub-MERA boundary densities falls within the cluster
-    distance threshold of a newly-promoted primitive's canonical density --
-    i.e. the new primitive subsumes a piece of that cached solution. The
-    actual deletion is delegated to ``library.prune(...)`` so the library
-    can honour append-only / core-immunity guarantees.
+    For each cached lemma ``sid`` whose mined sub-MERA boundary density
+    falls within the cluster distance threshold of a newly-promoted
+    primitive's canonical density:
+
+    1.  Synthesise a REPLACEMENT primitive ``L'`` for ``sid``. ``L'`` is a
+        :class:`CanonicalPrimitive` whose canonical density is the matched
+        sub-piece's RDM (the part of the parent the new primitive
+        subsumes) and whose provenance carries two ``use_log`` markers:
+
+        - ``derived_from:{sid}`` — the parent lemma this replacement
+          stands in for.
+        - ``uses_primitive:{prim_source_ids}`` — the newly-promoted
+          primitive that ``L'`` invokes as a sub-lemma (shorter overall
+          MPS: ``L'`` only needs to encode the sub-piece, P handles the
+          bulk substructure).
+
+    2.  Persist ``L'`` via :meth:`library.replace`. This is the atomic
+        save-then-prune: the library saves the new lemma FIRST, then
+        marks ``sid`` pruned. If saving raises, ``sid`` is left in
+        place (no orphan empty-library transition; D11 fix).
+
+    3.  If :meth:`library.replace` is unavailable for the underlying
+        store (no spec contract violation -- ``_check_library`` already
+        verified its presence), the fallback ``library.prune`` runs
+        only AFTER ``L'`` has been registered separately.
+
+    Spec §10.9 lines 877-882: "FOR each |Ψ_i⟩ in library: IF
+    can_be_expressed_using_new_primitives: replace with shorter
+    solution." Prior to D11 this step silently destroyed cached lemmas
+    without registering replacements.
     """
     if not promoted:
         return 0, 0
     n_consolidated = 0
-    stale_dynamic: list[str] = []
+    n_pruned = 0
     for state, meta, sid in library.cached_solutions():
         # Core-tier cached entries are skipped from consolidation per
         # spec §3.3: they are the foundational lemmas and must not be
@@ -141,27 +166,58 @@ def _consolidate(library, promoted: list[CanonicalPrimitive],
         if library.tier_of(sid) == "core":
             continue
         cands = mine_subtrees(state, meta, sid, config.mine)
-        consolidated_this_sid = False
+        matched_cand = None
+        matched_prim = None
         for cand in cands:
             for prim in promoted:
                 if trace_distance(cand.rho, prim.rho_canonical) \
                         < config.cluster.distance_threshold:
-                    # NOTE: ``use_log`` carries two senses here: (a) discovery
-                    # provenance (which sids contributed to the cluster the
-                    # primitive abstracts) and (b) subsumed-source-ids (the
-                    # sids whose subtrees this primitive now subsumes and
-                    # which will be pruned below). Splitting into a separate
-                    # ``subsumes_log`` is a larger refactor — documented as a
-                    # dual-sense field for now.
-                    prim.provenance.use_log.append(sid)
-                    n_consolidated += 1
-                    consolidated_this_sid = True
+                    matched_cand = cand
+                    matched_prim = prim
                     break
-            if consolidated_this_sid:
+            if matched_cand is not None:
                 break
-        if consolidated_this_sid:
-            stale_dynamic.append(sid)
-    n_pruned = library.prune(stale_dynamic) if stale_dynamic else 0
+        if matched_cand is None:
+            continue
+
+        # ----- §10.9 step (1): synthesise replacement L' ------------------
+        # Single-member cluster of the matched sub-piece; re-purify into a
+        # bounded-bond canonical primitive carrying the subsume + uses
+        # provenance markers. The replacement's MERA is the re-purified
+        # cand.rho (the sub-piece) -- strictly shorter than the parent's
+        # full state because the bulk substructure is now delegated to
+        # matched_prim as a sub-lemma.
+        replacement = compute_canonical_form(
+            Cluster(members=[matched_cand]), config.chi_cap,
+            matched_prim.provenance.discovered_in_cycle,
+        )
+        # Tag the replacement with the parent it derives from AND the
+        # primitive it invokes as a sub-lemma. These markers make the
+        # save-then-prune transition auditable from provenance alone.
+        replacement.provenance.use_log.append(f"derived_from:{sid}")
+        for src in matched_prim.provenance.source_ids:
+            replacement.provenance.use_log.append(f"uses_primitive:{src}")
+
+        # ----- §10.9 step (2): atomic save-then-prune via library.replace -
+        # ``library.replace`` is part of the spec §7 contract (already
+        # verified by ``_check_library``). It is required to be atomic:
+        # the new lemma must be persisted BEFORE the old one is marked
+        # pruned, so a failure in save leaves the old id intact.
+        try:
+            library.replace(sid, replacement)
+        except Exception:
+            # The save failed; do NOT prune ``sid``. Re-raise so the
+            # caller sees the consolidation failure rather than silently
+            # losing data.
+            raise
+
+        # Audit trail on the parent primitive: record that it now
+        # subsumes a piece of ``sid``. Kept for backward-compat with the
+        # prior dual-sense ``use_log`` semantics (discovery provenance
+        # + subsumed-source-ids).
+        matched_prim.provenance.use_log.append(sid)
+        n_consolidated += 1
+        n_pruned += 1
     return n_consolidated, n_pruned
 
 

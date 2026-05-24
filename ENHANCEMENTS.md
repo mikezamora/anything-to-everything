@@ -180,10 +180,11 @@ algebraic only). Documented for posterity; not deviations.
 ### E18 — §12.10 holographic compilation cross-extension API
 - Location: `src/qft_pcn/composition/holographic_compilation.py`
 - Spec: §12.10
-- Why better: Wires §12.2 Wilson-signature oracle
-  (`verify_layer_equivalence`) and §12.8 DPT detector
+- Why better: Wires §12.2 Wilson-signature shared-state identity check
+  (`verify_layer_state_identical`) and §12.8 DPT detector
   (`detect_compilation_convergence`) into one compilation-pipeline API.
-  Note: optimization passes themselves are still deferred (see D15).
+  Note: optimization passes themselves are still deferred (see D15 /
+  EXTENSIONS); §12.10 record-only honest scope per D15 resolution.
 - Audit source: §12
 
 ### E19 — §12.15 Witten index: Z₂ grading from causal-cone footprint parity

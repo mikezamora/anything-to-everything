@@ -230,6 +230,92 @@ def compute_free_energy(root: Node) -> float:
     return accuracy + complexity
 
 
+# --- §9.5 monotonicity enforcement -----------------------------------------
+
+# Default tolerance for F_hierarchy step-to-step comparison. The spec calls
+# the increase "a bug in the integrator"; a strictly positive epsilon absorbs
+# IEEE-754 noise on the per-step accuracy sum without papering over a real
+# inflation.
+F_MONOTONICITY_TOL = 1e-6
+
+
+class MonotonicityViolation(GoalGraphError):
+    """Raised when F_hierarchy strictly increases between two integration
+    steps beyond ``F_MONOTONICITY_TOL`` (spec §9.5, §13.5). A non-monotone
+    step is a bug in the integrator — see also DEVIATIONS.md D6.
+    """
+
+
+def make_monotonicity_tracker(
+    *,
+    strict: bool = True,
+    tol: float = F_MONOTONICITY_TOL,
+    sink=None,
+):
+    """Return an ``on_step``-shaped callable that enforces §9.5 monotonicity.
+
+    The returned callable accepts a single ``F`` argument (the current
+    ``compute_free_energy(root)`` value). On every invocation after the
+    first, it raises :class:`MonotonicityViolation` if
+    ``F_new > F_prev + tol``.
+
+    Parameters
+    ----------
+    strict:
+        Default ``True`` (assertion fires on violation). Production callers
+        that want the orchestrator to keep running through a non-monotone
+        step (e.g. for diagnostics replay) can pass ``strict=False`` to
+        downgrade to a record-only walker. The default is ON so silent
+        inflations cannot pass through tests.
+    tol:
+        Absolute tolerance; defaults to :data:`F_MONOTONICITY_TOL`.
+    sink:
+        Optional list-like ``append`` target — every observed ``F`` is
+        recorded, preserving the historical "callers verify by inspecting
+        the recorded values" contract from :func:`orchestrator.solve_goal_graph`.
+    """
+    history: list[float] = []
+
+    def _track(F: float) -> None:
+        if sink is not None:
+            sink.append(F)
+        history.append(float(F))
+        if len(history) >= 2:
+            prev, curr = history[-2], history[-1]
+            if curr > prev + tol:
+                if strict:
+                    raise MonotonicityViolation(
+                        f"F_hierarchy increased: step {len(history) - 2} "
+                        f"-> {len(history) - 1}: {prev!r} -> {curr!r} "
+                        f"(tol={tol!r}; §9.5 violation)"
+                    )
+                # strict=False: record only; caller assumes the diagnostic
+                # responsibility documented above.
+    return _track
+
+
+# --- §6.6 quarantine-aware completion --------------------------------------
+
+def all_solved(node: Node) -> bool:
+    """True iff every non-quarantined child of ``node`` is SOLVED.
+
+    Spec §6.6: "quarantine the failed sub-graph and continue exploring
+    alternatives in parallel". A quarantined child is an out-of-band
+    failure; it must not block the parent's completion when live siblings
+    cover the proof. The predicate uses the same ``not c.quarantined``
+    filter that the orchestrator's ``ready`` schedule uses, so the two
+    surfaces honour quarantine consistently (DEVIATIONS.md D9).
+
+    Returns ``False`` if ``node`` has no live children at all — a parent
+    whose every child is quarantined has no covering proof and must
+    revise. This matches the orchestrator's PENDING_REVISION fallback.
+    """
+    live = [c for c in node.children if not c.quarantined]
+    if not live:
+        return False
+    return all(c.status == Status.SOLVED for c in live)
+
+
 # --- proof tree (spec §4.6) ------------------------------------------------
 
 @dataclass(frozen=True)

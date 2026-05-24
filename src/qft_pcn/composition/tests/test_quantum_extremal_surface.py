@@ -19,7 +19,8 @@ from src.qft_pcn.composition.quantum_extremal_surface import (
     ProofComplexityRanking,
     compute_geometric_rt_area,
     compute_qes_complexity,
-    find_minimum_complexity_proof,
+    compute_qes_lower_bound,
+    rank_completed_proofs_by_qes_area,
 )
 from src.qft_pcn.composition.tests.conftest import basis_leaf, make_product_mera
 from src.qft_pcn.qft.mera import MERA
@@ -141,8 +142,8 @@ def test_qes_area_lower_bounds_complexity():
 # ---------------------------------------------------------------------------
 
 
-def test_find_minimum_complexity_proof_ranks_by_qes():
-    """``find_minimum_complexity_proof`` orders candidates by QES area
+def test_rank_completed_proofs_by_qes_area_ranks_by_qes():
+    """``rank_completed_proofs_by_qes_area`` orders candidates by QES area
     on the canonical midpoint region — the simpler proof has lower QES.
 
     Constructs three candidate proofs with controlled entanglement:
@@ -167,7 +168,7 @@ def test_find_minimum_complexity_proof_ranks_by_qes():
             (1.0 + 0.0j, [e2, e2, e2, e2]),
         ]).normalize(),
     }
-    ranking = find_minimum_complexity_proof(theorem, candidates)
+    ranking = rank_completed_proofs_by_qes_area(theorem, candidates)
     assert isinstance(ranking, ProofComplexityRanking)
     assert ranking.minimum == "simple", (
         f"product candidate must have minimum QES; "
@@ -207,7 +208,7 @@ def test_find_minimum_complexity_rejects_empty_candidates():
     leaves = [basis_leaf(k) for k in (0, 1, 2, 3)]
     state = make_product_mera(leaves)
     with pytest.raises(ValueError, match="non-empty"):
-        find_minimum_complexity_proof(state, {})
+        rank_completed_proofs_by_qes_area(state, {})
 
 
 def test_find_minimum_complexity_rejects_size_mismatch():
@@ -216,4 +217,78 @@ def test_find_minimum_complexity_rejects_size_mismatch():
     theorem = make_product_mera(leaves4)
     smaller = make_product_mera(leaves2)
     with pytest.raises(ValueError, match="boundary mismatch"):
-        find_minimum_complexity_proof(theorem, {"x": smaller})
+        rank_completed_proofs_by_qes_area(theorem, {"x": smaller})
+
+
+# ---------------------------------------------------------------------------
+# §12.12 — a-priori QES lower bound from theorem alone (D16 resolution)
+# ---------------------------------------------------------------------------
+
+
+def test_qes_lower_bound_under_optimal_proof_complexity():
+    """The a-priori QES lower bound (from the theorem encoding alone)
+    must not exceed the QES area of any constructed proof on the same
+    boundary — i.e. ``lower_bound <= A_QES(proof)`` for every candidate.
+
+    Per §12.12, ``compute_qes_lower_bound(theorem)`` is the holographic
+    lower bound on proof complexity computed BEFORE any proof search.
+    For this bound to be valid, every actually-constructed proof MERA
+    on the same boundary must have QES area >= the lower bound.
+
+    Construction: theorem = GHZ-like (|0000>+|1111>)/sqrt(2) → QES on
+    left half = ln 2. Build several candidate proof MERAs and verify
+    each one's QES on the same region is >= ln 2 - eps (the lower
+    bound is achieved by the theorem itself; harder proofs sit above).
+    """
+    d = 16
+    e0 = basis_leaf(0, d)
+    e1 = basis_leaf(1, d)
+    e2 = basis_leaf(2, d)
+    # Theorem with non-trivial encoding entanglement.
+    theorem = MERA.from_term_superposition([
+        (1.0 + 0.0j, [e0, e0, e0, e0]),
+        (1.0 + 0.0j, [e1, e1, e1, e1]),
+    ]).normalize()
+
+    # A-priori lower bound (from theorem alone, no proofs yet).
+    lb = compute_qes_lower_bound(theorem)
+    assert lb >= 0.0, f"lower bound must be >= 0; got {lb}"
+    assert lb == pytest.approx(np.log(2.0), rel=1e-6, abs=1e-6), (
+        f"theorem QES on midpoint should be ln 2; got {lb}")
+
+    # Construct candidate proofs with entanglement >= the theorem.
+    candidates = {
+        "matches_theorem": MERA.from_term_superposition([
+            (1.0 + 0.0j, [e0, e0, e0, e0]),
+            (1.0 + 0.0j, [e1, e1, e1, e1]),
+        ]).normalize(),
+        "richer": MERA.from_term_superposition([
+            (1.0 + 0.0j, [e0, e0, e0, e0]),
+            (1.0 + 0.0j, [e1, e1, e1, e1]),
+            (1.0 + 0.0j, [e2, e2, e2, e2]),
+        ]).normalize(),
+    }
+    region = [0, 1]
+    for cid, cstate in candidates.items():
+        cqes = compute_qes_complexity(cstate, region)
+        assert cqes >= lb - 1e-9, (
+            f"candidate {cid!r}: proof QES {cqes} below a-priori "
+            f"lower bound {lb} — bound invalid")
+
+
+def test_qes_lower_bound_rejects_non_mera():
+    """§1.1: a-priori bound is defined on the real MERA bulk."""
+    with pytest.raises(TypeError, match="real bulk geometry"):
+        compute_qes_lower_bound("not a MERA")
+
+
+def test_qes_lower_bound_product_theorem_is_zero():
+    """A product theorem has zero encoding entanglement → lower bound
+    is 0 (any proof is admissible). This is correct: the spec only
+    forbids proofs whose complexity is *below* the lower bound; zero
+    excludes nothing."""
+    leaves = [basis_leaf(k) for k in (0, 1, 2, 3)]
+    theorem = make_product_mera(leaves)
+    lb = compute_qes_lower_bound(theorem)
+    assert lb == pytest.approx(0.0, abs=1e-10), \
+        f"product theorem lower bound must be 0; got {lb}"

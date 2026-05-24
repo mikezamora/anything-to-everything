@@ -299,19 +299,16 @@ already catalogued in `EXTENSIONS.md` are not re-listed here.
   forbids the §1.6-violating inline AST typecheck); the residual gate
   carries the validation load until the deferred work lands.
 
-### D19 — `use_log` dual-sense field; adapter docstring describes dead heuristic
+### D19 — `use_log` dual-sense field; adapter docstring describes dead heuristic — RESOLVED
 - Location:
-  `src/qft_pcn/composition/lemma_library_adapter.py:90-94` (docstring
-  fallback); `src/qft_pcn/composition/wake_sleep.py:150-156` (TODO
-  marker)
+  `src/qft_pcn/composition/lemma_library_adapter.py:89-99` (docstring);
+  `src/qft_pcn/composition/wake_sleep.py:150-156` (TODO marker — now
+  tracked in EXTENSIONS.md)
 - Spec: §3.3 core-immunity
-- Issue: `use_log` carries provenance AND subsumed-source-ids /
-  `"replace:{old_id}"` markers. Adapter `_tiers` is populated
-  explicitly (all "dynamic"), so the use_log-based "core" heuristic in
-  the docstring is dead code. A future reader following the docstring
-  would misclassify subsumed/replaced primitives as "core" — a §3.3
-  violation in a single touch. TODO is in wake_sleep but not
-  EXTENSIONS.md.
-- Fix scope: small — split into two fields or delete the docstring
-  fallback paragraph; add EXTENSIONS entry if deferring.
+- Resolution: docstring rewritten to match actual logic — the explicit
+  `_tiers` map (or `tier_of_callable` override) is authoritative;
+  `use_log` is explicitly called out as NOT a tier signal because it
+  carries `"replace:{old_id}"` markers that would misclassify subsumed
+  primitives as "core". The deferred proper `tier` field on `Lemma` is
+  now recorded in `EXTENSIONS.md`.
 - Audit source: §10

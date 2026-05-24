@@ -37,6 +37,7 @@ from .goal_graph import (
     Node,
     ProofTree,
     Status,
+    all_solved,
     assert_acyclic,
     build_goal_graph,
     compute_free_energy,
@@ -164,6 +165,8 @@ def solve_goal_graph(
     n_top_k: int = 1,
     ranking_temperature: float = 1.0,
     provisional_energy_fn=None,
+    llm_reviser=None,
+    enforce_monotonicity: bool = True,
 ) -> SolveResult:
     """Drive the goal graph to a verified proof tree or a structured failure
     report. The schedule orders the frontier with a structural fan-out proxy
@@ -192,8 +195,17 @@ def solve_goal_graph(
         a non-converged ChildResult inside ``dispatch_siblings``.
     on_step:
         Optional callback invoked with the current ``F_hierarchy`` after
-        every integration step. Callers verify the §9.5 monotonicity
-        invariant by inspecting the recorded values.
+        every integration step. The orchestrator wraps this callback in a
+        :func:`goal_graph.make_monotonicity_tracker` that ENFORCES the
+        §9.5 invariant in-line (raises
+        :class:`goal_graph.MonotonicityViolation` on a strict increase
+        beyond ``F_MONOTONICITY_TOL``). The user callback still receives
+        every observed value.
+    enforce_monotonicity:
+        Default ``True`` (the §9.5 / §13.5 invariant is asserted in-line
+        and a violation raises). Production callers replaying a known
+        non-monotone trace for diagnostics can pass ``False`` to downgrade
+        to record-only; the on_step callback is still invoked.
     n_top_k:
         Number of candidate proofs to surface via Bayesian ranking
         (spec §12.16). The default ``1`` preserves prior behaviour:
@@ -205,6 +217,13 @@ def solve_goal_graph(
         Boltzmann temperature ``T`` forwarded to
         :func:`composition.worldline_pi.bayesian_rank_proofs`. Only takes
         effect when more than one candidate is surfaced.
+    llm_reviser:
+        Optional LLM-backed alternative-decomposition oracle conforming to
+        the :class:`revision.LLMReviser` Protocol (``suggest_decomposition``
+        returning ``[{"dsl_spec": ..., "goal_prop": ...}, ...]``). When
+        supplied, ``revision.revise`` consults it first on every
+        PENDING_REVISION; when ``None`` (default), the deterministic
+        ``HeuristicReviser`` catalogue is used. Resolves D4.
     parent_state, parent_meta:
         The parent QPCN's MERA state + encoding meta -- REQUIRED. The
         integrator clamps each converged child's lemma onto
@@ -247,6 +266,28 @@ def solve_goal_graph(
         )
 
     runner = runner or run_child
+
+    # D6 fix (§9.5 / §13.5): the spec calls a non-monotone step "a bug in
+    # the integrator". The orchestrator now WRAPS the caller's on_step in
+    # a monotonicity tracker that RAISES on violation by default. Production
+    # callers can disable enforcement via ``enforce_monotonicity=False``
+    # (the tracker still records and forwards to the user callback). The
+    # tracker forwards every observed F to the original on_step (if any),
+    # so the historical "callers verify by inspecting recorded values"
+    # contract is preserved.
+    from .goal_graph import make_monotonicity_tracker
+
+    _user_on_step = on_step
+    _f_sink: list[float] = []
+    _tracker = make_monotonicity_tracker(
+        strict=enforce_monotonicity, sink=_f_sink,
+    )
+
+    def on_step(F):  # noqa: F811 — intentional rebind
+        _tracker(F)
+        if _user_on_step is not None:
+            _user_on_step(F)
+
     root = build_goal_graph(root_spec, root_prop, decomposer)
     reviser, cache = HeuristicReviser(), FailedDecompositionCache()
 
@@ -332,10 +373,12 @@ def solve_goal_graph(
                             # Spec §6.6: quarantine a FAILED sub-graph so
                             # the rest of the proof can keep progressing.
                             c.quarantined = True
-                all_solved = all(
-                    c.status == Status.SOLVED for c in node.children
-                )
-                if all_solved:
+                # D9 fix (§6.6): all_solved skips quarantined siblings,
+                # matching the ``ready`` filter above. Without this, a
+                # quarantined branch immediately drops the parent into
+                # PENDING_REVISION even when live siblings cover the proof
+                # — collapsing the "explore in parallel" surface.
+                if all_solved(node):
                     node.status = Status.SOLVED
                     # The parent's residual is the joint of its children;
                     # an attribute-only namespace keeps the shape compatible
@@ -343,17 +386,21 @@ def solve_goal_graph(
                     # extract_proof_tree) without dragging in a heavier type.
                     # Every SOLVED child has a result attached (invariant of
                     # integrate_child); a strict assertion is preferred over
-                    # a silent fallback (anti-shortcut).
-                    for c in node.children:
+                    # a silent fallback (anti-shortcut). Quarantined children
+                    # are skipped per the §6.6 quarantine semantics.
+                    live_children = [
+                        c for c in node.children if not c.quarantined
+                    ]
+                    for c in live_children:
                         assert c.result is not None, (
                             f"SOLVED child {c.goal.goal_id} has no result"
                         )
                     node.result = _JointResult(
                         residual_energy=sum(
-                            c.result.residual_energy for c in node.children
+                            c.result.residual_energy for c in live_children
                         ),
                         solved_ast=tuple(
-                            c.result.solved_ast for c in node.children
+                            c.result.solved_ast for c in live_children
                         ),
                     )
                 else:
@@ -389,7 +436,13 @@ def solve_goal_graph(
                     goal_id=node.goal.goal_id,
                     attempts=node.revision_attempts,
                 )
-            alt = revise(node, reviser=reviser, cache=cache)
+            # D4: forward the optional LLM-backed reviser so the principled
+            # path in ``revision.revise`` is reachable from the orchestrator.
+            # When ``llm_reviser`` is None the heuristic catalogue is used,
+            # preserving prior behaviour exactly.
+            alt = revise(
+                node, llm=llm_reviser, reviser=reviser, cache=cache,
+            )
             cache.mark_failed(
                 node.goal.goal_id,
                 [c.goal for c in node.children],
