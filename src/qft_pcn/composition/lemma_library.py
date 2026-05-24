@@ -195,13 +195,33 @@ def load_bundle_npz(path) -> MeraTensorBundle:
 
 @dataclass(frozen=True)
 class Lemma:
-    """A cached proof object (spec §3.2)."""
+    """A cached proof object (spec §3.2).
+
+    ``tier`` is a string literal in
+    ``{"core", "dynamic", "primitive", "consolidated"}``:
+
+    * ``"core"`` — foundational lemma, immune to pruning per spec §3.3.
+    * ``"dynamic"`` — wake-phase solved problem; the default.
+    * ``"primitive"`` — sleep-phase :class:`CanonicalPrimitive` persisted by
+      :meth:`LemmaLibraryAdapter._save_primitive`; tensor-only abstraction
+      (spec §5.4). Filtered out of consolidation walks.
+    * ``"consolidated"`` — replacement ``L'`` produced by
+      :meth:`LemmaLibraryAdapter.replace` (D35). Inherits the parent
+      lemma's ``proposition_type`` and delegates bulk substructure to a
+      promoted primitive.
+
+    The field replaces the prior sidecar ``LemmaLibraryAdapter._tiers``
+    map (D19 EXTENSIONS resolution): the tier round-trips through
+    save/load on the underlying ``.npz`` so §3.3 core-immunity is
+    enforceable from the persisted record itself.
+    """
     lemma_id: str
     proposition_type: str
     mera_tensors: MeraTensorBundle
     encoding_meta: MeraEncodingMeta
     derivation: DerivationMetadata
     fingerprint: np.ndarray
+    tier: str = "dynamic"
 
 
 from typing import Callable
@@ -554,6 +574,7 @@ class LemmaLibrary:
             "meta_json": np.array(_meta_to_json(lemma.encoding_meta)),
             "deriv_json": np.array(json.dumps(asdict(lemma.derivation))),
             "proposition_type": np.array(lemma.proposition_type),
+            "tier": np.array(lemma.tier),
         }
         for i, v in enumerate(b.leaf_vectors):
             arrs[f"leaf_{i}"] = np.asarray(v)
@@ -597,6 +618,11 @@ class LemmaLibrary:
             top=np.asarray(z["top"]),
             layer_dims=tuple(int(x) for x in z["layer_dims"]),
         )
+        # ``tier`` was added with the D19 EXTENSIONS resolution. Old .npz
+        # files (pre-D19) lack the key; fall back to ``"dynamic"`` so
+        # legacy stores load without re-keying. ``z.files`` is the
+        # NpzFile's archive name list.
+        tier = str(z["tier"]) if "tier" in z.files else "dynamic"
         return Lemma(
             lemma_id=lemma_id,
             proposition_type=str(z["proposition_type"]),
@@ -604,6 +630,7 @@ class LemmaLibrary:
             encoding_meta=_meta_from_json(str(z["meta_json"])),
             derivation=_deriv_from_dict(json.loads(str(z["deriv_json"]))),
             fingerprint=np.asarray(z["fingerprint"]),
+            tier=tier,
         )
 
     def materialize(self, lemma_id: str) -> MERA:
@@ -708,6 +735,7 @@ class LemmaLibrary:
             encoding_meta=lem.encoding_meta,
             derivation=new_derivation,
             fingerprint=lem.fingerprint,
+            tier=lem.tier,
         )
         # Bypass save's "append-only no-op" guard by dropping then re-saving.
         path = self._path(lemma_id)
@@ -884,7 +912,8 @@ def _content_id(bundle: MeraTensorBundle, proposition_type: str,
 
 def register_lemma(library: LemmaLibrary, state, meta, hamiltonian,
                    derivation: DerivationMetadata,
-                   eps_register: float = 1e-8) -> RegistrationResult:
+                   eps_register: float = 1e-8,
+                   tier: str = "dynamic") -> RegistrationResult:
     """Validated registration (spec §4.5). Total: always returns a
     RegistrationResult, never throws for a bad candidate. Failures are
     appended to ``<library.root>/near_misses.log`` and surface via the
@@ -939,6 +968,6 @@ def register_lemma(library: LemmaLibrary, state, meta, hamiltonian,
     )
     lemma = Lemma(lemma_id=lemma_id, proposition_type=prop_type,
                   mera_tensors=bundle, encoding_meta=meta,
-                  derivation=derivation, fingerprint=fp)
+                  derivation=derivation, fingerprint=fp, tier=tier)
     library.save(lemma)
     return RegistrationResult(True, lemma_id, "ok")

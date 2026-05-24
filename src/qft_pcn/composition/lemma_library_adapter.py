@@ -133,15 +133,16 @@ class LemmaLibraryAdapter:
         The underlying file-backed :class:`LemmaLibrary` instance.
     tier_of_callable:
         Optional callable ``(lemma_id) -> tier``. When provided, it takes
-        precedence over both the explicit ``_tiers`` map and any heuristic.
-        When ``None``, :meth:`tier_of` consults the explicit ``_tiers`` map
-        (populated by :meth:`register` / :meth:`replace`) and falls back to
-        ``"dynamic"`` for unknown ids. Note: ``use_log`` is *not* a tier
+        precedence over the persisted :attr:`Lemma.tier` field. When
+        ``None``, :meth:`tier_of` loads the lemma and reads its ``tier``
+        field directly (populated at :meth:`register` / :meth:`replace`
+        time and round-tripped through the on-disk ``.npz``); unknown
+        ids default to ``"dynamic"``. Note: ``use_log`` is *not* a tier
         signal — it carries provenance plus ``"replace:{old_id}"`` markers
         for subsumed primitives, and conflating non-empty ``use_log`` with
         "core" would misclassify replaced/subsumed entries (a §3.3
-        violation). A proper tier field on :class:`Lemma` is deferred; see
-        ``EXTENSIONS.md``.
+        violation). D19 EXTENSIONS resolved: the sidecar ``_tiers`` dict
+        has been migrated to a first-class field on :class:`Lemma`.
 
     Attributes
     ----------
@@ -158,9 +159,11 @@ class LemmaLibraryAdapter:
     tier_of_callable: Callable[[str], str] | None = None
     replacements: dict[str, str] = field(default_factory=dict)
     pruned: set[str] = field(default_factory=set)
-    # Adapter-side tier map: populated as the orchestrator registers entries.
-    # Core entries are immune to pruning per spec §3.3.
-    _tiers: dict[str, str] = field(default_factory=dict)
+    # D19 EXTENSIONS resolved: the prior sidecar ``_tiers: dict[str, str]``
+    # has been migrated to a first-class ``tier`` field on :class:`Lemma`
+    # (round-tripped through the .npz). :meth:`tier_of` now reads
+    # ``lemma.tier`` directly; core-immunity (spec §3.3) is enforceable
+    # from the persisted record itself.
     # D32: spec §4.5 step 1 residual gate for primitive persistence.
     # ``_save_primitive`` rejects CanonicalPrimitive with
     # ``avg_trace_distance > eps_register``. Matches the default in
@@ -177,17 +180,16 @@ class LemmaLibraryAdapter:
         if isinstance(entry, CanonicalPrimitive):
             deriv = _primitive_deriv(entry)
             try:
-                lemma_id = self._save_primitive(entry, deriv)
+                # Tier "primitive" — distinct from "dynamic" so the
+                # consolidation walk can skip it (D26) without touching
+                # "core" semantics. Set at save time so it round-trips.
+                lemma_id = self._save_primitive(entry, deriv, tier="primitive")
             except PrimitiveResidualExceedsGate:
                 # D32: spec §4.5 gate rejection. Mirror register_lemma's
                 # ``RegistrationResult(accepted=False, ...)`` contract by
                 # returning None (no-op) instead of propagating; the near-
                 # miss is already logged inside _save_primitive.
                 return None
-            # Tag the primitive so cached_solutions filters it out (D26).
-            # Tier is "primitive" — distinct from "dynamic" so the
-            # consolidation walk can skip it without touching "core" semantics.
-            self._tiers[lemma_id] = "primitive"
             return lemma_id
 
         # Solved-problem triple.
@@ -198,14 +200,15 @@ class LemmaLibraryAdapter:
         state, meta, source_id = entry
         deriv = _solved_deriv(source_id)
         result = register_lemma(
-            self.library, state, meta, hamiltonian=None, derivation=deriv)
+            self.library, state, meta, hamiltonian=None, derivation=deriv,
+            tier="dynamic")
         if not result.accepted:
             return None
-        self._tiers[result.lemma_id] = "dynamic"
         return result.lemma_id
 
     def _save_primitive(self, primitive: CanonicalPrimitive,
-                        deriv: DerivationMetadata) -> str:
+                        deriv: DerivationMetadata,
+                        tier: str = "primitive") -> str:
         """Persist a CanonicalPrimitive's MERA as a Lemma. We bypass
         :func:`register_lemma` for primitives because they have no AST-level
         :class:`MeraEncodingMeta` (the abstract phase synthesises tensors,
@@ -262,7 +265,7 @@ class LemmaLibraryAdapter:
         )
         lemma = Lemma(lemma_id=lemma_id, proposition_type=prop_type,
                       mera_tensors=bundle, encoding_meta=meta,
-                      derivation=deriv, fingerprint=fp)
+                      derivation=deriv, fingerprint=fp, tier=tier)
         self.library.save(lemma)
         return lemma_id
 
@@ -291,9 +294,9 @@ class LemmaLibraryAdapter:
         for lemma_id in self.library.all_ids():
             if lemma_id in self.pruned:
                 continue
-            if self._tiers.get(lemma_id) in {"primitive", "induction"}:
-                continue
             lemma = self.library.load(lemma_id)
+            if lemma.tier in {"primitive", "induction"}:
+                continue
             if lemma.proposition_type.startswith("primitive:"):
                 continue
             state = self.library.materialize(lemma_id)
@@ -301,12 +304,15 @@ class LemmaLibraryAdapter:
         return out
 
     def tier_of(self, lemma_id: str) -> str:
-        """Return ``"core"`` or ``"dynamic"`` for a lemma id. Override via
-        the constructor's ``tier_of_callable`` if a richer tiering policy
-        is needed."""
+        """Return the tier label for a lemma id. Reads :attr:`Lemma.tier`
+        from the persisted record (D19 EXTENSIONS). Override via the
+        constructor's ``tier_of_callable`` if a richer tiering policy is
+        needed. Unknown ids (not yet saved) default to ``"dynamic"``."""
         if self.tier_of_callable is not None:
             return self.tier_of_callable(lemma_id)
-        return self._tiers.get(lemma_id, "dynamic")
+        if lemma_id not in self.library._manifest:
+            return "dynamic"
+        return self.library.load(lemma_id).tier
 
     def replace(self, old_id: str, new_primitive: CanonicalPrimitive) -> str:
         """Replace ``old_id`` with a consolidation replacement ``L'``:
@@ -349,9 +355,14 @@ class LemmaLibraryAdapter:
             "consolidated_in_cycle:"
             f"cycle-{new_primitive.provenance.discovered_in_cycle}")
 
-        parent_is_primitive_tier = (
-            self._tiers.get(old_id) in {"primitive", "induction"}
-        )
+        # D19: tier now lives on the Lemma record. Load it; if old_id is
+        # not in the manifest (unknown), treat it as non-primitive so the
+        # consolidated path runs and surfaces the missing-parent fallback.
+        try:
+            parent_tier = self.library.load(old_id).tier
+        except Exception:
+            parent_tier = "dynamic"
+        parent_is_primitive_tier = parent_tier in {"primitive", "induction"}
         if not parent_is_primitive_tier:
             try:
                 parent_lemma = self.library.load(old_id)
@@ -367,10 +378,6 @@ class LemmaLibraryAdapter:
                 # find_by_goal_id; this entry mirrors it for debug).
                 new_primitive.provenance.use_log.append(
                     f"inherited_source_run_id:{deriv.source_run_id}")
-                new_id = self._save_consolidated(
-                    new_primitive, deriv, parent_lemma)
-                self.replacements[old_id] = new_id
-                self.pruned.add(old_id)
                 # L' carries the parent's proposition_type and is tagged
                 # "consolidated" — NOT "primitive". Both §8 cache filters
                 # (cheapest_for_type's "primitive:" prefix skip) and the
@@ -378,7 +385,10 @@ class LemmaLibraryAdapter:
                 # treat consolidated lemmas as concrete: they are
                 # reachable to future cache hits AND eligible as parents
                 # in further consolidation (D35; depth > 1 restored).
-                self._tiers[new_id] = "consolidated"
+                new_id = self._save_consolidated(
+                    new_primitive, deriv, parent_lemma)
+                self.replacements[old_id] = new_id
+                self.pruned.add(old_id)
                 return new_id
 
         # Fallback: no concrete parent metadata to inherit. D37: even on
@@ -399,10 +409,9 @@ class LemmaLibraryAdapter:
             new_primitive.provenance.use_log.append(
                 f"inherited_source_run_id:{parent_run_id}")
             deriv = replace_dataclass(deriv, source_run_id=parent_run_id)
-        new_id = self._save_primitive(new_primitive, deriv)
+        new_id = self._save_primitive(new_primitive, deriv, tier="primitive")
         self.replacements[old_id] = new_id
         self.pruned.add(old_id)
-        self._tiers[new_id] = "primitive"
         return new_id
 
     def _save_consolidated(self, primitive: CanonicalPrimitive,
@@ -489,7 +498,8 @@ class LemmaLibraryAdapter:
         lemma = Lemma(lemma_id=lemma_id, proposition_type=prop_type,
                       mera_tensors=bundle,
                       encoding_meta=projected_meta,
-                      derivation=deriv, fingerprint=fp)
+                      derivation=deriv, fingerprint=fp,
+                      tier="consolidated")
         self.library.save(lemma)
         return lemma_id
 
