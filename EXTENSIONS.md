@@ -1422,6 +1422,23 @@ already perf-optimized through the M3 perf path
 
 ## DSL constraint gaps
 
+### Bridge MERA evolution routing (W4.T1)
+
+- **Status:** raises `NotImplementedError` when `search.runtime: "mera"` is
+  given an MPS state. The dispatch logic is wired in
+  `src/qft_pcn/bridge/runtime/evolution.py::evolve_for_search`; the
+  `qft.mera_evolution.evolve` substrate itself exists and is correct.
+- **Needed:** a coercion path (or explicit MERA-state construction) in the
+  bridge so that callers using flat-MPS representations can opt into MERA
+  evolution for recursive synthesis tasks (§10.4). Concretely:
+  construct a `MERA.from_mps(state)` initializer, or expose a
+  `build_mera_initial_state` factory in the bridge so `evolve_for_search`
+  receives a `MERA` instance when `runtime="mera"`.
+- **Affected presets:** `length-synthesis` (defaults to mera),
+  `peano_zero_axiom` (mera), `list-reverse-length`.
+- **Workaround (in tree):** `evolve_for_search(runtime="mera")` raises
+  `NotImplementedError` with a clear message rather than silently using MPS.
+
 ### `well_typed_subtree` first-cut (W3.T2)
 
 - **Status:** simplified projector — penalises typed-kind sites with `type == "unknown"`.

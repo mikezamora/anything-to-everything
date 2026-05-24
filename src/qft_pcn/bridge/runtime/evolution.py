@@ -1,7 +1,13 @@
-"""evolve_with_clamps — imag-time evolution with per-step boundary projection.
+"""Bridge evolution utilities.
 
-Reuses qft/evolution.py:trotter_step as-is; the only addition is the
-post-step clamp loop and an energy-per-step trace.
+Two public entry points:
+
+  evolve_with_clamps — imag-time evolution with per-step boundary projection.
+      Reuses qft/evolution.py:trotter_step as-is; the only addition is the
+      post-step clamp loop and an energy-per-step trace.
+
+  evolve_for_search — §2.6 routing wrapper that dispatches search.runtime
+      'mps' | 'mera' to the appropriate TEBD substrate.
 """
 
 from __future__ import annotations
@@ -39,6 +45,56 @@ def evolve_with_clamps(state: MPS, H: BridgeHamiltonian, *,
         hist.energy_per_step.append(float(energy(state, H)))
         hist.trunc_error_per_step.append(float(err if err is not None else 0.0))
     return hist
+
+
+def evolve_for_search(state, hamiltonian, *, runtime: str, steps: int,
+                      chi_max: int, dt: float, imaginary: bool = True):
+    """Route TEBD to the flat-MPS or MERA substrate based on §2.6 runtime.
+
+    Parameters
+    ----------
+    state:
+        MPS (for runtime='mps') or MERA (for runtime='mera') initial state.
+        Evolved in-place; the same object is returned so callers can compute
+        observables without keeping a separate reference.
+    hamiltonian:
+        A Hamiltonian compatible with the chosen substrate.
+    runtime:
+        'mps' — flat-MPS TEBD via qft.evolution.evolve.
+        'mera' — hierarchical TEBD via qft.mera_evolution.evolve.
+    steps, chi_max, dt, imaginary:
+        Forwarded verbatim to the substrate evolve() call.
+
+    Returns
+    -------
+    The evolved state (same object as `state`).
+
+    Raises
+    ------
+    ValueError  if runtime is not 'mps' or 'mera'.
+    NotImplementedError  if runtime='mera' but state is not a MERA instance
+        (the bridge does not coerce MPS to MERA; see EXTENSIONS.md).
+    """
+    if runtime == "mps":
+        from src.qft_pcn.qft.evolution import evolve
+        evolve(state, hamiltonian, dt=dt, steps=steps,
+               imaginary=imaginary, chi_max=chi_max)
+        return state
+    if runtime == "mera":
+        from src.qft_pcn.qft.mera import MERA
+        if not isinstance(state, MERA):
+            raise NotImplementedError(
+                "MERA evolution requires a MERA state; received "
+                f"{type(state).__name__!r}. The bridge does not coerce MPS to "
+                "MERA automatically; see EXTENSIONS.md (bridge MERA routing)."
+            )
+        from src.qft_pcn.qft.mera_evolution import evolve as mera_evolve
+        mera_evolve(state, hamiltonian, dt=dt, steps=steps,
+                    imaginary=imaginary, chi_max=chi_max)
+        return state
+    raise ValueError(
+        f"unknown search.runtime: {runtime!r} (must be 'mps' or 'mera')"
+    )
 
 
 def _single_site_local_step(state: MPS, H: BridgeHamiltonian,
