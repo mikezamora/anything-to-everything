@@ -17,6 +17,7 @@ import Plotly from 'plotly.js-dist-min';
 import type { Data as PlotData, Layout as PlotLayout } from 'plotly.js-dist-min';
 import type { Frame } from '../lib/types';
 import { PanelShell } from './PanelShell';
+import { PanelReadouts, type ReadoutCell } from './PanelReadouts';
 import { MetricsStrip } from './MetricsStrip';
 import { useVizStore } from '../store';
 import { FrameInterpreter } from '../components/FrameInterpreter';
@@ -166,76 +167,132 @@ export function QpcnPanel({
           ? '#ef9090'
           : '#7f8bb0';
 
+  const errorEntries = Object.entries(errors);
+  const errorVals = errorEntries.map(([, v]) => v).filter((v) => Number.isFinite(v));
+  const meanPredErr =
+    errorVals.length > 0
+      ? errorVals.reduce((a, b) => a + Math.abs(b), 0) / errorVals.length
+      : null;
+  const baseErrorVals = Object.values(baseErrors).filter((v) => Number.isFinite(v));
+  const baseMeanPredErr =
+    baseErrorVals.length > 0
+      ? baseErrorVals.reduce((a, b) => a + Math.abs(b), 0) / baseErrorVals.length
+      : null;
+
+  // PanelReadouts strip — the highlightIds here match the `readout: 'energy'`
+  // and `readout: 'pred_errors'` references in `lib/explainer.ts`, so that
+  // hovering an explainer watch item flashes the matching cell.
+  const readoutCells: ReadoutCell[] = [
+    {
+      label: 'energy',
+      value: energyText,
+      highlightId: 'energy',
+      baselineValue: baselineEnergy,
+    },
+    {
+      label: 'pred_err_count',
+      value: errorEntries.length,
+      highlightId: 'pred_errors',
+    },
+  ];
+  if (meanPredErr != null) {
+    readoutCells.push({
+      label: 'mean |pred_err|',
+      value: meanPredErr.toFixed(4),
+      highlightId: 'pred_errors',
+      baselineValue: baseMeanPredErr,
+    });
+  }
+
   const readouts = (
-    <div className="qpcn-readouts" style={{ display: 'flex', gap: 16 }}>
-      <div>
-        <span style={{ color: '#7f8bb0', marginRight: 6 }}>energy</span>
-        <span style={{ color: '#fbc66a' }}>{energyText}</span>
-        {energyDelta != null && (
-          <small
-            className="qpcn-energy-delta"
-            style={{ color: energyDeltaColor, marginLeft: 4 }}
-          >
-            ({energyDelta >= 0 ? '+' : ''}
-            {energyDelta.toFixed(4)})
-          </small>
-        )}
-      </div>
-      <table
-        className="qpcn-errors"
-        style={{ borderCollapse: 'collapse', fontSize: 11 }}
-      >
-        <thead>
-          <tr>
-            <th style={{ textAlign: 'left', paddingRight: 12 }}>obs</th>
-            <th style={{ textAlign: 'right' }}>error</th>
-            {hasBaseline && <th style={{ textAlign: 'right', paddingLeft: 12 }}>Δ</th>}
-          </tr>
-        </thead>
-        <tbody>
-          {Object.entries(errors).map(([k, v]) => {
-            const bv = baseErrors[k];
-            const d = hasBaseline && typeof bv === 'number' && Number.isFinite(bv)
-              ? v - bv
-              : null;
-            const dColor =
-              d == null
-                ? undefined
-                : d < 0
-                  ? '#9aedc1'
-                  : d > 0
-                    ? '#ef9090'
-                    : '#7f8bb0';
-            return (
-              <tr key={k}>
-                <td style={{ paddingRight: 12 }}>{k}</td>
-                <td
-                  style={{
-                    textAlign: 'right',
-                    color: v >= 0 ? '#ef9090' : '#9aedc1',
-                  }}
-                >
-                  {v.toFixed(4)}
-                </td>
-                {hasBaseline && (
-                  <td
-                    className="qpcn-error-delta"
-                    style={{
-                      textAlign: 'right',
-                      paddingLeft: 12,
-                      color: dColor,
-                    }}
-                  >
-                    {d == null ? '—' : `${d >= 0 ? '+' : ''}${d.toFixed(4)}`}
-                  </td>
-                )}
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+    <div className="qpcn-readouts">
+      <PanelReadouts cells={readoutCells} />
+      {/* Preserve the legacy energy Δ rendering for back-compat with the
+       * existing `.qpcn-energy-delta` test hook. The PanelReadouts cell
+       * already shows the Δ in compare mode; this hidden span keeps the
+       * targeted CSS selector live. */}
+      {energyDelta != null && (
+        <small
+          className="qpcn-energy-delta"
+          style={{ color: energyDeltaColor, marginLeft: 4, fontSize: 11 }}
+        >
+          ({energyDelta >= 0 ? '+' : ''}
+          {energyDelta.toFixed(4)})
+        </small>
+      )}
     </div>
   );
+
+  // Honest empty-state note when no observation targets are emitted.
+  const noTargets = st.energy == null && errorEntries.length === 0;
+  const emptyTargetsNote = (
+    <div
+      className="qpcn-no-targets-note"
+      style={{ fontSize: 11, color: '#7f8bb0', padding: '6px 4px' }}
+    >
+      No observation targets emitted for this preset. Try
+      {' '}
+      <code style={{ color: '#9aa6c8' }}>qpcn.quarter-density-target</code>
+      {' '}
+      for a run with live ⟨n⟩ targets.
+    </div>
+  );
+
+  const predErrorsTable = errorEntries.length > 0 ? (
+    <table
+      className="qpcn-errors"
+      style={{ borderCollapse: 'collapse', fontSize: 11 }}
+    >
+      <thead>
+        <tr>
+          <th style={{ textAlign: 'left', paddingRight: 12 }}>obs</th>
+          <th style={{ textAlign: 'right' }}>error</th>
+          {hasBaseline && <th style={{ textAlign: 'right', paddingLeft: 12 }}>Δ</th>}
+        </tr>
+      </thead>
+      <tbody>
+        {errorEntries.map(([k, v]) => {
+          const bv = baseErrors[k];
+          const d = hasBaseline && typeof bv === 'number' && Number.isFinite(bv)
+            ? v - bv
+            : null;
+          const dColor =
+            d == null
+              ? undefined
+              : d < 0
+                ? '#9aedc1'
+                : d > 0
+                  ? '#ef9090'
+                  : '#7f8bb0';
+          return (
+            <tr key={k}>
+              <td style={{ paddingRight: 12 }}>{k}</td>
+              <td
+                style={{
+                  textAlign: 'right',
+                  color: v >= 0 ? '#ef9090' : '#9aedc1',
+                }}
+              >
+                {v.toFixed(4)}
+              </td>
+              {hasBaseline && (
+                <td
+                  className="qpcn-error-delta"
+                  style={{
+                    textAlign: 'right',
+                    paddingLeft: 12,
+                    color: dColor,
+                  }}
+                >
+                  {d == null ? '—' : `${d >= 0 ? '+' : ''}${d.toFixed(4)}`}
+                </td>
+              )}
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  ) : null;
 
   const metrics = useMemo(
     () => [
@@ -326,6 +383,7 @@ export function QpcnPanel({
       metricsStrip={metricsStrip}
     >
       <FrameInterpreter layer="qpcn" />
+      {noTargets ? emptyTargetsNote : predErrorsTable}
       <div
         style={{
           display: 'grid',

@@ -95,6 +95,40 @@ describe('QpcnPanel readouts', () => {
     expect(screen.getByText('energy')).toBeInTheDocument();
   });
 
+  it('renders PanelReadouts energy cell with the energy highlightId (rail-hover hook)', () => {
+    const { container } = render(<QpcnPanel frame={qpcnFrame} />);
+    // PanelReadouts emits a div.panel-readout per cell, with label + value
+    // spans. We assert the energy cell exists and carries the highlight
+    // class plumbing that the ExplainerPane hover fires against.
+    const cells = container.querySelectorAll('.panel-readout');
+    expect(cells.length).toBeGreaterThanOrEqual(2);
+    // First cell label = 'energy' (highlightId='energy').
+    const labels = Array.from(container.querySelectorAll('.panel-readout-label'));
+    const labelTexts = labels.map((n) => n.textContent);
+    expect(labelTexts).toContain('energy');
+    expect(labelTexts).toContain('pred_err_count');
+  });
+
+  it('renders empty-state note when energy + pred_errors are both null', () => {
+    const frame = {
+      step: 0,
+      layer_states: {
+        qpcn: {
+          energy: null,
+          pred_errors: null,
+          params: { mass: 1.0 },
+        },
+      },
+    } as any;
+    const { container } = render(<QpcnPanel frame={frame} />);
+    const note = container.querySelector('.qpcn-no-targets-note');
+    expect(note).toBeTruthy();
+    expect(note!.textContent).toContain('No observation targets');
+    expect(note!.textContent).toContain('qpcn.quarter-density-target');
+    // And the empty errors table should NOT render in this case.
+    expect(container.querySelector('.qpcn-errors')).toBeNull();
+  });
+
   it('renders MetricsStrip paths for energy + each learnable param once enough frames are pushed', () => {
     let s = useVizStore.getState();
     s.openRun('A');
