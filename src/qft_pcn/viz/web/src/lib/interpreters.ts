@@ -66,7 +66,7 @@ export const INTERPRETERS: Record<string, Interpreter> = {
     const ents = st['entropies'];
     if (!Array.isArray(bd) || !Array.isArray(ents)) return null;
     const total = (ents as (number | null)[])
-      .reduce((a, v) => a + (v ?? 0), 0);
+      .reduce<number>((a, v) => a + (v ?? 0), 0);
     const chiMax = Math.max(...(bd as number[]));
     return { text: `Step ${step}: χ_max = ${chiMax}, total entanglement entropy = ${total.toFixed(3)} nats.`,
              citation: 'qft-mps' };
