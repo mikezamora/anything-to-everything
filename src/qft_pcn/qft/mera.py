@@ -920,15 +920,27 @@ class MERA:
         op_up = contract('Aab,abcd,Bcd->AB', w, op_pair_conj, w.conj())
         return op_up
 
-    def _layer0_inter_is_nontrivial(self) -> bool:
-        """True iff any ``inter_disentanglers[0][j]`` is non-identity.
+    def _layer0_any_nontrivial(self) -> bool:
+        """True iff any layer-0 disentangler (intra OR inter) is non-identity.
 
         Used by :meth:`local_expectation` and :meth:`two_site_expectation`
-        to route to the materialize-based exact path (D5 fix): the
-        single-pair ascending superoperator silently drops the inter-pair
-        disentangler, which is incorrect once :meth:`apply_two_site_gate`
-        has absorbed a non-identity gate at an odd-leaf boundary.
+        to route to the materialize-based exact path (D5 + D25 fix). Two
+        sister bugs share this guard:
+
+        * D5: the single-pair ascending superoperator silently drops the
+          INTER-pair disentangler from the causal cone.
+        * D25: ``two_site_expectation``'s odd-leaf branch ALSO silently
+          drops the layer-0 INTRA-pair disentanglers
+          (``disentanglers[0][j_inter]`` and ``disentanglers[0][j_inter+1]``)
+          from its 4-site fold. The in-code comment acknowledged the hole;
+          this guard now closes it.
+
+        After :meth:`apply_two_site_gate` either family may be non-identity,
+        so we route uniformly when EITHER is.
         """
+        for u in self.disentanglers[0]:
+            if not _is_identity_matrix(u):
+                return True
         for u in self.inter_disentanglers[0]:
             if not _is_identity_matrix(u):
                 return True
@@ -995,7 +1007,7 @@ class MERA:
             raise ValueError(f"op shape {op.shape}, expected ({d}, {d})")
         if self._superposition_terms is not None:
             return self._local_expectation_from_terms(leaf, op)
-        if self._layer0_inter_is_nontrivial():
+        if self._layer0_any_nontrivial():
             return self._local_expectation_via_materialize(leaf, op)
         op_layer = to_device(op)
         pos = leaf
@@ -1051,13 +1063,15 @@ class MERA:
             raise ValueError(
                 f"op shape {op.shape}, expected ({d * d}, {d * d})")
         op4 = to_device(op.reshape(d, d, d, d))   # (out_l, out_r, in_l, in_r)
-        # D5 fix: when layer-0 inter-pair disentanglers are non-identity
-        # the single-pair ascending path silently drops them from the
-        # causal cone. Route to materialize-based exact contraction;
-        # `_materialize` honest-fails (NotImplementedError) on layer-≥1
-        # non-identity, preserving the layer-0-only modification invariant.
+        # D5 + D25 fix: when ANY layer-0 disentangler (intra OR inter) is
+        # non-identity, both the single-pair ascending path (even leaf)
+        # and the inter-pair 4-site fold (odd leaf) silently drop layer-0
+        # disentanglers from the causal cone. Route to materialize-based
+        # exact contraction; `_materialize` honest-fails
+        # (NotImplementedError) on layer-≥1 non-identity, preserving the
+        # layer-0-only modification invariant.
         if (self._superposition_terms is None
-                and self._layer0_inter_is_nontrivial()):
+                and self._layer0_any_nontrivial()):
             return self._two_site_expectation_via_materialize(leaf, op)
         if leaf % 2 == 0:
             # Intra-pair: the gate acts on pair j = leaf // 2 of layer 0.

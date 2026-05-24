@@ -573,8 +573,8 @@ def test_ascend_one_layer_handles_non_identity_inter_pair():
     assert err < 1e-10, "SWAP is unitary; truncation should be ~0"
     # The inter-pair disentangler at layer 0, slot 0 (couples leaves
     # 1 and 2) is now non-identity.
-    assert m_swap._layer0_inter_is_nontrivial(), \
-        "test precondition: SWAP should have made layer-0 inter " \
+    assert m_swap._layer0_any_nontrivial(), \
+        "test precondition: SWAP should have made layer-0 disentanglers " \
         "non-identity"
     # n = diag(0, 1) projector on |1>. After SWAP on (1, 2):
     #   |0> |1> |0> |1>  -->  |0> |0> |1> |1>
@@ -599,6 +599,91 @@ def test_ascend_one_layer_handles_non_identity_inter_pair():
     assert abs(w_swap.real) < 1e-8, (
         f"SWAP'd MERA <n_1> via two-site = {w_swap}, expected 0 — "
         "D5 fold-fallback failed on intra-pair branch"
+    )
+
+
+# ---- D25: intra-pair fold guard (sister bug to D5) -----------------------
+
+
+def test_two_site_expectation_handles_non_identity_intra():
+    """D25 fix: ``two_site_expectation``'s odd-leaf branch silently dropped
+    the layer-0 INTRA-pair disentanglers ``disentanglers[0][j_inter]`` and
+    ``disentanglers[0][j_inter+1]`` from its 4-site fold (sister bug to
+    D5, which only covered inter-pair). After this fix, when ANY layer-0
+    disentangler is non-identity the call routes through
+    :meth:`_two_site_expectation_via_materialize`, which folds intra +
+    inter into a leaf-basis state and reads the operator honestly.
+
+    Construction:
+    (a) leaves |0,1,0,1>, 4-leaf MERA;
+    (b) apply CNOT_{0,1} (an EVEN-leaf gate -> writes a non-identity
+        INTRA disentangler at layer-0 slot 0; INTER stays identity);
+    (c) read an ODD-leaf two-site observable at leaves (1, 2). Pre-fix,
+        the odd-leaf branch ran the 4-site fold that ignored
+        ``disentanglers[0][0]`` and would return the unperturbed value;
+        post-fix the materialize fold sees the CNOT and returns the
+        true (perturbed) expectation.
+
+    Numeric check: with the initial product state |0,1,0,1>, applying
+    CNOT on (0, 1) flips leaf 1 conditionally on leaf 0. Leaf 0 = |0>
+    so CNOT acts as identity on this state — the state is unchanged.
+    To make the bug observable we instead start in a state where leaf 0
+    is in |+>: leaves |+,0,0,1>. CNOT_{0,1} on |+,0> produces the Bell
+    pair (|00>+|11>)/sqrt2 on (0, 1). Then ``two_site_expectation`` at
+    leaves (1, 2) of (n (x) I) — i.e. <n_1> — should be 1/2 (because
+    leaf 1 is now in the marginal mixed state diag(1/2, 1/2)). Pre-fix
+    the odd-leaf branch would have returned 0 (using the unperturbed
+    leaf-1 = |0>, hence <n_1> = 0).
+    """
+    from src.qft_pcn.qft.mera import MERA
+    psi_0 = np.array([1.0, 0.0], dtype=complex)
+    psi_1 = np.array([0.0, 1.0], dtype=complex)
+    psi_plus = np.array([1.0, 1.0], dtype=complex) / np.sqrt(2.0)
+    # 4-leaf product |+, 0, 0, 1>; pair 0 = (leaves 0, 1) is intra.
+    m_cnot = MERA.from_product([psi_plus, psi_0, psi_0, psi_1],
+                               chi_layer=4)
+    # CNOT on (leaf 0, leaf 1) — INTRA-pair, even leaf. Writes a
+    # non-identity disentanglers[0][0]; inter_disentanglers[0][*] stay
+    # identity.
+    CNOT = np.array([[1, 0, 0, 0],
+                     [0, 1, 0, 0],
+                     [0, 0, 0, 1],
+                     [0, 0, 1, 0]], dtype=complex)
+    err = m_cnot.apply_two_site_gate(leaf=0, gate=CNOT, chi_max=4)
+    assert err < 1e-10, "CNOT is unitary; truncation should be ~0"
+    # Precondition: layer-0 INTRA disentangler is non-identity, but
+    # INTER is still identity — exactly the regime D5 missed.
+    any_intra_nontrivial = any(
+        not np.allclose(u, np.eye(u.shape[0]))
+        for u in m_cnot.disentanglers[0]
+    )
+    all_inter_identity = all(
+        np.allclose(u, np.eye(u.shape[0]))
+        for u in m_cnot.inter_disentanglers[0]
+    )
+    assert any_intra_nontrivial, (
+        "test precondition: CNOT should write a non-identity intra "
+        "disentangler at layer 0"
+    )
+    assert all_inter_identity, (
+        "test precondition: even-leaf CNOT should NOT touch inter "
+        "disentanglers — this is the D25 regime"
+    )
+    assert m_cnot._layer0_any_nontrivial(), \
+        "guard must trigger on the intra-only nontrivial regime"
+    # n = diag(0, 1) acting on leaf 1 via two-site op (n (x) I) at
+    # leaves (1, 2) — this is the ODD-leaf branch that previously
+    # dropped disentanglers[0][0] from its 4-site fold.
+    n = np.array([[0.0, 0.0], [0.0, 1.0]], dtype=complex)
+    n_op_left = np.kron(n, np.eye(2, dtype=complex))    # (4, 4)
+    val = m_cnot.two_site_expectation(leaf=1, op=n_op_left)
+    # Expected: after CNOT |+, 0> = (|00>+|11>)/sqrt2, leaf-1 marginal
+    # is diag(1/2, 1/2) so <n_1> = 1/2. Pre-fix would return 0
+    # (silent intra drop -> unperturbed leaf 1 = |0>).
+    assert abs(val.real - 0.5) < 1e-8, (
+        f"D25 fix failed: two_site_expectation(leaf=1, n(x)I) = {val}, "
+        "expected 0.5; layer-0 INTRA disentangler still being dropped "
+        "from the odd-leaf 4-site fold"
     )
 
 
