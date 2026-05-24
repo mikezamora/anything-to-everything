@@ -101,6 +101,58 @@ class Hamiltonian:
             self._phi[s.name] = embed_op(phi_op(s.cutoff), i,
                                          self.species_dims)
 
+        # Parallel metadata enumeration of every active term contributing to
+        # local_op(site) and bond_op(site). Mirrors the structure of
+        # `_assemble_local` / `_assemble_bond` exactly; the op-construction
+        # logic above/below is untouched. Each entry is a dict:
+        #   {kind, species, site, coeff}
+        # where `kind` is one of:
+        #   'mass'     omega_k * n_k                 (one-site, single species)
+        #   'quartic'  s.quartic * n^2               (one-site, single species)
+        #   'source'   s.source * phi                (one-site, single species)
+        #   'density'  g_ab * n_a * n_b              (one-site, pair species)
+        #   'yukawa'   lambda_ab * phi_a * phi_b     (one-site, pair species)
+        #   'kinetic'  -t (a†_k a_{k+1} + h.c.)      (two-site, single species)
+        #   'curvature' xi * R(x_k) * omega_k * n_k  (one-site, single species)
+        #                                            (zero entries omitted)
+        # `site` is an int for one-site terms and a (k, k+1) tuple for
+        # bond/kinetic terms. `species` is a str for single-species terms
+        # and a (a, b) tuple for cross-species terms.
+        terms: list[dict] = []
+        for k in range(N):
+            R = float(self.curvature[k]) if k < len(self.curvature) else 0.0
+            mass_scale = 1.0 + cfg.curvature_xi * R
+            for s in cfg.species:
+                terms.append({"kind": "mass", "species": s.name,
+                              "site": k, "coeff": float(s.bare_mass * mass_scale)})
+                if cfg.curvature_xi != 0.0 and R != 0.0:
+                    terms.append({"kind": "curvature", "species": s.name,
+                                  "site": k,
+                                  "coeff": float(s.bare_mass
+                                                 * cfg.curvature_xi * R)})
+                if s.source != 0.0:
+                    terms.append({"kind": "source", "species": s.name,
+                                  "site": k, "coeff": float(s.source)})
+                if s.quartic != 0.0:
+                    terms.append({"kind": "quartic", "species": s.name,
+                                  "site": k, "coeff": float(s.quartic)})
+            for pair, g in cfg.density_couplings.items():
+                a, b = pair
+                terms.append({"kind": "density", "species": (a, b),
+                              "site": k, "coeff": float(g)})
+            for pair, lam in cfg.yukawa_couplings.items():
+                a, b = pair
+                terms.append({"kind": "yukawa", "species": (a, b),
+                              "site": k, "coeff": float(lam)})
+        for k in range(N - 1):
+            for s in cfg.species:
+                if s.kinetic == 0.0:
+                    continue
+                terms.append({"kind": "kinetic", "species": s.name,
+                              "site": (k, k + 1),
+                              "coeff": float(-s.kinetic)})
+        self.terms: list[dict] = terms
+
     # ---- operator accessors -----------------------------------------------
 
     def a(self, species: str) -> np.ndarray:

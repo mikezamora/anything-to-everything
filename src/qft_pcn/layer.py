@@ -191,3 +191,31 @@ class QFTPCNLayer:
         sqrt_g = self.manifold.sqrt_det_g()
         density = 0.5 * pi * e2 - 0.5 * np.log(pi) + kappa_R * ricci
         return float((density * sqrt_g).sum())
+
+    def kl_divergence(self, phi_below: np.ndarray) -> float:
+        """KL contribution of this layer's belief against its prior.
+
+        The full per-layer free energy density (see ``free_energy``) is
+
+            f = 1/2 * Pi * |E|^2 - 1/2 * log Pi + kappa_R * R
+
+        The first two terms are the entropy-like view of the KL between
+        the precision-weighted Gaussian belief and the unit-precision
+        Gaussian prior (a constant offset of ``+1/2`` per pixel is dropped,
+        leaving a non-negative log-likelihood gap up to that shift). The
+        third term, ``kappa_R * R``, is the geometric *regulariser* over
+        the manifold and is NOT part of the belief/prior KL — it is the
+        curvature-coupling penalty added on top in the layer's free
+        energy. ``kl_divergence`` therefore returns only the first two
+        terms, integrated against ``sqrt(det g)``:
+
+            KL = sum_x [ 1/2 * Pi(x) * |E(x)|^2 - 1/2 * log Pi(x) ] * sqrt_g(x)
+
+        with ``E = phi_below - g(phi)`` matching ``free_energy``.
+        """
+        pi = self.precision.pi
+        e = phi_below - self.predict_below()
+        e2 = (e * e).mean(axis=0)
+        sqrt_g = self.manifold.sqrt_det_g()
+        density = -0.5 * np.log(pi) + 0.5 * pi * e2
+        return float((density * sqrt_g).sum())

@@ -21,6 +21,13 @@ import { PanelToolbar, type ToolbarItem } from './PanelToolbar';
 import { tex, diverging } from './common';
 import { FrameInterpreter } from '../components/FrameInterpreter';
 
+interface HamiltonianTerm {
+  kind: string;
+  species: string;
+  site: string;
+  coeff: number;
+}
+
 interface HamiltonianState {
   n_sites?: number | null;
   d_local?: number | null;
@@ -35,6 +42,7 @@ interface HamiltonianState {
   curvature_xi?: number | null;
   /** 1D per-site R(x_k); may legacy-render as 2D if older recordings exist. */
   curvature?: number[] | number[][] | number | null;
+  terms?: HamiltonianTerm[] | null;
 }
 
 /** 1D strip painting one cell per site, coloured by R(x_k) on the
@@ -343,6 +351,48 @@ export function HamiltonianPanel({
               />
             )}
           </div>
+        )}
+
+        {/* Active-terms enumeration (Hamiltonian.terms metadata). */}
+        {st.terms && st.terms.length > 0 && (
+          <table
+            data-testid="hamiltonian-active-terms"
+            style={{
+              fontSize: 10,
+              borderCollapse: 'collapse',
+              color: '#9aa6c8',
+            }}
+          >
+            <thead>
+              <tr style={{ color: '#7f8bb0' }}>
+                <th style={{ textAlign: 'left', padding: '2px 6px' }}>
+                  Active terms
+                </th>
+                <th style={{ textAlign: 'left', padding: '2px 6px' }}>site</th>
+                <th style={{ textAlign: 'left', padding: '2px 6px' }}>
+                  species
+                </th>
+                <th style={{ textAlign: 'right', padding: '2px 6px' }}>
+                  coeff
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {st.terms.map((t, i) => (
+                <tr key={i}>
+                  <td style={{ padding: '2px 6px' }}>{t.kind}</td>
+                  <td style={{ padding: '2px 6px' }}>{t.site}</td>
+                  <td style={{ padding: '2px 6px' }}>{t.species}</td>
+                  <td
+                    style={{ padding: '2px 6px', textAlign: 'right' }}
+                    title={String(t.coeff)}
+                  >
+                    {t.coeff.toFixed(3)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         )}
 
         {/* 1D per-site curvature strip aligned to the site axis */}

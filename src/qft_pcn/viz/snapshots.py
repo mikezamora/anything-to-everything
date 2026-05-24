@@ -259,6 +259,27 @@ def snapshot_hamiltonian(H: Any) -> dict:
     yukawa_couplings = _safe(lambda: _pair_dict(cfg.yukawa_couplings))
     curvature_xi = _safe(lambda: float(cfg.curvature_xi))
 
+    # Active-terms enumeration (Hamiltonian.terms). Each entry is a dict
+    # {kind, species, site, coeff} produced by the substrate; we stringify
+    # the species and site fields for JSON serialization.
+    def _terms_json() -> list[dict]:
+        out: list[dict] = []
+        for t in H.terms:
+            sp = t["species"]
+            sp_str = f"{sp[0]}|{sp[1]}" if isinstance(sp, tuple) else str(sp)
+            site = t["site"]
+            site_str = (f"{site[0]}-{site[1]}"
+                        if isinstance(site, tuple) else str(int(site)))
+            out.append({
+                "kind": str(t["kind"]),
+                "species": sp_str,
+                "site": site_str,
+                "coeff": float(t["coeff"]),
+            })
+        return out
+
+    terms_list = _safe(_terms_json) or []
+
     return {
         "n_sites": _safe(lambda: int(H.N)),
         "d_local": _safe(lambda: int(H.d_local)),
@@ -271,6 +292,7 @@ def snapshot_hamiltonian(H: Any) -> dict:
         # 1D per-site R(x_k), shape (N,). Honest representation: a strip,
         # not a 2D coupling matrix.
         "curvature": _safe(lambda: np.asarray(H.curvature).tolist()),
+        "terms": terms_list,
     }
 
 
@@ -629,6 +651,7 @@ def snapshot_pcn_dynamics(net: Any) -> dict:
     kappa_R = _safe(lambda: float(net.cfg.kappa_R))
 
     per_layer_F: list[float | None] = []
+    per_layer_kl: list[float | None] = []
     per_layer_e_norm: list[float | None] = []
     per_layer_pi_mean: list[float | None] = []
 
@@ -645,6 +668,10 @@ def snapshot_pcn_dynamics(net: Any) -> dict:
                       float(l.free_energy(b, kappa_R))) \
                 if below is not None else None
             per_layer_F.append(f)
+            kl = _safe(lambda l=layer, b=below:
+                       float(l.kl_divergence(b))) \
+                if below is not None else None
+            per_layer_kl.append(kl)
             per_layer_e_norm.append(_safe(
                 lambda l=layer: float(np.linalg.norm(l.error.values))))
             per_layer_pi_mean.append(_safe(
@@ -658,6 +685,7 @@ def snapshot_pcn_dynamics(net: Any) -> dict:
     return {
         "total_free_energy": total_F,
         "per_layer_free_energy": per_layer_F,
+        "per_layer_kl": per_layer_kl,
         "per_layer_e_norm": per_layer_e_norm,
         "per_layer_pi_mean": per_layer_pi_mean,
         "n_layers": len(layers),

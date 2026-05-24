@@ -112,6 +112,11 @@ export const hamiltonianFrame: Frame = {
       curvature_xi: 0.4,
       // 1D per-site R(x_k) — NOT a 2D matrix per §3.3.4.
       curvature: [0.0, 0.2, -0.1, 0.05],
+      terms: [
+        { kind: 'mass', species: 'scalar', site: '0', coeff: 1.2 },
+        { kind: 'yukawa', species: 'gauge|scalar', site: '0', coeff: -0.07 },
+        { kind: 'kinetic', species: 'scalar', site: '0-1', coeff: -0.5 },
+      ],
     },
   },
 };

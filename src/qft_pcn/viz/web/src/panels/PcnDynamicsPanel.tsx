@@ -1,9 +1,9 @@
 /**
  * PCN-Dynamics panel: total free energy F, per-layer F contributions,
- * per-layer ‖E‖₂ and mean Π. Time-series strip on total F.
+ * per-layer KL, ‖E‖₂ and mean Π. Time-series strip on total F.
  *
- * Per-layer KL decomposition deferred — substrate hook missing; see
- * EXTENSIONS.md anchor #pcn-layer-kl-divergence.
+ * Per-layer KL is the entropy-like portion of F (excludes the
+ * kappa_R * R geometric regulariser); see QFTPCNLayer.kl_divergence.
  */
 
 import type { Frame } from '../lib/types';
@@ -15,6 +15,7 @@ import { FrameInterpreter } from '../components/FrameInterpreter';
 interface PcnDynamicsState {
   total_free_energy?: number | null;
   per_layer_free_energy?: (number | null)[];
+  per_layer_kl?: (number | null)[];
   per_layer_e_norm?: (number | null)[];
   per_layer_pi_mean?: (number | null)[];
   n_layers?: number;
@@ -27,8 +28,10 @@ export function PcnDynamicsPanel({ frame, baselineFrame: _baselineFrame }: {
   const st = (frame.layer_states['pcn-dynamics'] ?? {}) as PcnDynamicsState;
   const totalF = st.total_free_energy;
   const perF = st.per_layer_free_energy ?? [];
+  const perKL = st.per_layer_kl ?? [];
   const perE = st.per_layer_e_norm ?? [];
   const perPi = st.per_layer_pi_mean ?? [];
+  const hasKL = perKL.some((v) => v != null);
   const hasData = perF.length > 0;
 
   return (
@@ -49,13 +52,16 @@ export function PcnDynamicsPanel({ frame, baselineFrame: _baselineFrame }: {
       <FrameInterpreter layer="pcn-dynamics" />
       <table className="pcn-dynamics-table">
         <thead><tr>
-          <th>layer</th><th>F</th><th>‖E‖₂</th><th>mean Π</th>
+          <th>layer</th><th>F</th>{hasKL && <th>KL</th>}<th>‖E‖₂</th><th>mean Π</th>
         </tr></thead>
         <tbody>
           {perF.map((f, i) => (
             <tr key={i}>
               <td>{i}</td>
               <td>{f != null ? f.toFixed(3) : '—'}</td>
+              {hasKL && (
+                <td>{perKL[i] != null ? perKL[i]!.toFixed(3) : '—'}</td>
+              )}
               <td>{perE[i] != null ? perE[i]!.toFixed(3) : '—'}</td>
               <td>{perPi[i] != null ? perPi[i]!.toFixed(3) : '—'}</td>
             </tr>
