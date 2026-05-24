@@ -1,0 +1,607 @@
+{
+  "spec_section": "\u00a713.5 expressivity wall \u2014 depth/breadth/\u03c7 sweep",
+  "extension_id": "E30",
+  "config": {
+    "breadths": [
+      2,
+      3,
+      4,
+      5,
+      6
+    ],
+    "depths": [
+      0,
+      1
+    ],
+    "chis": [
+      2,
+      3,
+      4,
+      6,
+      8
+    ],
+    "dt": 0.1,
+    "steps": 20,
+    "threshold": 0.01
+  },
+  "rows": [
+    {
+      "breadth": 2,
+      "depth": 0,
+      "chi": 2,
+      "residual": 0.0,
+      "accepted": true,
+      "refused": false,
+      "error_kind": "",
+      "error_message": "",
+      "seconds": 0.5774796009063721
+    },
+    {
+      "breadth": 2,
+      "depth": 0,
+      "chi": 3,
+      "residual": 0.0,
+      "accepted": true,
+      "refused": false,
+      "error_kind": "",
+      "error_message": "",
+      "seconds": 0.11460137367248535
+    },
+    {
+      "breadth": 2,
+      "depth": 0,
+      "chi": 4,
+      "residual": 0.0,
+      "accepted": true,
+      "refused": false,
+      "error_kind": "",
+      "error_message": "",
+      "seconds": 0.11105060577392578
+    },
+    {
+      "breadth": 2,
+      "depth": 0,
+      "chi": 6,
+      "residual": 0.0,
+      "accepted": true,
+      "refused": false,
+      "error_kind": "",
+      "error_message": "",
+      "seconds": 0.15609216690063477
+    },
+    {
+      "breadth": 2,
+      "depth": 0,
+      "chi": 8,
+      "residual": 0.0,
+      "accepted": true,
+      "refused": false,
+      "error_kind": "",
+      "error_message": "",
+      "seconds": 0.16087603569030762
+    },
+    {
+      "breadth": 2,
+      "depth": 1,
+      "chi": 2,
+      "residual": 0.0,
+      "accepted": true,
+      "refused": false,
+      "error_kind": "",
+      "error_message": "",
+      "seconds": 1.757685661315918
+    },
+    {
+      "breadth": 2,
+      "depth": 1,
+      "chi": 3,
+      "residual": 0.0,
+      "accepted": true,
+      "refused": false,
+      "error_kind": "",
+      "error_message": "",
+      "seconds": 1.8050401210784912
+    },
+    {
+      "breadth": 2,
+      "depth": 1,
+      "chi": 4,
+      "residual": 0.0,
+      "accepted": true,
+      "refused": false,
+      "error_kind": "",
+      "error_message": "",
+      "seconds": 1.4358584880828857
+    },
+    {
+      "breadth": 2,
+      "depth": 1,
+      "chi": 6,
+      "residual": 0.0,
+      "accepted": true,
+      "refused": false,
+      "error_kind": "",
+      "error_message": "",
+      "seconds": 2.0265393257141113
+    },
+    {
+      "breadth": 2,
+      "depth": 1,
+      "chi": 8,
+      "residual": 0.0,
+      "accepted": true,
+      "refused": false,
+      "error_kind": "",
+      "error_message": "",
+      "seconds": 1.9980759620666504
+    },
+    {
+      "breadth": 3,
+      "depth": 0,
+      "chi": 2,
+      "residual": "inf",
+      "accepted": false,
+      "refused": true,
+      "error_kind": "ValueError",
+      "error_message": "cannot span 3 branch directions in d_up=2",
+      "seconds": 0.00433802604675293
+    },
+    {
+      "breadth": 3,
+      "depth": 0,
+      "chi": 3,
+      "residual": 0.0,
+      "accepted": true,
+      "refused": false,
+      "error_kind": "",
+      "error_message": "",
+      "seconds": 0.11712288856506348
+    },
+    {
+      "breadth": 3,
+      "depth": 0,
+      "chi": 4,
+      "residual": 0.0,
+      "accepted": true,
+      "refused": false,
+      "error_kind": "",
+      "error_message": "",
+      "seconds": 0.10330939292907715
+    },
+    {
+      "breadth": 3,
+      "depth": 0,
+      "chi": 6,
+      "residual": 0.0,
+      "accepted": true,
+      "refused": false,
+      "error_kind": "",
+      "error_message": "",
+      "seconds": 0.1371452808380127
+    },
+    {
+      "breadth": 3,
+      "depth": 0,
+      "chi": 8,
+      "residual": 0.0,
+      "accepted": true,
+      "refused": false,
+      "error_kind": "",
+      "error_message": "",
+      "seconds": 0.12638568878173828
+    },
+    {
+      "breadth": 3,
+      "depth": 1,
+      "chi": 2,
+      "residual": "inf",
+      "accepted": false,
+      "refused": true,
+      "error_kind": "ValueError",
+      "error_message": "cannot span 3 branch directions in d_up=2",
+      "seconds": 0.003683328628540039
+    },
+    {
+      "breadth": 3,
+      "depth": 1,
+      "chi": 3,
+      "residual": 0.0,
+      "accepted": true,
+      "refused": false,
+      "error_kind": "",
+      "error_message": "",
+      "seconds": 1.7396228313446045
+    },
+    {
+      "breadth": 3,
+      "depth": 1,
+      "chi": 4,
+      "residual": 0.0,
+      "accepted": true,
+      "refused": false,
+      "error_kind": "",
+      "error_message": "",
+      "seconds": 1.732398509979248
+    },
+    {
+      "breadth": 3,
+      "depth": 1,
+      "chi": 6,
+      "residual": 0.0,
+      "accepted": true,
+      "refused": false,
+      "error_kind": "",
+      "error_message": "",
+      "seconds": 2.0130021572113037
+    },
+    {
+      "breadth": 3,
+      "depth": 1,
+      "chi": 8,
+      "residual": 0.0,
+      "accepted": true,
+      "refused": false,
+      "error_kind": "",
+      "error_message": "",
+      "seconds": 2.019697666168213
+    },
+    {
+      "breadth": 4,
+      "depth": 0,
+      "chi": 2,
+      "residual": "inf",
+      "accepted": false,
+      "refused": true,
+      "error_kind": "ValueError",
+      "error_message": "cannot span 4 branch directions in d_up=2",
+      "seconds": 0.0031654834747314453
+    },
+    {
+      "breadth": 4,
+      "depth": 0,
+      "chi": 3,
+      "residual": "inf",
+      "accepted": false,
+      "refused": true,
+      "error_kind": "ValueError",
+      "error_message": "cannot span 4 branch directions in d_up=3",
+      "seconds": 0.003082275390625
+    },
+    {
+      "breadth": 4,
+      "depth": 0,
+      "chi": 4,
+      "residual": 0.0,
+      "accepted": true,
+      "refused": false,
+      "error_kind": "",
+      "error_message": "",
+      "seconds": 0.1237952709197998
+    },
+    {
+      "breadth": 4,
+      "depth": 0,
+      "chi": 6,
+      "residual": 0.0,
+      "accepted": true,
+      "refused": false,
+      "error_kind": "",
+      "error_message": "",
+      "seconds": 0.13937664031982422
+    },
+    {
+      "breadth": 4,
+      "depth": 0,
+      "chi": 8,
+      "residual": 0.0,
+      "accepted": true,
+      "refused": false,
+      "error_kind": "",
+      "error_message": "",
+      "seconds": 0.1421804428100586
+    },
+    {
+      "breadth": 4,
+      "depth": 1,
+      "chi": 2,
+      "residual": "inf",
+      "accepted": false,
+      "refused": true,
+      "error_kind": "ValueError",
+      "error_message": "cannot span 4 branch directions in d_up=2",
+      "seconds": 0.0064504146575927734
+    },
+    {
+      "breadth": 4,
+      "depth": 1,
+      "chi": 3,
+      "residual": "inf",
+      "accepted": false,
+      "refused": true,
+      "error_kind": "ValueError",
+      "error_message": "cannot span 4 branch directions in d_up=3",
+      "seconds": 0.005967378616333008
+    },
+    {
+      "breadth": 4,
+      "depth": 1,
+      "chi": 4,
+      "residual": 0.0,
+      "accepted": true,
+      "refused": false,
+      "error_kind": "",
+      "error_message": "",
+      "seconds": 5.278090000152588
+    },
+    {
+      "breadth": 4,
+      "depth": 1,
+      "chi": 6,
+      "residual": 0.0,
+      "accepted": true,
+      "refused": false,
+      "error_kind": "",
+      "error_message": "",
+      "seconds": 2.6413590908050537
+    },
+    {
+      "breadth": 4,
+      "depth": 1,
+      "chi": 8,
+      "residual": 0.0,
+      "accepted": true,
+      "refused": false,
+      "error_kind": "",
+      "error_message": "",
+      "seconds": 2.540074348449707
+    },
+    {
+      "breadth": 5,
+      "depth": 0,
+      "chi": 2,
+      "residual": "inf",
+      "accepted": false,
+      "refused": true,
+      "error_kind": "ValueError",
+      "error_message": "cannot span 5 branch directions in d_up=2",
+      "seconds": 0.003353595733642578
+    },
+    {
+      "breadth": 5,
+      "depth": 0,
+      "chi": 3,
+      "residual": "inf",
+      "accepted": false,
+      "refused": true,
+      "error_kind": "ValueError",
+      "error_message": "cannot span 5 branch directions in d_up=3",
+      "seconds": 0.003841876983642578
+    },
+    {
+      "breadth": 5,
+      "depth": 0,
+      "chi": 4,
+      "residual": "inf",
+      "accepted": false,
+      "refused": true,
+      "error_kind": "ValueError",
+      "error_message": "cannot span 5 branch directions in d_up=4",
+      "seconds": 0.003370523452758789
+    },
+    {
+      "breadth": 5,
+      "depth": 0,
+      "chi": 6,
+      "residual": 0.0,
+      "accepted": true,
+      "refused": false,
+      "error_kind": "",
+      "error_message": "",
+      "seconds": 0.1602470874786377
+    },
+    {
+      "breadth": 5,
+      "depth": 0,
+      "chi": 8,
+      "residual": 0.0,
+      "accepted": true,
+      "refused": false,
+      "error_kind": "",
+      "error_message": "",
+      "seconds": 0.16742229461669922
+    },
+    {
+      "breadth": 5,
+      "depth": 1,
+      "chi": 2,
+      "residual": "inf",
+      "accepted": false,
+      "refused": true,
+      "error_kind": "ValueError",
+      "error_message": "cannot span 5 branch directions in d_up=2",
+      "seconds": 0.007613420486450195
+    },
+    {
+      "breadth": 5,
+      "depth": 1,
+      "chi": 3,
+      "residual": "inf",
+      "accepted": false,
+      "refused": true,
+      "error_kind": "ValueError",
+      "error_message": "cannot span 5 branch directions in d_up=3",
+      "seconds": 0.006467580795288086
+    },
+    {
+      "breadth": 5,
+      "depth": 1,
+      "chi": 4,
+      "residual": "inf",
+      "accepted": false,
+      "refused": true,
+      "error_kind": "ValueError",
+      "error_message": "cannot span 5 branch directions in d_up=4",
+      "seconds": 0.007427692413330078
+    },
+    {
+      "breadth": 5,
+      "depth": 1,
+      "chi": 6,
+      "residual": 0.0,
+      "accepted": true,
+      "refused": false,
+      "error_kind": "",
+      "error_message": "",
+      "seconds": 2.6832869052886963
+    },
+    {
+      "breadth": 5,
+      "depth": 1,
+      "chi": 8,
+      "residual": 0.0,
+      "accepted": true,
+      "refused": false,
+      "error_kind": "",
+      "error_message": "",
+      "seconds": 2.594320774078369
+    },
+    {
+      "breadth": 6,
+      "depth": 0,
+      "chi": 2,
+      "residual": "inf",
+      "accepted": false,
+      "refused": true,
+      "error_kind": "ValueError",
+      "error_message": "cannot span 6 branch directions in d_up=2",
+      "seconds": 0.0067865848541259766
+    },
+    {
+      "breadth": 6,
+      "depth": 0,
+      "chi": 3,
+      "residual": "inf",
+      "accepted": false,
+      "refused": true,
+      "error_kind": "ValueError",
+      "error_message": "cannot span 6 branch directions in d_up=3",
+      "seconds": 0.006895303726196289
+    },
+    {
+      "breadth": 6,
+      "depth": 0,
+      "chi": 4,
+      "residual": "inf",
+      "accepted": false,
+      "refused": true,
+      "error_kind": "ValueError",
+      "error_message": "cannot span 6 branch directions in d_up=4",
+      "seconds": 0.008296728134155273
+    },
+    {
+      "breadth": 6,
+      "depth": 0,
+      "chi": 6,
+      "residual": 0.0,
+      "accepted": true,
+      "refused": false,
+      "error_kind": "",
+      "error_message": "",
+      "seconds": 0.2470088005065918
+    },
+    {
+      "breadth": 6,
+      "depth": 0,
+      "chi": 8,
+      "residual": 0.0,
+      "accepted": true,
+      "refused": false,
+      "error_kind": "",
+      "error_message": "",
+      "seconds": 0.25252699851989746
+    },
+    {
+      "breadth": 6,
+      "depth": 1,
+      "chi": 2,
+      "residual": "inf",
+      "accepted": false,
+      "refused": true,
+      "error_kind": "ValueError",
+      "error_message": "cannot span 6 branch directions in d_up=2",
+      "seconds": 0.007104396820068359
+    },
+    {
+      "breadth": 6,
+      "depth": 1,
+      "chi": 3,
+      "residual": "inf",
+      "accepted": false,
+      "refused": true,
+      "error_kind": "ValueError",
+      "error_message": "cannot span 6 branch directions in d_up=3",
+      "seconds": 0.007578611373901367
+    },
+    {
+      "breadth": 6,
+      "depth": 1,
+      "chi": 4,
+      "residual": "inf",
+      "accepted": false,
+      "refused": true,
+      "error_kind": "ValueError",
+      "error_message": "cannot span 6 branch directions in d_up=4",
+      "seconds": 0.009088516235351562
+    },
+    {
+      "breadth": 6,
+      "depth": 1,
+      "chi": 6,
+      "residual": 0.0,
+      "accepted": true,
+      "refused": false,
+      "error_kind": "",
+      "error_message": "",
+      "seconds": 2.819939136505127
+    },
+    {
+      "breadth": 6,
+      "depth": 1,
+      "chi": 8,
+      "residual": 0.0,
+      "accepted": true,
+      "refused": false,
+      "error_kind": "",
+      "error_message": "",
+      "seconds": 2.734127998352051
+    }
+  ],
+  "wall_loci_min_chi_by_breadth": {
+    "0": {
+      "2": 2,
+      "3": 3,
+      "4": 4,
+      "5": 6,
+      "6": 6
+    },
+    "1": {
+      "2": 2,
+      "3": 3,
+      "4": 4,
+      "5": 6,
+      "6": 6
+    }
+  },
+  "monotone_transition_by_cell": {
+    "breadth=2,depth=0": true,
+    "breadth=2,depth=1": true,
+    "breadth=3,depth=0": true,
+    "breadth=3,depth=1": true,
+    "breadth=4,depth=0": true,
+    "breadth=4,depth=1": true,
+    "breadth=5,depth=0": true,
+    "breadth=5,depth=1": true,
+    "breadth=6,depth=0": true,
+    "breadth=6,depth=1": true
+  }
+}

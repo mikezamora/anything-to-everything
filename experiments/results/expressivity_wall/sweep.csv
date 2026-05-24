@@ -1,0 +1,51 @@
+breadth,depth,chi,residual,accepted,refused,error_kind,error_message,seconds
+2,0,2,0.0,True,False,,,0.5774796009063721
+2,0,3,0.0,True,False,,,0.11460137367248535
+2,0,4,0.0,True,False,,,0.11105060577392578
+2,0,6,0.0,True,False,,,0.15609216690063477
+2,0,8,0.0,True,False,,,0.16087603569030762
+2,1,2,0.0,True,False,,,1.757685661315918
+2,1,3,0.0,True,False,,,1.8050401210784912
+2,1,4,0.0,True,False,,,1.4358584880828857
+2,1,6,0.0,True,False,,,2.0265393257141113
+2,1,8,0.0,True,False,,,1.9980759620666504
+3,0,2,inf,False,True,ValueError,cannot span 3 branch directions in d_up=2,0.00433802604675293
+3,0,3,0.0,True,False,,,0.11712288856506348
+3,0,4,0.0,True,False,,,0.10330939292907715
+3,0,6,0.0,True,False,,,0.1371452808380127
+3,0,8,0.0,True,False,,,0.12638568878173828
+3,1,2,inf,False,True,ValueError,cannot span 3 branch directions in d_up=2,0.003683328628540039
+3,1,3,0.0,True,False,,,1.7396228313446045
+3,1,4,0.0,True,False,,,1.732398509979248
+3,1,6,0.0,True,False,,,2.0130021572113037
+3,1,8,0.0,True,False,,,2.019697666168213
+4,0,2,inf,False,True,ValueError,cannot span 4 branch directions in d_up=2,0.0031654834747314453
+4,0,3,inf,False,True,ValueError,cannot span 4 branch directions in d_up=3,0.003082275390625
+4,0,4,0.0,True,False,,,0.1237952709197998
+4,0,6,0.0,True,False,,,0.13937664031982422
+4,0,8,0.0,True,False,,,0.1421804428100586
+4,1,2,inf,False,True,ValueError,cannot span 4 branch directions in d_up=2,0.0064504146575927734
+4,1,3,inf,False,True,ValueError,cannot span 4 branch directions in d_up=3,0.005967378616333008
+4,1,4,0.0,True,False,,,5.278090000152588
+4,1,6,0.0,True,False,,,2.6413590908050537
+4,1,8,0.0,True,False,,,2.540074348449707
+5,0,2,inf,False,True,ValueError,cannot span 5 branch directions in d_up=2,0.003353595733642578
+5,0,3,inf,False,True,ValueError,cannot span 5 branch directions in d_up=3,0.003841876983642578
+5,0,4,inf,False,True,ValueError,cannot span 5 branch directions in d_up=4,0.003370523452758789
+5,0,6,0.0,True,False,,,0.1602470874786377
+5,0,8,0.0,True,False,,,0.16742229461669922
+5,1,2,inf,False,True,ValueError,cannot span 5 branch directions in d_up=2,0.007613420486450195
+5,1,3,inf,False,True,ValueError,cannot span 5 branch directions in d_up=3,0.006467580795288086
+5,1,4,inf,False,True,ValueError,cannot span 5 branch directions in d_up=4,0.007427692413330078
+5,1,6,0.0,True,False,,,2.6832869052886963
+5,1,8,0.0,True,False,,,2.594320774078369
+6,0,2,inf,False,True,ValueError,cannot span 6 branch directions in d_up=2,0.0067865848541259766
+6,0,3,inf,False,True,ValueError,cannot span 6 branch directions in d_up=3,0.006895303726196289
+6,0,4,inf,False,True,ValueError,cannot span 6 branch directions in d_up=4,0.008296728134155273
+6,0,6,0.0,True,False,,,0.2470088005065918
+6,0,8,0.0,True,False,,,0.25252699851989746
+6,1,2,inf,False,True,ValueError,cannot span 6 branch directions in d_up=2,0.007104396820068359
+6,1,3,inf,False,True,ValueError,cannot span 6 branch directions in d_up=3,0.007578611373901367
+6,1,4,inf,False,True,ValueError,cannot span 6 branch directions in d_up=4,0.009088516235351562
+6,1,6,0.0,True,False,,,2.819939136505127
+6,1,8,0.0,True,False,,,2.734127998352051

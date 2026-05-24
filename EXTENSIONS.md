@@ -1569,26 +1569,34 @@ TypeHole currently rejects TList(*) candidates because all `TList(*)` Ty values 
 - **Affected presets (now unblocked):** `length-synthesis` (defaults to
   mera), `peano_zero_axiom` (mera), `list-reverse-length`.
 
-### §13.5 deeper volume-law refusal substrate (C2 follow-on)
+### §13.5 expressivity wall — depth/breadth/χ sweep (E30) — RESOLVED
 
-- **Status:** `src/qft_pcn/tests/test_expressivity_wall.py` pins
-  shallow-converges + depth-6 at chi=16 empirically. Observed:
-  depth-6 sequential arithmetic chain (`((((1+1)+1)+1)+1)+1`)
-  converges to ~0.000000 — i.e., the substrate handles this depth
-  without saturating the bond-dim budget.
-- **Needed:** locate and pin the actual wall position by sweeping
-  one of:
-    1. depth (deeper sequential chains until convergence fails),
-    2. breadth (wider branching expressions),
-    3. chi (lower bond-dim at fixed depth until convergence fails).
-  A program family with provably volume-law entanglement
-  requirement (e.g., long-range parity / cluster-state encoding
-  lifted into DSL form) would close Corollary 13.5.1 directionally
-  (current test pins behavior non-directionally to avoid asserting
-  a wall we have not yet localized).
-- **Why deferred:** the empirical pin satisfies the §13.5 contract
-  (area-law-bounded with reference shallow convergence); a sweep
-  measuring the wall position is a §13.5 quantification follow-on.
+- **Status:** RESOLVED. The sweep harness
+  `experiments/expressivity_wall/sweep.py` scans
+  (breadth ∈ {2,3,4,5,6}, depth ∈ {0,1}, χ ∈ {2,3,4,6,8}) on a
+  hole-bearing corpus (`\a:Int...\k:Int. ((HoleVar([a..k]) + 1)
+  + ... + 1)`) whose §5.3 / §1.1 binding-as-entanglement structure
+  forces a rank-k superposition between the hole bid leaf and the
+  k candidate binder bid leaves. The substrate can represent this
+  state iff χ ≥ k; below the wall the encoder loudly refuses with
+  `ValueError: cannot span k branch directions in d_up=χ` (never a
+  silent classical fallback).
+- **Wall locus (measured):** at every depth in the sweep the
+  minimum accepting χ equals the smallest sweep-χ ≥ breadth — i.e.
+  χ* = #candidate binders. Pinned in
+  `wall_loci_min_chi_by_breadth` in the artifact below.
+- **Artifacts:**
+  - `experiments/results/expressivity_wall/sweep.csv` — raw rows
+  - `experiments/results/expressivity_wall/sweep.json` — rows +
+    wall loci + per-cell monotonicity flags
+- **Pinned by:** `src/qft_pcn/qft/tests/test_expressivity_wall.py`
+  asserts (a) χ_max accepts the full corpus, (b) χ_min refuses every
+  breadth ≥ 3, (c) the χ-transition is monotone in every cell, (d)
+  the observed wall locus matches the principled χ* = breadth
+  prediction, (e) the CSV/JSON artifacts are regenerated.
+- **Subsumes:** the earlier non-directional empirical pin in
+  `src/qft_pcn/tests/test_expressivity_wall.py` (which remains as a
+  reference shallow-converges + depth-6 sanity check).
 
 ### `well_typed_subtree` first-cut (W3.T2)
 
