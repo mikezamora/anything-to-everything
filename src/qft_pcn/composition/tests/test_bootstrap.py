@@ -29,7 +29,7 @@ from src.qft_pcn.composition.bootstrap import (
     BootstrapVerification,
     build_bootstrap_problem,
     solve_bootstrap,
-    verify_typing_via_bootstrap,
+    verify_typing_via_anomaly_sdp,
 )
 from src.qft_pcn.composition.bootstrap import _TypingConstraints
 from src.qft_pcn.logic._mera_typing_rules import mutate_leaf
@@ -103,7 +103,7 @@ def test_well_typed_lambda_has_feasible_bootstrap():
     # Substrate sanity: well-typed state has zero typing energy.
     assert abs(H.total_energy(state)) < 1e-9
 
-    verification = verify_typing_via_bootstrap(state, H)
+    verification = verify_typing_via_anomaly_sdp(state, H)
 
     assert isinstance(verification, BootstrapVerification)
     assert verification.well_typed, (
@@ -164,7 +164,7 @@ def test_ill_typed_program_bootstrap_infeasible():
         f"residual: {residuals[(RULE_T_LIT_INT, 1)]}"
     )
 
-    verification = verify_typing_via_bootstrap(mutated, H)
+    verification = verify_typing_via_anomaly_sdp(mutated, H)
 
     assert not verification.well_typed, (
         f"ill-typed program classified well-typed; "

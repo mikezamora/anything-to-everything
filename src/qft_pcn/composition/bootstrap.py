@@ -1,4 +1,19 @@
-"""§12.4 Conformal bootstrap for type-only reasoning.
+"""§12.4 Conformal bootstrap for type-only reasoning — partial.
+
+Honesty scope (D13): this module currently delivers a *typing-
+feasibility check* — an SDP wrapper around the §12.1 anomaly diagonals
+that returns feasible for well-typed states and infeasible for
+ill-typed states. It does **NOT** derive the full §12.4 spec
+capability set: termination bounds, depth bounds, complexity bounds,
+or parametricity bounds from the type signature alone. Those require
+real OPE-like CFT-bootstrap crossing-equation constraints on the
+typing Hamiltonian (substrate-wide future work; see EXTENSIONS.md
+entry "§12.4 conformal bootstrap full bound capabilities").
+
+What ships here is sound as a necessary-but-not-sufficient feasibility
+witness: any program that fails the typing-feasibility SDP cannot
+satisfy the full §12.4 bootstrap either; passing the SDP means the
+§12.1-anomaly diagonals fit under the truncation gap, nothing more.
 
 Physics origin (Polyakov 1974, Ferrara-Gatto-Grillo 1973, Rattazzi-
 Rychkov-Tonni-Vichi 2008): the conformal bootstrap derives properties of
@@ -352,7 +367,7 @@ def solve_bootstrap(
 # ---------------------------------------------------------------------------
 
 
-def verify_typing_via_bootstrap(
+def verify_typing_via_anomaly_sdp(
     state: MERA,
     typing_H: MeraTypingHamiltonian,
     *,
@@ -360,9 +375,17 @@ def verify_typing_via_bootstrap(
     kind_activity_floor: float = DEFAULT_KIND_ACTIVITY_FLOOR,
     solver: str | None = None,
 ) -> BootstrapVerification:
-    """Top-level §12.4 type-only reasoning via conformal bootstrap.
+    """Typing-feasibility SDP wrapper around §12.1 anomaly diagonals.
 
-    Spec §12.4 acceptance:
+    D13-honest naming: this is NOT the full §12.4 bootstrap. It is an
+    SDP whose diagonal is fixed by the §12.1 anomaly trace; feasibility
+    is exactly equivalent to "every anomaly diagonal fits under the
+    truncation gap." That makes it a sound necessary-but-not-sufficient
+    bound on the full §12.4 acceptance — termination, depth, complexity,
+    and parametricity bounds are deferred to the substrate-wide
+    crossing-equation OPE-truncated bootstrap (EXTENSIONS.md).
+
+    Feasibility verdict:
       * Well-typed program (``H_typing |psi> = 0``) → bootstrap is
         **feasible**, dimension bound ~ 0.
       * Ill-typed program (``H_typing |psi> > 0`` at some rule) →
@@ -433,5 +456,5 @@ __all__ = [
     "DEFAULT_KIND_ACTIVITY_FLOOR",
     "build_bootstrap_problem",
     "solve_bootstrap",
-    "verify_typing_via_bootstrap",
+    "verify_typing_via_anomaly_sdp",
 ]

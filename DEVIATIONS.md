@@ -170,20 +170,22 @@ already catalogued in `EXTENSIONS.md` are not re-listed here.
   primitive, then `prune_redundant_lemmas`.
 - Audit source: §10
 
-### D12 — §12.3 topological_degeneracy: Betti number of binding graph is not the proof-homotopy count
-- Location: `src/qft_pcn/composition/topological_degeneracy.py:233-273`
-  (`count_proof_strategies`)
+### D12 — §12.3 topological_degeneracy: Betti number of binding graph is not the proof-homotopy count — RESOLVED
+- Location: `src/qft_pcn/composition/topological_degeneracy.py`
+  (`count_binding_graph_strategies`, renamed)
 - Spec: §12.3
-- Issue: Module claims `K^g = 2^{b1*g}` of the binding diagram counts
+- Issue: Module claimed `K^g = 2^{b1*g}` of the binding diagram counts
   "essentially different proof strategies", but `b1` of the AST
-  binding graph is 0 or 1 for closed programs and bears no relation
-  to the spec acceptance (`a+b=b+a` ⇒ 2 proofs, `(a+b)+c=a+(b+c)` ⇒ 1,
-  pumping-lemma variants). Binding-cycle invariant is not the
-  proof-homotopy count.
-- Fix scope: large — (a) re-anchor to the constraint-Hamiltonian's
-  actual ground-state degeneracy (Wilson-loop algebra on H), or
-  (b) honestly rename to "binding-cycle Z₂ algebra dimension" and
-  scope-limit the docstring.
+  binding graph is a structural invariant of the encoded program, not
+  the ground-subspace degeneracy of the constraint Hamiltonian.
+- Resolution: honest-rename approach (option b). `count_proof_strategies`
+  → `count_binding_graph_strategies`. Module + function docstrings now
+  state explicitly that this is a STRUCTURAL invariant of the binding
+  diagram (necessary-but-not-sufficient for the spec count), NOT the
+  ground-subspace degeneracy. EXTENSIONS.md entry tracks the genuine
+  proof-strategy enumeration via `eigvalsh` ground-subspace count as
+  the deferred spec capability. Tests updated to use the new name and
+  pin the structural invariant.
 - Audit source: §12
 
 ### D13 — §12.4 bootstrap delivers no type-derived complexity bound — RESOLVED

@@ -1154,3 +1154,53 @@ already perf-optimized through the M3 perf path
   residual-only; a real `Π_type` measurement would let `register_lemma`
   reject a state that minimised the energy but landed in a non-type-
   inhabiting branch.
+
+## Missing dependency: §12.4 conformal bootstrap full bound capabilities
+
+- Where: `src/qft_pcn/composition/bootstrap.py` ships
+  `verify_typing_via_anomaly_sdp` (renamed from
+  `verify_typing_via_bootstrap` per D13 honest-naming) — SDP wrapper
+  around §12.1 anomaly extraction.
+- Need: derive termination bounds, depth bounds, complexity bounds,
+  parametricity bounds via OPE-like CFT-bootstrap crossing-symmetry
+  constraints on the typing Hamiltonian. Requires implementing
+  crossing-equation SDP constraints and OPE truncation.
+- Workaround: the typing-feasibility SDP is operational (well-typed =
+  feasible, ill-typed = infeasible) using §12.1 anomaly diagonals. Sound
+  necessary-but-not-sufficient bound on §12.4 acceptance.
+- Unblocks: §12.4 spec bounds (termination/depth/complexity/parametricity).
+
+## §12.7 proof-space partition function
+
+- Where: `src/qft_pcn/composition/replica_complexity.py` ships
+  `compute_typical_field_marginal_complexity` (renamed per D14).
+  Z is built from generic FieldSpecies number-operator Hamiltonian
+  (leaf-marginal level).
+- Need: Z = sum_{proofs} exp(-beta * proof_complexity) over the actual
+  proof ensemble (solved + conjecture-tier lemmas in the library +
+  revision near-misses). Each "proof" is a ProofTree; complexity is
+  its worldline_pi action (§12.16). Replica trick then gives <log Z> =
+  typical free energy of the proof distribution.
+- Workaround: leaf-marginal free-energy is a structural property of
+  the encoding, NOT the spec's proof-space partition function. Useful
+  as a necessary-but-not-sufficient signature of the substrate's
+  available states.
+- Unblocks: §12.7 spec acceptance — typical-case complexity prediction
+  via proof-space replica trick.
+
+## Missing dependency: §12.3 genuine proof-strategy count via ground-subspace degeneracy
+
+- Where: `src/qft_pcn/composition/topological_degeneracy.py` ships
+  `count_binding_graph_strategies` (renamed from `count_proof_strategies`
+  per D12 honest-naming). The function computes K = 2^b_1 on the
+  use_to_binder binding diagram, then K^genus via Wen 1989 toric-code
+  formula.
+- Need: enumerate the actual ground-subspace degeneracy of the constraint
+  Hamiltonian (eigvalsh near zero, count eigenvectors). The binding-graph
+  Betti number is a STRUCTURAL invariant of the program's encoding, not
+  the ground-state degeneracy that yields the spec's "proof strategies".
+- Workaround: binding-graph cycle dimension is a NECESSARY-BUT-NOT-
+  SUFFICIENT condition (any independent constraint loop introduces at
+  least one strategy choice; not every Hamiltonian ground-eigenvector
+  corresponds to a binding-loop).
+- Unblocks: §12.3 spec acceptance test `a+b=b+a` → 2 distinct proofs.
