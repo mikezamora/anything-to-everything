@@ -209,10 +209,6 @@ def _binder_node_of(meta, use_node):
 # ---- Per-rule energy functions (spec §5, §6) ----------------------------
 
 
-def _stub(state, meta, node) -> float:
-    return 0.0
-
-
 def _energy_t_lit_int(state, meta, node) -> float:
     """B §3.1: P[kind=INT] . (I - P[type=INT])."""
     ops = _window(meta, node, {

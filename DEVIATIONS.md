@@ -186,9 +186,9 @@ already catalogued in `EXTENSIONS.md` are not re-listed here.
   scope-limit the docstring.
 - Audit source: §12
 
-### D13 — §12.4 bootstrap delivers no type-derived complexity bound
-- Location: `src/qft_pcn/composition/bootstrap.py:355-426`
-  (`verify_typing_via_bootstrap`)
+### D13 — §12.4 bootstrap delivers no type-derived complexity bound — RESOLVED
+- Location: `src/qft_pcn/composition/bootstrap.py`
+  (`verify_typing_via_anomaly_sdp`)
 - Spec: §12.4
 - Issue: Spec capability: derive performance bounds, side-effect
   classes, complexity bounds from type signature alone (e.g.
@@ -199,10 +199,13 @@ already catalogued in `EXTENSIONS.md` are not re-listed here.
   well-typed/ill-typed split. `dimension_bound = max(o_i)` is not an
   OPE-dimension bound. No bound on termination, depth, complexity, or
   side-effects is produced.
-- Fix scope: large — (a) implement a real type-derived bootstrap SDP
-  whose extremal value bounds a meaningful complexity observable, or
-  (b) rename to "SDP-form anomaly check" and document that the spec's
-  capability is deferred (EXTENSIONS entry).
+- Resolution: option (b) — honest rename
+  `verify_typing_via_bootstrap` → `verify_typing_via_anomaly_sdp`;
+  module docstring scope-limited to "typing-feasibility SDP wrapper
+  around §12.1 anomaly diagonals; sound necessary-but-not-sufficient
+  bound on §12.4 acceptance." Full crossing-equation OPE-truncated
+  bootstrap tracked in EXTENSIONS.md ("§12.4 conformal bootstrap full
+  bound capabilities"). Tests updated to the renamed symbol.
 - Audit source: §12
 
 ### D14 — §12.7 replica_complexity Z is a leaf-marginal observable, not a proof-space partition function
@@ -261,13 +264,12 @@ already catalogued in `EXTENSIONS.md` are not re-listed here.
 
 ## DOC GAPS
 
-### D17 — `mera_typing_hamiltonian._stub` is dead code
+### D17 — `mera_typing_hamiltonian._stub` is dead code — **RESOLVED**
 - Location: `src/qft_pcn/logic/mera_typing_hamiltonian.py:212-213`
 - Spec: §5 typing rules; `memory/no-placeholders.md`
-- Issue: Function defined but never referenced. TODO/stub identifiers
-  in tree are forbidden by the no-placeholders directive.
-- Fix scope: small — delete the function (and any leftover import);
-  verify with `grep -r _stub src/qft_pcn/`.
+- Resolution: Dead `_stub` function deleted. Verified unused via
+  `grep -rn "_stub" src/qft_pcn/` (only hit was the definition itself).
+  Module parses clean post-removal.
 - Audit source: §1-§5
 
 ### D18 — `lemma_library._validate_decoded` is a tautology with no EXTENSIONS entry — **RESOLVED**
