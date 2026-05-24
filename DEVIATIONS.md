@@ -266,6 +266,16 @@ already catalogued in `EXTENSIONS.md` are not re-listed here.
   call sites. Genuine proof-space Z
   (`sum_{proofs} exp(-beta * worldline_pi_action)`) tracked in
   `EXTENSIONS.md` "§12.7 proof-space partition function".
+- Follow-up (audit pass 2 §12 — U1+U2, 2026-05-23):
+  - U1: `predict_proof_difficulty` docstring (lines 567/587) still
+    cited the deprecated alias `compute_typical_complexity`; body
+    already calls the honest name. Docstring fixed.
+  - U2: `tests/test_replica_complexity.py` pinned 8 call sites to
+    the deprecated alias, emitting `DeprecationWarning` on every
+    pytest run and leaving the honest name untested at the
+    composition layer. All 8 call sites + the import now use
+    `compute_typical_field_marginal_complexity`. Legacy alias kept
+    in place for downstream backward compat.
 
 ### D15 — §12.10 holographic_compilation ships no optimization pass; verify is tautological — **RESOLVED**
 - Location:
@@ -343,6 +353,32 @@ already catalogued in `EXTENSIONS.md` are not re-listed here.
   primitives as "core". The deferred proper `tier` field on `Lemma` is
   now recorded in `EXTENSIONS.md`.
 - Audit source: §10
+
+### D25 — §5.5 `two_site_expectation` odd-leaf branch drops layer-0 intra disentanglers — RESOLVED
+- Location: `src/qft_pcn/qft/mera.py` `two_site_expectation` odd-leaf
+  branch (post-fix lines around 1088-1124); guard helper renamed to
+  `_layer0_any_nontrivial` (was `_layer0_inter_is_nontrivial`)
+- Spec: §5.5 (Vidal 2008 §III.5 four-site causal cone)
+- Issue: Sister bug to D5. The D5 fix only guarded INTER-pair
+  non-identity at layer 0; the odd-leaf branch of
+  `two_site_expectation` ALSO silently dropped
+  `disentanglers[0][j_inter]` and `disentanglers[0][j_inter+1]` (the
+  INTRA-pair disentanglers wrapping the 4-site fold). Reachable after
+  any even-leaf `apply_two_site_gate` (e.g. every `trotter_step` does
+  this), and the bias was unobserved because cross-check via
+  `_materialize` was unreachable.
+- Resolution: extended the D5 guard to a uniform
+  `_layer0_any_nontrivial` check (intra OR inter). When ANY layer-0
+  disentangler is non-identity, both `local_expectation` and
+  `two_site_expectation` route to the materialize fold, which honors
+  the full layer-0 causal cone and `NotImplementedError`-fails loudly
+  on layer-≥1 non-identity (preserving the layer-0-only modification
+  invariant). New test
+  `test_two_site_expectation_handles_non_identity_intra` constructs the
+  intra-only regime (CNOT on (0, 1) leaves inter identity), asserts the
+  guard fires, and checks the post-fold expectation matches the true
+  Bell-marginal value (0.5) against the pre-fix silent-drop result (0).
+- Audit source: §1-§5 (D25 / ND1)
 
 ### D29 — §10.11 spec mandates `composition/demo_hierarchical_proof.py` — RESOLVED
 - Location: `src/qft_pcn/composition/demo_hierarchical_proof.py` (now

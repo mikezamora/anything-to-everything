@@ -165,6 +165,13 @@ def _consolidate(library, promoted: list[CanonicalPrimitive],
         # subsumed by dynamic-ring discoveries.
         if library.tier_of(sid) == "core":
             continue
+        # D26 belt-and-suspenders: primitives must never appear in
+        # cached_solutions (the adapter filters them out), but if a future
+        # library implementation surfaces them anyway, skip — a primitive
+        # cannot subsume itself. The adapter tier "primitive"/"induction"
+        # is the canonical signal here.
+        if library.tier_of(sid) in {"primitive", "induction"}:
+            continue
         cands = mine_subtrees(state, meta, sid, config.mine)
         matched_cand = None
         matched_prim = None

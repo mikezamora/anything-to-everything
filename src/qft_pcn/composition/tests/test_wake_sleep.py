@@ -203,3 +203,44 @@ def test_end_to_end_loop_against_real_library_adapter(tmp_path):
     # batches -> quiescent counter hits n_quiescent=2 and breaks).
     assert reports[0].promoted, "wake-sleep produced no primitive in cycle 0"
     assert len(reports) <= 3, "loop did not terminate under quiescence"
+
+
+def test_consolidate_skips_self_match_on_primitive(tmp_path):
+    """D26 against the REAL adapter: when ``_consolidate`` runs after the
+    abstract phase promotes a primitive, the adapter's ``cached_solutions``
+    must filter that primitive out so the consolidation loop never sees it
+    as a "parent" to subsume. Without the filter, the primitive's own MERA
+    is mined, its canonical density exact-matches itself, and the
+    primitive is self-replaced by a stub copy of itself in the SAME cycle
+    that promoted it.
+
+    Acceptance: after one wake-sleep cycle that promotes >=1 primitive,
+    none of the promoted primitives end up in the adapter's ``replacements``
+    (i.e. none of them was treated as an "old_id" to replace).
+    """
+    corpus = build_induction_corpus()
+    library = LemmaLibrary(tmp_path)
+    adapter = LemmaLibraryAdapter(library)
+
+    report = wake_sleep_cycle(adapter, _problems(corpus),
+                              make_stub_solver({}), cycle_index=0)
+    assert report.promoted, "expected at least one primitive promoted"
+
+    # Collect every primitive lemma_id on disk after the cycle.
+    primitive_ids = {
+        lid for lid in library.all_ids()
+        if library.load(lid).proposition_type.startswith("primitive:")
+    }
+    # None of those primitive ids should have been treated as a "parent"
+    # (old_id) in the replacements map. The keys of adapter.replacements
+    # are the OLD ids being replaced.
+    self_replaced = primitive_ids & set(adapter.replacements.keys())
+    assert not self_replaced, (
+        f"primitives must not self-replace under _consolidate (D26); "
+        f"these primitive ids appear as replacements old_id: {self_replaced}")
+
+    # Also: cached_solutions must filter out every primitive id.
+    surfaced = {sid for _, _, sid in adapter.cached_solutions()}
+    assert surfaced.isdisjoint(primitive_ids), (
+        f"cached_solutions surfaced primitive ids: "
+        f"{surfaced & primitive_ids}")

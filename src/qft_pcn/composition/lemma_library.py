@@ -647,9 +647,18 @@ class LemmaLibrary:
         return self.load(match)
 
     def cheapest_for_type(self, proposition_type: str):
+        # D28: skip primitive lemmas (proposition_type starting with
+        # "primitive:"). Primitives are tensor-only abstractions per spec
+        # §5.4: they carry a stub MeraEncodingMeta(n_nodes=0, ...) because
+        # they have no AST, which means _n_leaves_L returns 0 for them and
+        # they would otherwise rank ahead of every concrete lemma of the
+        # same type. Concrete-AST candidate selection must consider only
+        # concrete lemmas. Primitive recovery for canonical-AST candidates
+        # is a future enhancement — see EXTENSIONS.md.
         cands = [(m["n_leaves_L"], m["trotter_steps"], lid)
                  for lid, m in self._manifest.items()
-                 if m["proposition_type"] == proposition_type]
+                 if m["proposition_type"] == proposition_type
+                 and not m["proposition_type"].startswith("primitive:")]
         if not cands:
             return None
         cands.sort()

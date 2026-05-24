@@ -127,7 +127,10 @@ class LemmaLibraryAdapter:
         if isinstance(entry, CanonicalPrimitive):
             deriv = _primitive_deriv(entry)
             lemma_id = self._save_primitive(entry, deriv)
-            self._tiers[lemma_id] = "dynamic"
+            # Tag the primitive so cached_solutions filters it out (D26).
+            # Tier is "primitive" — distinct from "dynamic" so the
+            # consolidation walk can skip it without touching "core" semantics.
+            self._tiers[lemma_id] = "primitive"
             return lemma_id
 
         # Solved-problem triple.
@@ -153,8 +156,15 @@ class LemmaLibraryAdapter:
         bundle: MeraTensorBundle = bundle_from_mera(primitive.mera)
         fp = structural_fingerprint(primitive.mera)
         prop_type = f"primitive:{deriv.hamiltonian_id}"
-        # Deterministic id from the provenance fingerprint.
-        lemma_id = _content_id(bundle, prop_type)
+        # Deterministic id from the provenance fingerprint. D27: plumb
+        # ``source_run_id`` into the content hash so two cycles that re-promote
+        # a byte-identical primitive (same tensors, same prop_type) namespace
+        # by discovery cycle and do NOT trip LemmaHashCollision in
+        # :meth:`library.save`. ``_novel`` in :func:`wake_sleep_loop` shields
+        # most call paths, but a direct caller of :func:`wake_sleep_cycle`
+        # across cycles would otherwise hit the collision.
+        lemma_id = _content_id(bundle, prop_type,
+                               source_run_id=deriv.source_run_id)
         # Primitives lack a real encoding_meta; build a minimal placeholder
         # carrying enough shape info for downstream consumers. This is the
         # ONE place where a stub encoding_meta is unavoidable: primitives are
@@ -180,12 +190,27 @@ class LemmaLibraryAdapter:
     def cached_solutions(self) -> list[tuple[object, object, str]]:
         """Iterate every non-pruned lemma in the underlying library, yielding
         ``(materialized_mera, encoding_meta, lemma_id)`` triples — the
-        shape :func:`mine_corpus` consumes."""
+        shape :func:`mine_corpus` consumes.
+
+        Primitives (adapter tier in ``{"primitive", "induction"}`` or
+        ``proposition_type`` starting with ``"primitive:"``) are filtered
+        OUT (D26): they are tensor-only abstractions per spec §5.4 with no
+        AST-level :class:`MeraEncodingMeta`. Surfacing them in the
+        consolidation walk caused :func:`_consolidate` to mine a
+        primitive's own MERA, exact-match its own canonical density, and
+        self-replace the primitive with a stub copy of itself. The
+        wake-sleep consolidation loop is for PARENT lemmas re-derived
+        through new primitives, never primitives themselves.
+        """
         out: list[tuple[object, object, str]] = []
         for lemma_id in self.library.all_ids():
             if lemma_id in self.pruned:
                 continue
+            if self._tiers.get(lemma_id) in {"primitive", "induction"}:
+                continue
             lemma = self.library.load(lemma_id)
+            if lemma.proposition_type.startswith("primitive:"):
+                continue
             state = self.library.materialize(lemma_id)
             out.append((state, lemma.encoding_meta, lemma_id))
         return out
@@ -211,7 +236,11 @@ class LemmaLibraryAdapter:
         new_id = self._save_primitive(new_primitive, deriv)
         self.replacements[old_id] = new_id
         self.pruned.add(old_id)
-        self._tiers[new_id] = "dynamic"
+        # The replacement is itself a CanonicalPrimitive (the §10.9 step (1)
+        # synthesises L' as a new primitive), so it carries the same
+        # "primitive" tier semantics: tensor-only, must be filtered out of
+        # cached_solutions to avoid self-replacement (D26).
+        self._tiers[new_id] = "primitive"
         return new_id
 
     def prune(self, lemma_ids) -> int:

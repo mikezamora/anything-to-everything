@@ -132,3 +132,73 @@ def test_adapter_prune_records_ids_and_skips_core(tmp_path):
 
     surviving = {sid for _, _, sid in adapter.cached_solutions()}
     assert surviving == {c}, "only the core entry survives the prune"
+
+
+def test_cached_solutions_filters_out_primitives(tmp_path):
+    """D26: cached_solutions must NOT surface lemmas registered as
+    primitives (tier "primitive" / proposition_type "primitive:*"). Without
+    this filter, ``_consolidate`` mines the primitive's own MERA, exact-
+    matches it against itself, and replaces it with a stub copy of itself
+    in the SAME cycle that promoted it."""
+    lib = LemmaLibrary(tmp_path)
+    adapter = LemmaLibraryAdapter(lib)
+
+    sol_id = adapter.register(_solved("alpha", variant=0))
+    prim_id = adapter.register(_primitive(source_ids=("alpha",), cycle=0))
+    assert sol_id is not None and prim_id is not None
+    assert sol_id != prim_id
+    # Both ids are on-disk.
+    assert {sol_id, prim_id}.issubset(set(lib.all_ids()))
+
+    surfaced = {sid for _, _, sid in adapter.cached_solutions()}
+    assert prim_id not in surfaced, (
+        "cached_solutions must not surface primitive-tier lemmas (D26)")
+    assert sol_id in surfaced, \
+        "concrete solved-triple lemmas must still surface"
+    # Adapter tier records the primitive distinctly from "dynamic".
+    assert adapter.tier_of(prim_id) == "primitive"
+
+
+def test_save_primitive_robust_to_byte_identical_re_promotion(tmp_path):
+    """D27: ``_save_primitive`` plumbs ``source_run_id`` through
+    ``_content_id`` so two cycles that re-promote a byte-identical
+    primitive across DIFFERENT cycle indices produce DIFFERENT lemma_ids
+    and do not trip :class:`LemmaHashCollision`. (Within the same cycle,
+    re-saving the same bundle is an idempotent no-op via the manifest
+    dedup path in ``LemmaLibrary.save``.)"""
+    lib = LemmaLibrary(tmp_path)
+    adapter = LemmaLibraryAdapter(lib)
+
+    # Two primitives with identical source_ids but different cycle indices;
+    # the underlying MERA + bundle are byte-identical.
+    p0 = _primitive(source_ids=("alpha",), cycle=0)
+    p1 = _primitive(source_ids=("alpha",), cycle=1)
+
+    id0 = adapter.register(p0)
+    id1 = adapter.register(p1)   # must NOT raise LemmaHashCollision
+    assert id0 is not None and id1 is not None
+    # Different source_run_ids ("cycle-0" vs "cycle-1") namespace the hash.
+    assert id0 != id1, (
+        "byte-identical primitives across cycles must namespace by "
+        "source_run_id in _content_id (D27)")
+
+
+def test_cheapest_for_type_skips_primitives(tmp_path):
+    """D28: ``cheapest_for_type`` must skip primitive lemmas. Primitives
+    persist with ``MeraEncodingMeta(n_nodes=0, ...)`` -> ``n_leaves_L`` of
+    0, which would otherwise rank them ahead of every concrete lemma of
+    the same proposition_type. Primitives are tensor-only per spec §5.4;
+    concrete-AST candidate selection must consider only concrete lemmas."""
+    lib = LemmaLibrary(tmp_path)
+    adapter = LemmaLibraryAdapter(lib)
+
+    # Register a primitive; its proposition_type is "primitive:abstract:alpha".
+    prim_id = adapter.register(_primitive(source_ids=("alpha",), cycle=0))
+    assert prim_id is not None
+    prim_prop_type = lib.load(prim_id).proposition_type
+    assert prim_prop_type.startswith("primitive:")
+
+    # No concrete lemma carries that proposition_type -> cheapest_for_type
+    # must return None (the primitive must NOT be returned).
+    assert lib.cheapest_for_type(prim_prop_type) is None, (
+        "cheapest_for_type must skip primitive lemmas (D28)")
