@@ -290,3 +290,13 @@
 .annotated-eq-symbol-gloss small { color: #7e8aa3; }
 .annotated-eq-gloss { color: #c8d0e0; font-size: 13px; margin: 8px 0 4px; }
 .annotated-eq-cite { color: #7e8aa3; font-size: 10px; text-align: right; }
+
+.frame-interpreter { display: inline-flex; gap: 8px; align-items: baseline;
+                     padding: 6px 10px; background: rgba(13, 17, 26, 0.85);
+                     border: 1px solid #2a3450; border-radius: 4px;
+                     color: #c8d0e0; font-size: 12px; max-width: 480px; }
+.frame-interpreter-marker { font-size: 14px; }
+.frame-interpreter-text { flex: 1; }
+.frame-interpreter-cite { color: #6cd0ff; font-size: 11px;
+                          text-decoration: none; }
+.frame-interpreter-cite:hover { text-decoration: underline; }
