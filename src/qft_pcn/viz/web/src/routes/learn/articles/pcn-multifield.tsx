@@ -122,7 +122,7 @@ export const article: ArticleSpec = {
     },
   ],
   citations: [
-    { label: 'QFT_PCN_ARCHITECTURE.md §3.3 (Multi-field generalisation)', href: '../../QFT_PCN_ARCHITECTURE.md' },
+    { label: 'QFT_PCN_ARCHITECTURE.md §2.2 (Multi-field layer)', href: '../../QFT_PCN_ARCHITECTURE.md' },
     { label: 'QFT_PCN_ARCHITECTURE.md §4.5 (MultiFieldNetwork — coupled field types on one manifold)', href: '../../QFT_PCN_ARCHITECTURE.md' },
     { label: 'src/qft_pcn/multifield.py (MultiFieldNetwork.step: cross-field messages + coupling descent)', href: '../../src/qft_pcn/multifield.py' },
     { label: 'src/qft_pcn/manifold.py (Manifold2D: metric inner product used for cross-field bilinear)', href: '../../src/qft_pcn/manifold.py' },
