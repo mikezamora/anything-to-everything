@@ -87,6 +87,17 @@ Each entry: **What's needed**, **Why deferred**, **Wire-up when ready**.
   quartic / density / yukawa / kinetic). `snapshot_hamiltonian`
   serialises and surfaces it; `HamiltonianPanel` renders an
   Active-terms table when `st.terms` is non-empty.
+- **DSL — LLM retry on validation failure** (resolved):
+  `generate_dsl(..., max_retries: int = 0)` wraps the single-round-trip
+  helper `_attempt_generate_dsl` in a retry loop. On validation failure
+  (or non-JSON output) it builds a follow-up prompt quoting the raw
+  output + validation errors ("Your previous DSL failed validation:
+  <errors>. The raw output was: <raw>. Emit a corrected DSL that
+  satisfies the schema.") and re-queries Ollama up to `max_retries`
+  additional times. First success wins; on exhaustion the *last*
+  failure dict surfaces so callers see the freshest raw/errors.
+  `max_retries=0` preserves the original first-attempt-only semantics.
+  Tests: `src/qft_pcn/viz/tests/test_generate_dsl_retry.py`.
 
 ---
 
@@ -111,22 +122,15 @@ Each entry: **What's needed**, **Why deferred**, **Wire-up when ready**.
 ---
 
 <a id="lossless-dsl-runspec-round-trip"></a>
-## DSL — lossless RunSpec round-trip
+## DSL — lossless RunSpec round-trip (RESOLVED)
 
-- **What's needed:** `RunSpec` to carry an optional `dsl: dict | None` companion
-  so `runspec_to_dsl` can return the original DSL verbatim.
-- **Why deferred:** `RunSpec.params` is intentionally flat for fast dict-merge
-  semantics; structured DSL is currently dropped on `dsl_to_runspec`.
-- **Wire-up when ready:** Store the original DSL on `RunSpec.dsl` in
-  `dsl_to_runspec`; `runspec_to_dsl` returns it verbatim when present.
+- **Status:** RESOLVED. `RunSpec` now carries an optional
+  `dsl: dict | None = None` companion (`viz/runs.py`); `dsl_to_runspec`
+  stashes a deep-copy of the input DSL on it, and `runspec_to_dsl`
+  returns that verbatim when present (falling back to flat-params
+  reconstruction when absent).
+- **Tests:** `tests/test_viz_dsl.py::test_runspec_to_dsl_round_trips_examples_losslessly`,
+  `::test_lossless_roundtrip_preserves_unknown_keys` (future/unknown keys
+  survive), `::test_fallback_reconstruction_when_dsl_absent`.
 
-<a id="llm-retry-with-validation-feedback"></a>
-## DSL — LLM retry on validation failure
-
-- **What's needed:** A retry loop in `generate_dsl` that feeds the validation
-  errors back into the LLM as a follow-up turn.
-- **Why deferred:** v1 surfaces raw output to the chat pane for manual repair.
-- **Wire-up when ready:** Add `max_retries: int = 0` param; on validation
-  failure, append a "this DSL failed validation: <errors>; fix and re-emit"
-  message and retry up to `max_retries` times.
 
