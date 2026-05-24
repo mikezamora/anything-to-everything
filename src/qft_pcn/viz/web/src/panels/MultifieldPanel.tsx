@@ -16,27 +16,19 @@ import type { Frame } from '../lib/types';
 import { PanelShell } from './PanelShell';
 import { PanelReadouts } from './PanelReadouts';
 import { MetricsStrip } from './MetricsStrip';
-import { useSize, normGrid, speciesColor, diverging } from './common';
+import {
+  useSize,
+  normGrid,
+  speciesColor,
+  diverging,
+  as2DGrid,
+  type PhiLike,
+  type Grid2D as Grid,
+} from './common';
 import { FrameInterpreter } from '../components/FrameInterpreter';
 
-type Grid = number[][];
-/**
- * `snapshot_multifield` emits `phi`/`E`/`Pi` as 3D `(channels, Nx, Ny)` nested
- * arrays (Field.values is shape `(C, Nx, Ny)` in numpy and `_grid` just calls
- * `.tolist()`). The Three.js surface needs a 2D grid, so collapse the channel
- * axis by taking channel 0 if present. Older fixtures pass 2D grids directly
- * and pass through unchanged.
- */
-type PhiLike = number[][] | number[][][] | null | undefined;
-export function as2DGrid(phi: PhiLike): Grid | null {
-  if (!phi || !phi.length) return null;
-  const first = phi[0] as number | number[] | number[][] | undefined;
-  if (Array.isArray(first) && first.length && Array.isArray(first[0])) {
-    // phi is (C, Nx, Ny) -> take the first channel.
-    return phi[0] as Grid;
-  }
-  return phi as Grid;
-}
+// Re-export so existing tests / external consumers keep their imports working.
+export { as2DGrid } from './common';
 
 const norm2 = (g?: PhiLike) => {
   const grid = as2DGrid(g);

@@ -90,6 +90,29 @@ export function speciesColor(name: string, names: string[]): string {
   return sequential((i < 0 ? 0 : i) / denom);
 }
 
+/**
+ * Collapse a phi/E/Pi grid from `snapshot_network` / `snapshot_multifield` /
+ * `snapshot_pcn_fields` to a 2D `(Nx, Ny)` grid suitable for surface / heatmap
+ * rendering. `Field.values` is shape `(C, Nx, Ny)` in numpy and `_grid` just
+ * calls `.tolist()`, so the wire shape is 3D `(channels, Nx, Ny)`. Three.js
+ * surface + d3 heatmap consumers need 2D, so pick a channel (default 0).
+ * Legacy fixtures and tests sometimes pass 2D grids directly — those pass
+ * through unchanged.
+ */
+export type Grid2D = number[][];
+export type PhiLike = number[][] | number[][][] | null | undefined;
+export function as2DGrid(phi: PhiLike, channel: number = 0): Grid2D | null {
+  if (!phi || !phi.length) return null;
+  const first = phi[0] as number | number[] | number[][] | undefined;
+  if (Array.isArray(first) && first.length && Array.isArray(first[0])) {
+    // phi is (C, Nx, Ny) -> pick requested channel (fallback to 0 if OOB).
+    const c = phi as number[][][];
+    const idx = channel >= 0 && channel < c.length ? channel : 0;
+    return c[idx] as Grid2D;
+  }
+  return phi as Grid2D;
+}
+
 /** Normalize a numeric grid (2-D array) to [-1, 1] by its peak abs value. */
 export function normGrid(grid: number[][]): {
   norm: number[][];
