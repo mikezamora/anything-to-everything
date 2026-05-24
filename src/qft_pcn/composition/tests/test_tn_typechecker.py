@@ -207,6 +207,42 @@ def test_pi_type_projector_returns_zero_on_reject():
     assert val == pytest.approx(0.0)
 
 
+def test_pi_type_projector_logs_warning_on_malformed_bundle(caplog):
+    """E11 reviewer follow-up: the swallowed ``mera_from_bundle`` failure
+    must surface as a warning record (so silent bundle corruption is
+    diagnosable) while the projector still returns ``0.0`` to keep the
+    surface total."""
+    import logging
+    from dataclasses import replace
+
+    lem = _build_lemma(r"\x:Int. x")
+    # Corrupt the bundle so ``mera_from_bundle`` raises during rebuild.
+    # Replacing leaf_vectors with an all-zero array of the wrong shape
+    # forces a shape/contract error in the rebuild path.
+    bad_leaf = np.zeros((1, 1, 1), dtype=np.complex128)
+    bad_bundle = replace(lem.mera_tensors, leaf_vectors=[bad_leaf])
+    bad_lem = Lemma(
+        lemma_id=lem.lemma_id,
+        proposition_type=lem.proposition_type,
+        mera_tensors=bad_bundle,
+        encoding_meta=lem.encoding_meta,
+        derivation=lem.derivation,
+        fingerprint=lem.fingerprint,
+    )
+    with caplog.at_level(
+        logging.WARNING,
+        logger="src.qft_pcn.composition.tn_typechecker",
+    ):
+        val = pi_type_projector_expectation(
+            bad_lem, TPi(src=TInt(), dst=TInt()),
+        )
+    assert val == pytest.approx(0.0)
+    assert any(
+        "pi_type_projector" in rec.message and "mera_from_bundle failed" in rec.message
+        for rec in caplog.records
+    ), f"expected warning record; got {[r.message for r in caplog.records]!r}"
+
+
 # ---- register_lemma wiring -----------------------------------------------
 
 

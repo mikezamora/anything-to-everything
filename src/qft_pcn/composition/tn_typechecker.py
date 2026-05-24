@@ -52,6 +52,7 @@ What is explicitly NOT done (§1.6 anti-shortcut):
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Optional
 
@@ -461,7 +462,10 @@ def pi_type_projector_expectation(
     # a total numeric projector measurement).
     try:
         _ = mera_from_bundle(lemma.mera_tensors)
-    except Exception:  # noqa: BLE001
+    except Exception as e:  # noqa: BLE001
+        logging.getLogger(__name__).warning(
+            "pi_type_projector: mera_from_bundle failed: %r", e,
+        )
         return 0.0
     verdict = tn_typecheck(lemma, expected)
     return 1.0 if isinstance(verdict, TypeCheckOk) else 0.0

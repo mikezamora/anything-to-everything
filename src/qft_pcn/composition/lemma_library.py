@@ -971,6 +971,7 @@ def register_lemma(library: LemmaLibrary, state, meta, hamiltonian,
     # tags + forall_protected_leaves), not an AST walk; it complements
     # the residual gate without re-doing classical typechecking.
     if expected_type is not None:
+        # local import: tn_typechecker imports Lemma from this module, so module-scope import would cycle
         from src.qft_pcn.composition.tn_typechecker import (
             tn_typecheck_bundle, TypeCheckError,
         )

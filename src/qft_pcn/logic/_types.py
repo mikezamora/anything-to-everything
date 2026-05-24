@@ -13,7 +13,7 @@ from __future__ import annotations
 from typing import Optional
 
 from .ast import (Node, Var, Lam, App, IntLit, BoolLit, If, Bin, HoleVar,
-                  Ty, TInt, TBool, TArrow, TypeHole,
+                  Ty, TInt, TBool, TArrow, TypeHole, TPi,
                   Zero, Succ, NatLit, Nil, Cons, Eq, TNat, TList, TProp,
                   Forall, Fix)
 from ._serialize import NodeOccupancy
@@ -73,6 +73,19 @@ def ty_to_tag(ty: Ty) -> tuple[int, Optional[Ty]]:
         return (TYPE_LIST, None)
     if isinstance(ty, _TProp):
         return (TYPE_PROP, None)
+    if isinstance(ty, TPi):
+        # Defensive hardening: there is no dedicated "Pi" flat tag — a
+        # dependent product is identified at the substrate level by the
+        # root kind leaf being KIND_FORALL together with the value-leaf
+        # carrying the param-type's tag (see
+        # ``tn_typechecker.tn_typecheck_bundle``'s TPi branch, which
+        # only calls ``ty_to_tag(expected.src)``). For any future caller
+        # that hands a full ``TPi`` to this function, we return the
+        # src-tag (the tag the substrate value-leaf must match). The
+        # nested-Ty slot is unused: TPi never lives in the
+        # ``nested_type_index`` side table (that is reserved for nested
+        # ``TArrow``).
+        return ty_to_tag(ty.src)
     if isinstance(ty, TypeHole):
         # Defensive: when a TypeHole leaks into ty_to_tag (e.g. as the
         # src/dst of a TArrow built from a Lam whose param_ty is a hole),
