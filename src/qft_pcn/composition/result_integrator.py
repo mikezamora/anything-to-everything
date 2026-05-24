@@ -8,6 +8,7 @@ bottom-up free-energy message: high-residual children clamp weakly.
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Any
 
@@ -55,6 +56,15 @@ def _spectral_gap(child_result) -> float:
     ``gap < GROUND_STATE_GAP`` -- equality is not less-than. The
     safer-by-default behaviour here forces a runner to publish the gap
     explicitly to clear the gate.
+
+    D23 (DEVIATIONS.md): a runner that cannot compute the gap (e.g. the
+    bridge's dense-diag path with ``d_local ** N > dim_ceiling``) now
+    surfaces ``math.nan`` instead of silently emitting ``0.0``. The
+    refusal path :func:`integrate_child` checks ``math.isnan`` BEFORE
+    the numeric ``gap < GROUND_STATE_GAP`` compare so it can refuse
+    with a CLEAR "spectral_gap unavailable" reason naming the
+    substrate, instead of the misleading "near-degenerate" message
+    that a real zero gap would (correctly) trigger.
     """
     return float(child_result.run_diagnostic.get("spectral_gap", 0.0))
 
@@ -106,6 +116,30 @@ def integrate_child(parent_state: Any, parent_meta: Any, node: Node,
     # --- refusal paths -----------------------------------------------------
     if not child_result.converged:
         return _refuse(node, "child did not converge")
+    # D23 (DEVIATIONS.md): distinguish "spectral gap unavailable" (NaN
+    # sentinel from the producer when the substrate is above the dense-diag
+    # ceiling, or numeric fault) from a real near-degenerate gap (finite
+    # value < threshold). NaN comparisons are always False so the original
+    # ``gap < GROUND_STATE_GAP`` already refused, but with the misleading
+    # "near-degenerate" reason. The explicit branch surfaces a CLEAR reason
+    # that names the producer's structural limit. §1.1 anti-shortcut: a
+    # silent ``0.0`` (the pre-D23 behaviour) hid the structural failure
+    # behind a misleading message.
+    if math.isnan(gap):
+        H = getattr(child_result, "hamiltonian", None)
+        dim_str = ""
+        if H is not None:
+            try:
+                dim_str = (f" (substrate dim "
+                           f"{int(H.d_local) ** int(H.N)}; producer ceiling "
+                           f"exceeded or numeric fault)")
+            except Exception:        # noqa: BLE001 -- best-effort context only
+                dim_str = ""
+        return _refuse(
+            node,
+            f"spectral_gap unavailable{dim_str}: runner returned NaN; "
+            f"§6.3 gate cannot evaluate near-degeneracy",
+        )
     if gap < GROUND_STATE_GAP:
         return _refuse(node, "near-degenerate: not a true ground state")
     if residual > CONJECTURE_CEILING:

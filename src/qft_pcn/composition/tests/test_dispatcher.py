@@ -430,3 +430,91 @@ def test_dispatcher_cache_hit_skips_redispatch():
     assert results[0].run_diagnostic.get("cached_lemma_id") == "lem_cached"
     # Gap propagates from the cached derivation for the integrator gate.
     assert results[0].run_diagnostic["spectral_gap"] == 1.0
+
+
+# ---------------------------------------------------------------------------
+# D23 (DEVIATIONS.md): above-ceiling substrate must NOT silently emit 0.0
+# ---------------------------------------------------------------------------
+
+
+def test_spectral_gap_above_ceiling_routes_to_lanczos_or_explicit_refuse():
+    """D23 (DEVIATIONS.md): when ``d_local ** N > dim_ceiling`` the bridge
+    dense-diag path cannot materialise the Hamiltonian. The pre-D23 behaviour
+    returned ``0.0`` -- bitwise identical to a genuinely gapless substrate
+    and to the integrator's strict-refuse default, so an M3-scale child
+    (d_local=8, N>=5 -> dim=32768) was silently refused at the §6.3 gate
+    with the misleading "near-degenerate" reason. §1.1 anti-shortcut
+    violation.
+
+    Acceptance: the producer surfaces a NaN sentinel (option (a): explicit
+    "unavailable", chosen over option (b) Lanczos because
+    :class:`BridgeHamiltonian` does not currently expose a sparse /
+    ``LinearOperator`` apply; EXTENSIONS.md records the Lanczos route).
+    The :func:`integrate_child` consumer detects NaN and refuses with a
+    CLEAR reason that names the substrate dim instead of
+    "near-degenerate".
+    """
+    import math as _math
+    from src.qft_pcn.bridge.runtime import _spectral_gap_from_hamiltonian
+    from src.qft_pcn.bridge.runtime.hamiltonian import BridgeHamiltonian
+    from src.qft_pcn.bridge.dsl.term import FieldSpec
+    from src.qft_pcn.composition.result_integrator import (
+        integrate_child, IntegrationOutcome,
+    )
+    from src.qft_pcn.composition.dispatcher import ChildResult
+    from src.qft_pcn.composition.goal_graph import (
+        make_sub_goal, Node, Status,
+    )
+
+    # --- producer side: dim above ceiling must emit NaN, NOT 0.0 ---------
+    # Construct a real bridge Hamiltonian whose ``d_local ** N`` exceeds the
+    # default ``dim_ceiling=4096``. cutoff=4, sites=7 -> dim 4**7 = 16384.
+    fields = [FieldSpec(name="x", cutoff=4)]
+    H_above = BridgeHamiltonian(fields=fields, sites=7, terms=[])
+    assert int(H_above.d_local) ** int(H_above.N) > 4096, (
+        "test premise broken: substrate must be above the dense-diag ceiling")
+    gap_above = _spectral_gap_from_hamiltonian(H_above)
+    assert _math.isnan(gap_above), (
+        f"D23 contract broken: above-ceiling substrate must surface NaN "
+        f"(sentinel) not a silent numeric -- got {gap_above!r}")
+
+    # And the under-ceiling path still returns a finite gap (no regression).
+    H_below = BridgeHamiltonian(fields=fields, sites=2, terms=[])
+    gap_below = _spectral_gap_from_hamiltonian(H_below)
+    assert not _math.isnan(gap_below), (
+        "D23 regression: under-ceiling substrate must still compute a "
+        f"finite gap; got {gap_below!r}")
+
+    # --- consumer side: NaN must refuse with a CLEAR reason --------------
+    # Stand up a minimal Node and a synthesised converged ChildResult whose
+    # run_diagnostic carries the NaN. The integrator must refuse with a
+    # reason that names the unavailability, NOT "near-degenerate".
+    sg = make_sub_goal({"g": "above_ceiling"}, goal_prop="P", boundary={},
+                       parent_leaves=(0,))
+    node = Node(goal=sg, status=Status.PENDING)
+    cr = ChildResult(
+        goal_id=sg.goal_id,
+        converged=True,
+        residual_energy=1e-9,
+        ground_state=object(),
+        solved_ast=None,
+        run_diagnostic={"spectral_gap": _math.nan},
+        error=None,
+        meta=object(),
+        hamiltonian=H_above,
+        trotter_steps=0,
+    )
+    outcome: IntegrationOutcome = integrate_child(
+        parent_state=None, parent_meta=None, node=node,
+        child_result=cr, lemma_library=None,
+    )
+    assert outcome.integrated is False
+    assert "spectral_gap unavailable" in outcome.reason, (
+        f"D23 contract: refusal reason must name the unavailability "
+        f"explicitly, not be the misleading 'near-degenerate'; "
+        f"got: {outcome.reason!r}")
+    # Substrate dim surfaced in the message so the operator can act.
+    assert "16384" in outcome.reason, (
+        f"D23 contract: refusal reason should name the substrate dim "
+        f"(16384 for cutoff=4 N=7); got: {outcome.reason!r}")
+    assert node.status == Status.FAILED

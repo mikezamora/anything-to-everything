@@ -6,6 +6,7 @@ string) DSL and returns a RunResult / RunDiagnostic dataclass.
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 import numpy as np
@@ -58,11 +59,26 @@ def _energy_per_term(state, terms: list) -> list[float]:
 
 def _converged(history: list[float], *, tol: float = 1e-6,
                window: int = 5) -> bool:
+    """Dual-gate convergence: settled (|delta| < tol) AND monotonic
+    (each step is approximately non-increasing within slack ``tol``).
+
+    D22 fix: the previous ``monotonic`` check required deltas ``<= 1e-8``
+    — three orders tighter than ``tol``. Imaginary-time evolution on a
+    bridge Hamiltonian produces per-step deltas of order
+    ``dt * <H^2>`` that routinely sit in ``[1e-8, 1e-6]`` for converged
+    trajectories. The combined gate therefore reported
+    ``converged=False`` on legitimate ground-state runs whenever the
+    trace settled above ``1e-8 / step``, and the composition integrator
+    refused every such child. Aligning ``monotonic`` to use ``tol`` as
+    its slack restores the principled semantics: "no step inflates by
+    more than ``tol``" (small positive jitter from finite-precision
+    arithmetic is allowed; a sustained climb is not).
+    """
     if len(history) < window + 1:
         return False
     tail = history[-(window + 1):]
     deltas = [tail[i] - tail[i - 1] for i in range(1, len(tail))]
-    monotonic = all(d <= 1e-8 for d in deltas)
+    monotonic = all(d <= tol for d in deltas)
     settled = all(abs(d) < tol for d in deltas)
     return monotonic and settled
 
@@ -78,12 +94,27 @@ def _spectral_gap_from_hamiltonian(H, *, dim_ceiling: int = 4096) -> float:
     diagonalize via ``np.linalg.eigvalsh`` -- there is no Lanczos
     dependency to drag in and the matrix is small.
 
-    Falls back to ``0.0`` (strict refuse) when:
+    Returns ``math.nan`` (consumer-side "unavailable" sentinel; NaN
+    comparisons are always False so the strict refuse path fires by
+    construction) when:
       - the total Hilbert dim ``d_local ** N`` exceeds ``dim_ceiling``
-        (full diagonalization would be too costly; a future Lanczos
-        path is the principled upgrade, recorded as an EXTENSIONS
-        entry),
+        (full diagonalization would be too costly; a Lanczos /
+        ``scipy.sparse.linalg.eigsh`` route is the principled upgrade
+        but requires a sparse / ``LinearOperator`` apply on the
+        bridge Hamiltonian which it does not currently expose -- see
+        EXTENSIONS.md entry for D23),
+      - ``total < 2`` (degenerate substrate; no excited state),
       - the matrix yields a non-finite spectrum (numerical fault).
+
+    D23 (DEVIATIONS.md): the previous fallback ``0.0`` was the
+    strict-refuse value at the §6.3 gate AND the value a genuinely
+    gapless substrate would emit -- the consumer could not tell
+    "unavailable" from "real zero". Switching to NaN preserves the
+    strict-refuse behaviour (gap < threshold remains False for NaN,
+    so the gate refuses), while letting the consumer distinguish the
+    two cases via ``math.isnan`` and emit a CLEAR refusal reason
+    naming the substrate dim. A silent ``0.0`` for too-big substrates
+    is a §1.1 anti-shortcut violation.
 
     ANTI-SHORTCUT (§1.1 / memory:anti-shortcut-directive): this is NOT
     a placeholder constant. The Hamiltonian is the same object that
@@ -95,7 +126,7 @@ def _spectral_gap_from_hamiltonian(H, *, dim_ceiling: int = 4096) -> float:
     d = int(H.d_local)
     total = d ** N
     if total > dim_ceiling or total < 2:
-        return 0.0
+        return math.nan
     # Assemble full dense matrix: H = sum_k I^{otimes k} (x) local_k (x) I^{...}
     # + sum_k I^{...} (x) bond_k (x) I^{...}.
     M = np.zeros((total, total), dtype=complex)
@@ -129,12 +160,12 @@ def _spectral_gap_from_hamiltonian(H, *, dim_ceiling: int = 4096) -> float:
     try:
         eigs = np.linalg.eigvalsh(M)
     except np.linalg.LinAlgError:
-        return 0.0
+        return math.nan
     if not np.all(np.isfinite(eigs)):
-        return 0.0
+        return math.nan
     eigs = np.sort(np.real(eigs))
     if len(eigs) < 2:
-        return 0.0
+        return math.nan
     return float(eigs[1] - eigs[0])
 
 
