@@ -537,6 +537,71 @@ def test_local_expectation_causal_cone_O_log_N():
         f"local_expectation made {calls[0]} ascent calls; expected {m.L - 1}"
 
 
+# ---- D5: inter-pair fold guard -------------------------------------------
+
+
+def test_ascend_one_layer_handles_non_identity_inter_pair():
+    """D5 fix: after :meth:`apply_two_site_gate` writes a non-identity
+    inter-pair disentangler at layer 0, :meth:`local_expectation` and
+    :meth:`two_site_expectation` must include the inter-pair causal cone
+    in the result. Pre-fix, the single-pair ascending superoperator
+    silently dropped this contribution and the expectation was biased.
+
+    We verify the fold by:
+    (a) constructing two MERAs with the same leaf state but different
+        layer-0 inter-pair disentanglers (identity vs SWAP);
+    (b) asserting that a non-symmetric local operator at the affected
+        leaves observes a value-DIFFERENCE — i.e. the inter-pair
+        disentangler is no longer dropped from the cone.
+    Pre-fix, both expectations would equal the identity-disentangler
+    value (silent drop). Post-fix, the SWAP'd MERA reads the swapped
+    leaf state.
+    """
+    from src.qft_pcn.qft.mera import MERA
+    # Two distinct leaf states so swap is observable.
+    psi_a = np.array([1.0, 0.0], dtype=complex)         # |0>
+    psi_b = np.array([0.0, 1.0], dtype=complex)         # |1>
+    # 4-leaf product |0> |1> |0> |1>; leaves (1, 2) are inter-pair.
+    m_id = MERA.from_product([psi_a, psi_b, psi_a, psi_b], chi_layer=4)
+    m_swap = MERA.from_product([psi_a, psi_b, psi_a, psi_b], chi_layer=4)
+    # SWAP gate at leaves (1, 2) — inter-pair, odd leaf.
+    SWAP = np.array([[1, 0, 0, 0],
+                     [0, 0, 1, 0],
+                     [0, 1, 0, 0],
+                     [0, 0, 0, 1]], dtype=complex)
+    err = m_swap.apply_two_site_gate(leaf=1, gate=SWAP, chi_max=4)
+    assert err < 1e-10, "SWAP is unitary; truncation should be ~0"
+    # The inter-pair disentangler at layer 0, slot 0 (couples leaves
+    # 1 and 2) is now non-identity.
+    assert m_swap._layer0_inter_is_nontrivial(), \
+        "test precondition: SWAP should have made layer-0 inter " \
+        "non-identity"
+    # n = diag(0, 1) projector on |1>. After SWAP on (1, 2):
+    #   |0> |1> |0> |1>  -->  |0> |0> |1> |1>
+    # Pre-swap <n_2> = 0; post-swap <n_2> = 1.
+    n = np.array([[0.0, 0.0], [0.0, 1.0]], dtype=complex)
+    v_id = m_id.local_expectation(leaf=2, op=n)
+    v_swap = m_swap.local_expectation(leaf=2, op=n)
+    assert abs(v_id.real) < 1e-8, f"identity-MERA <n_2> = {v_id}, expected 0"
+    assert abs(v_swap.real - 1.0) < 1e-8, (
+        f"SWAP'd MERA <n_2> = {v_swap}, expected 1 — D5 fold-fallback "
+        "failed; inter-pair disentangler was dropped from the cone"
+    )
+    # Two-site expectation across the inter-pair boundary should also
+    # be honest. n (x) n projector reads |1,1>. Pre-swap on (1, 2):
+    # state is |1, 0>, <n(x)n> = 0. Post-swap: |0, 1>, also 0. Use
+    # (n (x) I) instead: pre-swap <n_1> = 1, post-swap <n_1> = 0.
+    n_op_left = np.kron(n, np.eye(2, dtype=complex))    # (4, 4)
+    w_id = m_id.two_site_expectation(leaf=1, op=n_op_left)
+    w_swap = m_swap.two_site_expectation(leaf=1, op=n_op_left)
+    assert abs(w_id.real - 1.0) < 1e-8, \
+        f"identity-MERA <n_1> via two-site = {w_id}, expected 1"
+    assert abs(w_swap.real) < 1e-8, (
+        f"SWAP'd MERA <n_1> via two-site = {w_swap}, expected 0 — "
+        "D5 fold-fallback failed on intra-pair branch"
+    )
+
+
 # ---- Task 18: General entanglement entropy via materialization -----------
 
 

@@ -894,11 +894,14 @@ class MERA:
             op_pair_conj = u . op_pair . u^dag   (intra-pair disentangler)
             op_up = w . op_pair_conj . w^dag      (isometry projection)
 
-        Inter-pair disentanglers are NOT included here; on product /
-        vacuum MERAs they act as identity, so this simplification is
-        exact. Sub-projects E/F's gate-application acceptance test
-        (Task 17) will validate that the simplification is consistent
-        with the actual structure used elsewhere in the substrate.
+        Inter-pair disentanglers are NOT included in this single-pair
+        ascending superoperator — they are pair-coupling and require a
+        wider causal cone to fold (handled by the caller via
+        :meth:`local_expectation`'s materialize-fallback path; see D5
+        fix). On vacuum / product MERAs the inter-pair disentanglers act
+        as identity so this simplification is exact; whenever they are
+        non-identity at layer 0 (post gate-application) the caller MUST
+        NOT route through this method, or the result is silently biased.
         """
         j = pos // 2
         d_ell = self.layer_dims[ell]
@@ -917,12 +920,73 @@ class MERA:
         op_up = contract('Aab,abcd,Bcd->AB', w, op_pair_conj, w.conj())
         return op_up
 
+    def _layer0_inter_is_nontrivial(self) -> bool:
+        """True iff any ``inter_disentanglers[0][j]`` is non-identity.
+
+        Used by :meth:`local_expectation` and :meth:`two_site_expectation`
+        to route to the materialize-based exact path (D5 fix): the
+        single-pair ascending superoperator silently drops the inter-pair
+        disentangler, which is incorrect once :meth:`apply_two_site_gate`
+        has absorbed a non-identity gate at an odd-leaf boundary.
+        """
+        for u in self.inter_disentanglers[0]:
+            if not _is_identity_matrix(u):
+                return True
+        return False
+
+    def _local_expectation_via_materialize(self, leaf: int,
+                                           op: np.ndarray) -> complex:
+        """Exact <psi|O_leaf|psi> via leaf-basis materialization.
+
+        Used as the D5 fold-fallback when layer-0 inter-pair disentanglers
+        are non-identity. ``_materialize`` itself raises NotImplementedError
+        for non-identity layers >= 1, so this honest-fails loudly outside
+        the gate-application invariant (only layer-0 modifiable).
+        """
+        psi = self._materialize()   # (d,)*N
+        d = self.d_local
+        # Apply op on the `leaf` axis: psi_out[..., s', ...] =
+        #   sum_s op[s', s] · psi[..., s, ...]
+        axes = list(range(self.N))
+        # Move leaf axis to front for contract, then back.
+        psi_moved = np.moveaxis(psi, leaf, 0)              # (d, d, ..., d)
+        op_psi = np.tensordot(op, psi_moved, axes=([1], [0]))   # (d, d, ..., d)
+        op_psi = np.moveaxis(op_psi, 0, leaf)
+        # <psi | op_psi> = sum over all indices of conj(psi) * op_psi.
+        return complex(np.vdot(psi.ravel(), op_psi.ravel()))
+
+    def _two_site_expectation_via_materialize(self, leaf: int,
+                                              op: np.ndarray) -> complex:
+        """Exact <psi|O_{leaf, leaf+1}|psi> via leaf-basis materialization.
+
+        D5 fold-fallback. Same loud-fail discipline as
+        :meth:`_local_expectation_via_materialize`.
+        """
+        psi = self._materialize()                # (d,)*N
+        d = self.d_local
+        op4 = op.reshape(d, d, d, d)             # (out_l, out_r, in_l, in_r)
+        # Apply op4 on axes (leaf, leaf+1) of psi.
+        psi_moved = np.moveaxis(psi, [leaf, leaf + 1], [0, 1])   # (d,d,...)
+        op_psi = np.tensordot(op4, psi_moved, axes=([2, 3], [0, 1]))
+        op_psi = np.moveaxis(op_psi, [0, 1], [leaf, leaf + 1])
+        return complex(np.vdot(psi.ravel(), op_psi.ravel()))
+
     def local_expectation(self, leaf: int, op: np.ndarray) -> complex:
         """<psi | O_leaf | psi> for a single-leaf operator (d, d).
 
         Ascends `op` through the L-1 causal-cone tensors to the top
         layer, then contracts with the top tensor. Cost O(d^4 · L).
         Spec §5.4.
+
+        D5 fix: when any layer-0 inter-pair disentangler is non-identity
+        (post :meth:`apply_two_site_gate` on an odd leaf), the single-pair
+        ascending superoperator is insufficient — the inter-pair causal
+        cone is dropped and the result is biased. In that case we route
+        to the materialize-based exact path, which folds all layer-0
+        disentanglers (intra + inter) into a leaf-basis state and
+        contracts the operator directly. ``_materialize`` enforces the
+        layer-≥1-identity invariant via NotImplementedError, so this
+        path honest-fails on out-of-spec states.
         """
         if not 0 <= leaf < self.N:
             raise IndexError(f"leaf {leaf} out of range [0, {self.N})")
@@ -931,6 +995,8 @@ class MERA:
             raise ValueError(f"op shape {op.shape}, expected ({d}, {d})")
         if self._superposition_terms is not None:
             return self._local_expectation_from_terms(leaf, op)
+        if self._layer0_inter_is_nontrivial():
+            return self._local_expectation_via_materialize(leaf, op)
         op_layer = to_device(op)
         pos = leaf
         for ell in range(self.L - 1):
@@ -985,6 +1051,14 @@ class MERA:
             raise ValueError(
                 f"op shape {op.shape}, expected ({d * d}, {d * d})")
         op4 = to_device(op.reshape(d, d, d, d))   # (out_l, out_r, in_l, in_r)
+        # D5 fix: when layer-0 inter-pair disentanglers are non-identity
+        # the single-pair ascending path silently drops them from the
+        # causal cone. Route to materialize-based exact contraction;
+        # `_materialize` honest-fails (NotImplementedError) on layer-≥1
+        # non-identity, preserving the layer-0-only modification invariant.
+        if (self._superposition_terms is None
+                and self._layer0_inter_is_nontrivial()):
+            return self._two_site_expectation_via_materialize(leaf, op)
         if leaf % 2 == 0:
             # Intra-pair: the gate acts on pair j = leaf // 2 of layer 0.
             j = leaf // 2
