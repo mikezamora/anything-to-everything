@@ -941,6 +941,41 @@ already perf-optimized through the M3 perf path
   acceptance, insufficient for the §10.10 dispatcher contract.
 - Unblocks: §12.5 production wiring + §10.10 corruption-aware acceptance.
 
+## RESOLVED: Substrate task S3 — replica analytic-continuation tooling
+
+- Status: RESOLVED. Lands in `src/qft_pcn/qft/replica.py` with 16
+  acceptance tests in `src/qft_pcn/qft/tests/test_replica.py` (all
+  passing).
+- Surface: three entry points.
+  - `analytic_continuation_at_zero(zn_values, n_grid)` — fits the
+    auxiliary `g(n) = (<Z^n> - 1)/n` (well-conditioned near n=0 since
+    `<Z^n> = exp(n F(n))`, `F(0) = <log Z>`) through Lagrange (sympy
+    when available) or `numpy.polyfit`, then evaluates at n=0.
+  - `compute_zn_for_ensemble(ensemble, n_values)` — averages `Z^n`
+    across an ensemble whose entries are either floats or zero-arg
+    callables returning operator-derived `Z`. Lazy callables keep the
+    substrate operator computation outside this module (§1.6 anti-
+    shortcut: `Z` itself must come from real operator algebra).
+  - `compute_log_z_from_replicas(zn_dict)` — convenience wrapper.
+- Acceptance: delta-ensemble recovery `<Z^n> = exp(n c) -> c` to 5e-3
+  for |c| <= 0.5 with grid n=1..6; exact polynomial recovery (degree-4
+  in n, grid 1..5) under both sympy and numpy paths; `Z=0` returns
+  `-inf` rather than `NaN`; end-to-end three-instance ensemble
+  pipeline matches `(1/|ens|) sum_i log Z_i` to 5e-3; full grid
+  validation (positive integers, distinct, length>=2).
+- Honest limits (documented in module + pinned by a
+  `test_replica_regime_limitation_documented` test):
+  polynomial extrapolation from integer n to n=0 is well-conditioned
+  only when `<Z^n>` stays moderate over the sample grid. For
+  `c >~ 0.5` with grid up to n=6 the error grows uncontrolled; this
+  is the canonical §12.7 risk note ("analytic continuation n -> 0
+  not well-defined for the specific ensemble"). The test pins that
+  c=1 with grid 1..6 produces a finite but far-from-correct estimate
+  so we notice if the regime boundary silently shifts.
+- Unblocks: §12.7 predictive typical-case complexity acceptance —
+  `composition/replica.py` (not in this commit) can now build on
+  the continuation primitive.
+
 ## RESOLVED: S1 MPO (Matrix Product Operator) substrate
 
 - Status: RESOLVED at commit `25b44a4` (substrate task S1). Lands in
