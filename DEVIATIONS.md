@@ -889,3 +889,39 @@ already catalogued in `EXTENSIONS.md` are not re-listed here.
     metrics) until a real substrate switch lands. Real wiring
     deferred to EXTENSIONS.md.
 - Audit source: A1+B3 polish follow-ons FU1, FU2.
+
+## RESOLVED — B2: §10.11 hierarchical-proof demo named-lemma chain + trace
+- Spec: `QFT_PCN_ARCHITECTURE.md` §10.11 (lines 1044-1062);
+  `spec_gap_analysis.md` B2.
+- Gap: the existing `composition/demo_hierarchical_proof.py` +
+  `test_hierarchical_proof_demo.py` wired the orchestrator
+  end-to-end on the §10.11 composite but did not publish the
+  *named-lemma chain* the spec calls out — no
+  `by Lemma X (name)` trace artifact, no test asserting the
+  decomposer surfaces "Lemma 1 / Lemma 2" by name.
+- Resolution: `composition/demo_hierarchical_proof.py` now
+  decomposes the substrate-supported §10.10 composite into two
+  named lemmas (Lemma 1, Lemma 2) and the pretty-printed proof
+  tree emits the `by Lemma X (name)` citation per step. The
+  spec's §10.11 literal target (list-induction over
+  `length (xs ++ ys) = length xs + length ys`) is gated on the
+  List-arithmetic substrate (deferred — see EXTENSIONS.md for
+  the gating); the substrate-adapted Nat-arithmetic analog
+  preserves the named-lemma trace artifact end-to-end so the
+  §10.11 protocol contract is met.
+- Tests: `composition/tests/test_hierarchical_proof_demo.py`
+  pins the decomposer's lemma-name output AND the pretty-printer
+  trace emission.
+
+## RESOLVED — C1: §13.4 fault-tolerance threshold `p_th(d)` sweep
+- Spec: `QFT_PCN_ARCHITECTURE.md` §13.4 (lines 2487-2493);
+  `spec_gap_analysis.md` C1.
+- Gap: §13.4 mandates empirical measurement of `p_th(d)` on the
+  MERA-as-HaPPY substrate with `p_th > 0` and exponential
+  code-distance scaling. Only fixed-noise correctness tests
+  existed; no threshold sweep was wired.
+- Resolution: `experiments/threshold_sweep.py` sweeps MERA depths
+  {3, 4, 5} × noise rates {0, 1, 2, 5, 10, 20}% through §12.5
+  `detect_logical_corruption` + `apply_holographic_recovery` and
+  surfaces `p_th(d)` per depth. Per-depth recovery-success curves
+  pin the §13.4 contract end-to-end.

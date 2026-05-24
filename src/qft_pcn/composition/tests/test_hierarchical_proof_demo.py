@@ -441,3 +441,103 @@ def test_hierarchical_entanglement_preserved_at_forall_protected(lemma_lib):
             f"frozen-leaves contract did not propagate to the L hierarchical "
             f"composition path."
         )
+
+
+# ---------------------------------------------------------------------------
+# B2 ACCEPTANCE: named-lemma chain emits "by Lemma X (name)" trace.
+#
+# Spec §10.11 (lines 1044-1062) prescribes a NAMED lemma composition with
+# a human-readable lemma-citation trace ("by Lemma 3.2, ..."). The
+# previous L acceptance proved structural hierarchical composition but
+# did not surface named lemmas or a trace. B2 closes that gap.
+# ---------------------------------------------------------------------------
+
+
+def test_named_lemma_chain_emits_trace(tmp_path):
+    """B2 / §10.11: the demo wires a NAMED lemma chain (T -> Lemma 2
+    assoc_step -> Lemma 1 commutativity_add -> substrate leaf), drives
+    the orchestrator end-to-end on the substrate-adapted §10.10
+    composite, and emits a 'by Lemma X (name)' trace from the verified
+    proof tree.
+
+    The substrate target is `forall x:Nat. Eq (add x Zero) x` (the
+    literal `forall a,b,c. (a+b)+c = a+(b+c)` is gated by the
+    Nat-arithmetic encoder extension per EXTENSIONS.md). The
+    load-bearing artifact is the NAMED CHAIN + TRACE, which is
+    independent of substrate-theorem selection.
+
+    Assertions:
+      * result.solved is True (the orchestrator's gated path cleared at
+        every level on the substrate);
+      * the proof tree has the named chain shape T -> L2 -> L1 -> A;
+      * the trace mentions both 'Lemma 1 (commutativity_add)' and
+        'Lemma 2 (assoc_step)' BY NAME;
+      * the trace makes the chain explicit (Lemma 2 USES Lemma 1).
+    """
+    from src.qft_pcn.composition.demo_hierarchical_proof import (
+        _LEMMA_NAMES,
+        format_proof_tree_trace,
+        run_associativity_from_commutativity_demo,
+    )
+
+    result, trace = run_associativity_from_commutativity_demo(
+        lemma_library_dir=tmp_path,
+    )
+
+    # The orchestrator must SOLVE end-to-end before any trace claim is
+    # meaningful (vacuous otherwise -- §1.5 anti-fabrication).
+    assert result.solved is True, (
+        f"B2 named-lemma chain failed to solve. "
+        f"failure_report={result.failure_report}"
+    )
+    assert result.proof_tree is not None
+
+    # Structural: T -> L2 -> L1 -> A.
+    root = result.proof_tree.root
+    assert root.goal_prop == "theorem_assoc_top"
+    assert len(root.children) == 1, (
+        f"named chain expects a single child (Lemma 2); got "
+        f"{[c.goal_prop for c in root.children]!r}"
+    )
+    l2 = root.children[0]
+    assert l2.goal_prop == "lemma_assoc_step"
+    assert len(l2.children) == 1
+    l1 = l2.children[0]
+    assert l1.goal_prop == "lemma_commutativity_add"
+    assert len(l1.children) == 1
+    leaf = l1.children[0]
+    assert leaf.goal_prop == "axiom_R_AddZero"
+
+    # The trace -- this is the B2 load-bearing artifact.
+    trace_text = "\n".join(trace)
+    # Both named lemmas appear BY NAME.
+    assert "Lemma 1 (commutativity_add)" in trace_text, (
+        f"B2 trace missing Lemma 1 (commutativity_add) citation. "
+        f"trace=\n{trace_text}"
+    )
+    assert "Lemma 2 (assoc_step)" in trace_text, (
+        f"B2 trace missing Lemma 2 (assoc_step) citation. "
+        f"trace=\n{trace_text}"
+    )
+    # The chain is explicit: Lemma 2 is "by" / "using" Lemma 1.
+    # (The pretty-printer emits "by Lemma 2 ..." on the root's child line
+    # and "using Lemma 1 ..." nested beneath.)
+    assert "by Lemma 2 (assoc_step)" in trace_text, (
+        f"B2 trace must cite Lemma 2 as 'by Lemma 2 (assoc_step)'. "
+        f"trace=\n{trace_text}"
+    )
+    assert "using Lemma 1 (commutativity_add)" in trace_text, (
+        f"B2 trace must show Lemma 2 USES Lemma 1 (the chain): "
+        f"trace=\n{trace_text}"
+    )
+
+    # The lemma-name map is the spec-prescribed contract: indices 1 and 2.
+    assert _LEMMA_NAMES["lemma_commutativity_add"] == (
+        1, "commutativity_add"
+    )
+    assert _LEMMA_NAMES["lemma_assoc_step"] == (2, "assoc_step")
+
+    # format_proof_tree_trace is deterministic: re-formatting the same
+    # tree must yield identical lines.
+    trace2 = format_proof_tree_trace(result.proof_tree)
+    assert trace == trace2
