@@ -13,6 +13,7 @@ footprints (entanglement-bond pattern, §1.1), not heuristic AST walks.
 """
 from __future__ import annotations
 
+import numpy as np
 import pytest
 
 from src.qft_pcn.composition.goldstone import (
@@ -234,6 +235,96 @@ def test_diagnostic_is_deterministic():
 # ---------------------------------------------------------------------------
 # Defensive: parameter validation + edge cases
 # ---------------------------------------------------------------------------
+
+
+def test_hessian_off_diagonal_is_two_operator_expectation():
+    """The off-diagonal Hessian entries are the GENUINE two-operator
+    expectations Re <psi|H_i H_j|psi> on the shared causal-cone window
+    (spec §12.6 — closes EXTENSIONS A.4). Previously the entries used a
+    Cauchy-Schwarz upper bound × geometric leaf-overlap fraction.
+
+    Two checks:
+
+    (a) Identity: for every pair (i, j) the matrix entry M[i, j] equals
+        :func:`_two_term_expectation` computed independently — i.e. the
+        builder really delegates to the operator-algebraic primitive,
+        not a residual-fraction surrogate.
+    (b) Distinctness: on the unsolved ``2 + 3`` redex there is at least
+        one term pair with non-disjoint leaf footprints whose genuine
+        two-operator expectation DIFFERS from the legacy upper-bound
+        heuristic by more than ~10% of the heuristic value (i.e. the
+        new substrate is not silently the old one). Without this the
+        "genuine Hessian" claim would be vacuous.
+    """
+    from src.qft_pcn.composition.goldstone import (
+        _build_constraint_matrix, _two_term_expectation,
+    )
+
+    # The addzero theorem (un-evolved) gives a multi-term active set
+    # — many R-AddZero, R-Eq-Refl, R-Beta penalties carry initial
+    # residual, exercising the two-operator off-diagonal entries on
+    # several non-disjoint footprints.
+    state, _, H = _addzero_theorem()
+    M, residuals, terms = _build_constraint_matrix(H, state)
+    n = len(terms)
+
+    # (a) Identity with the two-operator primitive on EVERY entered
+    # off-diagonal (zero-residual rows/cols are skipped by the builder
+    # as a correctness-preserving shortcut: H_i|psi> = 0 in the
+    # projector basis => <H_i H_j> = 0 for all j).
+    active = [i for i in range(n) if residuals[i] > 0.0]
+    assert len(active) >= 2, (
+        "fixture invariant: addzero theorem must have >= 2 active terms"
+    )
+    for i in active:
+        for j in active:
+            if j <= i:
+                continue
+            expected = _two_term_expectation(H, state, terms[i], terms[j])
+            assert M[i, j] == pytest.approx(expected, abs=1e-12), (
+                f"M[{i},{j}] = {M[i, j]} != _two_term_expectation = "
+                f"{expected} (terms {terms[i]}, {terms[j]})"
+            )
+            assert M[j, i] == pytest.approx(M[i, j], abs=1e-12)
+
+    # (b) The genuine two-operator value differs materially from the
+    # legacy Cauchy-Schwarz upper-bound × geometric-overlap heuristic
+    # on at least one non-disjoint pair. We compute the heuristic
+    # inline (no fallback in the source).
+    found_distinct = False
+    for i in active:
+        Li = H.term_affected_leaves(terms[i])
+        if not Li:
+            continue
+        for j in active:
+            if j <= i:
+                continue
+            Lj = H.term_affected_leaves(terms[j])
+            if not Lj:
+                continue
+            inter = len(Li & Lj)
+            if inter == 0:
+                continue
+            overlap = inter / max(len(Li), len(Lj))
+            heuristic = float(
+                np.sqrt(residuals[i] * residuals[j]) * overlap
+            )
+            genuine = M[i, j]
+            # We want at least one pair where genuine != heuristic by
+            # more than ~10% of the heuristic value (or by an absolute
+            # margin if the heuristic is tiny).
+            tol = max(0.1 * abs(heuristic), 1e-3)
+            if abs(genuine - heuristic) > tol:
+                found_distinct = True
+                break
+        if found_distinct:
+            break
+    assert found_distinct, (
+        "genuine two-operator Hessian was numerically identical to the "
+        "legacy upper-bound × overlap heuristic on every non-disjoint "
+        "pair — the new substrate is indistinguishable from the old. "
+        "This would silently re-introduce the §12.6 placeholder."
+    )
 
 
 def test_compute_near_null_rejects_zero_k():

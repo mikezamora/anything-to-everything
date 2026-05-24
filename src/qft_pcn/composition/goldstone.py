@@ -12,9 +12,7 @@ energy is a standard Lanczos eigenvalue problem.
 
 This module is an operator-algebraic substrate (NOT an AST walk, NOT a
 heuristic over rule names). The constraint-Hessian matrix M is built
-from a mix of a real operator expectation (diagonal) and an
-operator-bounded coupling proxy (off-diagonal); see honesty notes
-below.
+from real operator expectations on both diagonal and off-diagonal:
 
   - M[i,i] = <psi| H_t_i |psi>  (per-term FIRST moment, via the real
     MeraEvalHamiltonian.term_energy — a factored window expectation
@@ -22,20 +20,22 @@ below.
     moment <psi| H_t_i^2 |psi>; the two coincide when H_t_i is
     projector-like (P^2 = P), which is the case for current
     MeraEvalTerm terms per §7.4. We use the first moment directly.
-  - M[i,j] for i != j: an **operator-bounded coupling proxy**, NOT a
-    genuine two-operator expectation. Specifically,
-        M[i,j] = sqrt(r_i * r_j) * |L_i ∩ L_j| / max(|L_i|, |L_j|),
-    where r_t = <H_t> and L_t is the term's affected-leaf footprint
-    (the entanglement-bond pattern §1.1 — leaves the term reads or
-    writes through its causal cone). The sqrt(r_i*r_j) factor is the
-    Cauchy-Schwarz UPPER BOUND on |<H_i H_j>| under the projector
-    assumption above; the geometric overlap fraction is a heuristic
-    on the magnitude. Disjoint footprints decouple correctly via the
-    product-MERA factorization <H_i H_j> = <H_i><H_j> (spec §1.2),
-    but for overlapping footprints the off-diagonal is a bounded
-    heuristic, not the true Hessian entry. The genuine two-operator
-    expectation <psi|H_i H_j|psi> on the shared causal-cone window is
-    deferred (see EXTENSIONS.md §12.6 entry).
+  - M[i,j] for i != j: the GENUINE symmetric two-operator expectation
+    Re <psi| H_i H_j |psi> on the shared causal-cone window of the
+    union footprint L_i ∪ L_j. Since each penalty H_i is a sum of
+    per-leaf factored operator products (spec §7.4 `_penalty_ops`),
+    H_i H_j is the sum over (a,b) of the per-leaf operator products
+    O_{i,a}[k] @ O_{j,b}[k] on shared leaves (identity on the rest),
+    which routes back through ``mera_window_expectation_factored`` —
+    the same substrate primitive §12.1 anomaly already uses. Disjoint
+    footprints automatically factor via §1.2 (<H_i H_j> = <H_i><H_j>)
+    since the per-leaf product over the union footprint is simply the
+    concatenation of the two non-overlapping leaf-op dicts; the
+    factored expectation evaluates that as a single window call. We
+    take the real part for symmetry of the Hessian (H_i, H_j Hermitian
+    => <H_j H_i> = <H_i H_j>*, so the symmetric Hessian entry is
+    Re <H_i H_j>; in practice the imaginary part is at numerical
+    floor for the projector basis §7.4).
 
 Small eigenvalues of M correspond to Goldstone modes: directions in
 term-space where the constraint energy is nearly flat (massless
@@ -57,6 +57,7 @@ import numpy as np
 from scipy.sparse import csr_matrix
 from scipy.sparse.linalg import eigsh
 
+from src.qft_pcn.logic._mera_window import mera_window_expectation_factored
 from src.qft_pcn.logic.mera_evaluation_hamiltonian import (
     MeraEvalHamiltonian, MeraEvalTerm,
 )
@@ -154,6 +155,65 @@ class LemmaDiagnostic:
 # ---------------------------------------------------------------------------
 
 
+def _compose_leaf_ops(
+    ops_a: dict, ops_b: dict,
+) -> dict:
+    """Per-leaf product of two factored operator dicts.
+
+    Each dict maps ``leaf -> (d,d)`` operator. The product operator
+    over the union of leaves is the per-leaf matrix product
+    ``ops_a[leaf] @ ops_b[leaf]`` where both supply an op, and just
+    the one supplied op where only one does (identity on the other).
+    This is exact: the operator ``O_a O_b`` factors over leaves
+    because each factor itself factors (spec §7.4); the per-leaf
+    composition is just `(A_k ⊗ I_rest) (B_k ⊗ I_rest) = (A_k B_k) ⊗
+    I_rest` on disjoint leaves, and `(A_k B_k) ⊗ ...` on shared
+    leaves.
+    """
+    merged: dict = dict(ops_a)
+    for leaf, op_b in ops_b.items():
+        prev = merged.get(leaf)
+        if prev is None:
+            merged[leaf] = op_b
+        else:
+            merged[leaf] = prev @ op_b
+    return merged
+
+
+def _two_term_expectation(
+    H: MeraEvalHamiltonian, state: MERA,
+    term_i: MeraEvalTerm, term_j: MeraEvalTerm,
+) -> float:
+    """Re <psi| H_i H_j |psi> via the factored-window primitive.
+
+    Each term's penalty is a SUM of per-leaf factored products
+    (``_penalty_ops`` returns a list of leaf->op dicts; the term's
+    operator is the sum of those products). Hence:
+
+        <psi| H_i H_j |psi>
+          = sum_{a in ops_i} sum_{b in ops_j} <psi| O_{i,a} O_{j,b} |psi>
+
+    Each O_{i,a} O_{j,b} is again a per-leaf factored product (per
+    :func:`_compose_leaf_ops`), so it routes back through
+    :func:`mera_window_expectation_factored` — the same substrate
+    primitive §12.1 anomaly uses. No dense `16**k` operator is built.
+    """
+    ops_i_list = H._penalty_ops(term_i)
+    ops_j_list = H._penalty_ops(term_j)
+    if not ops_i_list or not ops_j_list:
+        return 0.0
+    total = 0.0 + 0.0j
+    for ops_a in ops_i_list:
+        for ops_b in ops_j_list:
+            prod = _compose_leaf_ops(ops_a, ops_b)
+            total += mera_window_expectation_factored(state, prod)
+    # Symmetric Hessian entry: H_i, H_j Hermitian => <H_j H_i> =
+    # conj(<H_i H_j>), so the symmetric (Hessian) coupling is the
+    # real part. The imaginary part should be at numerical floor on
+    # the projector basis §7.4.
+    return float(total.real)
+
+
 def _build_constraint_matrix(
     H: MeraEvalHamiltonian, state: MERA,
 ) -> tuple[np.ndarray, list[float], list[MeraEvalTerm]]:
@@ -161,9 +221,10 @@ def _build_constraint_matrix(
     per-term residual vector.
 
     The basis is :attr:`MeraEvalHamiltonian.terms` (one entry per
-    (rule, node) pair). M is symmetric, PSD by construction (diagonal
-    = non-negative term energies; off-diagonal = sqrt(r_i*r_j) * J[i,j]
-    with J in [0,1]).
+    (rule, node) pair). M is symmetric and PSD by construction: the
+    off-diagonal Re <H_i H_j> together with the diagonal <H_i^2>
+    (= <H_i> for projector terms §7.4) is the Gram matrix of the
+    vectors H_i|psi>, which is automatically PSD.
 
     Returns ``(M, residuals, terms)``.
     """
@@ -172,37 +233,26 @@ def _build_constraint_matrix(
     residuals = [float(H.term_energy(state, t)) for t in terms]
 
     # Leaf footprints — operator-derived from term_affected_leaves
-    # (the causal-cone leaf set the term reads/writes per §1.1).
-    footprints: list[frozenset[int]] = [
-        H.term_affected_leaves(t) for t in terms
-    ]
-
+    # (the causal-cone leaf set the term reads/writes per §1.1). We
+    # use these only as a CHEAP zero-coupling shortcut: when both
+    # terms have zero residual (<H_i> = 0 means H_i|psi> = 0 for the
+    # projector basis §7.4, so <H_i H_j> = 0), or when either term's
+    # _penalty_ops list is empty (no enumerated structural moves on
+    # this node — the term contributes no operator at all). The
+    # genuine two-operator expectation is computed for every other
+    # off-diagonal entry via :func:`_two_term_expectation`.
     M = np.zeros((n, n), dtype=float)
     for i in range(n):
         M[i, i] = residuals[i]
-    # Off-diagonal: operator-bounded coupling proxy (NOT the true
-    # two-operator expectation). |<H_i H_j>| is upper-bounded by
-    # Cauchy-Schwarz: |<H_i H_j>| <= sqrt(<H_i^2><H_j^2>); under the
-    # projector assumption (P^2 = P, true for current MeraEvalTerm
-    # terms per §7.4) <H_t^2> = <H_t> = r_t, so sqrt(r_i*r_j) is the
-    # Cauchy-Schwarz upper bound. The leaf-overlap fraction is then a
-    # geometric heuristic on the magnitude. Disjoint footprints
-    # decouple correctly (§1.2 factorization); overlapping footprints
-    # carry a bounded heuristic, not the genuine Hessian entry. See
-    # EXTENSIONS.md §12.6 for the deferred two-operator primitive.
     for i in range(n):
-        Li = footprints[i]
-        if not Li or residuals[i] <= 0.0:
+        if residuals[i] <= 0.0:
+            # H_i|psi> = 0 on the projector basis => <H_i H_j> = 0 for
+            # all j. Skip the entire row.
             continue
         for j in range(i + 1, n):
-            Lj = footprints[j]
-            if not Lj or residuals[j] <= 0.0:
+            if residuals[j] <= 0.0:
                 continue
-            inter = len(Li & Lj)
-            if inter == 0:
-                continue  # disjoint footprints: factorization → no coupling
-            overlap = inter / max(len(Li), len(Lj))
-            coupling = float(np.sqrt(residuals[i] * residuals[j]) * overlap)
+            coupling = _two_term_expectation(H, state, terms[i], terms[j])
             M[i, j] = coupling
             M[j, i] = coupling
     return M, residuals, terms
@@ -241,13 +291,13 @@ def compute_near_null_subspace(
         (``H.term_energy``), specifically the FIRST moment <H_t>
         (coincides with the true Hessian diagonal <H_t^2> for the
         projector-like terms in §7.4).
-      * Off-diagonal couplings are an operator-bounded proxy
-        (Cauchy-Schwarz upper bound × geometric leaf-overlap
-        fraction), NOT the genuine two-operator expectation. Disjoint
-        leaf footprints decouple correctly via §1.2 factorization;
-        overlapping footprints carry a bounded heuristic. See
-        EXTENSIONS.md §12.6 entry for the deferred true-Hessian
-        primitive.
+      * Off-diagonal couplings are the genuine symmetric two-operator
+        expectation Re <psi|H_i H_j|psi>, computed via the same
+        factored-window primitive §12.1 anomaly uses (sum over the
+        per-leaf operator products of the two terms' penalty
+        decompositions, §7.4). Disjoint leaf footprints factor
+        automatically (§1.2 <H_i H_j> = <H_i><H_j>); zero-residual
+        terms skip via H_i|psi> = 0 in the projector basis.
     """
     if k < 1:
         raise ValueError(f"k must be >= 1, got {k}")
