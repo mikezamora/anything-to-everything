@@ -46,6 +46,13 @@ def enumerate_determinants(meta: ChemEncodingMeta) -> list[tuple[int, ...]]:
     fixed S_z = (n_alpha - n_beta) / 2 — these are the symmetries of
     the non-relativistic electronic Hamiltonian. Ghost (power-of-two
     padding) leaves are always empty.
+
+    The returned tuples are SPIN-ORBITAL indices in the canonical
+    (2p+s) logical encoding — they are layout-independent. The
+    `meta.site_of_spin_orbital` map translates spin-orbital -> leaf
+    when a tuple is materialized to a leaf-vector list via
+    :func:`determinant_to_leaves` (so both "interleaved" and
+    "alpha_then_beta" layouts route through the same enumeration).
     """
     integrals = meta.integrals
     n_orb = integrals.n_orb

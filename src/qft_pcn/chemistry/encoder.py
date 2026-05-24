@@ -27,6 +27,7 @@ encoders for §11.6 follow the same shape so downstream tooling
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Literal
 
 import numpy as np
 
@@ -36,6 +37,13 @@ from .molecule import Molecule, MolecularIntegrals, build_integrals
 
 # Local Hilbert space per spin-orbital: |0> (empty) or |1> (occupied).
 CHEM_LEAF_DIM = 2
+
+# Spin-orbital -> leaf layout strategies (§11.6 + EXTENSIONS).
+#  "interleaved":     alpha_0, beta_0, alpha_1, beta_1, ... (default; A3).
+#  "alpha_then_beta": alpha_0..alpha_{n-1}, beta_0..beta_{n-1} (block ordering
+#                    used by some DMRG/MERA chemistry codes, and required for
+#                    CASCI/CASSCF non-contiguous active-space workflows).
+OrbitalLayout = Literal["interleaved", "alpha_then_beta"]
 
 
 @dataclass
@@ -63,6 +71,7 @@ class ChemEncodingMeta:
     is_ghost: list[bool]
     integrals: MolecularIntegrals
     chi_layer: int = 16
+    orbital_layout: OrbitalLayout = "interleaved"
 
     @property
     def n_orb(self) -> int:
@@ -96,7 +105,8 @@ def _next_pow2(n: int) -> int:
 
 def encode_molecule(mol: Molecule | None = None,
                     integrals: MolecularIntegrals | None = None,
-                    chi_layer: int = 16
+                    chi_layer: int = 16,
+                    orbital_layout: OrbitalLayout = "interleaved",
                     ) -> tuple[MERA, ChemEncodingMeta]:
     """Encode a molecule as a product MERA in the Hartree-Fock state.
 
@@ -116,8 +126,26 @@ def encode_molecule(mol: Molecule | None = None,
     n_orb = integrals.n_orb
     n_spin = 2 * n_orb
     n_leaves = _next_pow2(max(n_spin, 2))
-    site_of_spin_orbital = list(range(n_spin))
-    is_ghost = [False] * n_spin + [True] * (n_leaves - n_spin)
+    if orbital_layout == "interleaved":
+        # Spin-orbital index 2*p + s -> leaf (2*p + s); contiguous block
+        # of length n_spin then ghost padding.
+        site_of_spin_orbital = list(range(n_spin))
+    elif orbital_layout == "alpha_then_beta":
+        # Alpha block first (s=0): leaves [0..n_orb).
+        # Beta block second (s=1): leaves [n_orb..2*n_orb).
+        # Spin-orbital index 2*p + 0 -> leaf p; 2*p + 1 -> leaf (n_orb + p).
+        site_of_spin_orbital = [0] * n_spin
+        for p in range(n_orb):
+            site_of_spin_orbital[2 * p] = p
+            site_of_spin_orbital[2 * p + 1] = n_orb + p
+    else:
+        raise ValueError(
+            f"orbital_layout must be 'interleaved' or 'alpha_then_beta', "
+            f"got {orbital_layout!r}"
+        )
+    # Ghost flag is per leaf: any leaf NOT used by some spin-orbital is a ghost.
+    used_leaves = set(site_of_spin_orbital)
+    is_ghost = [leaf not in used_leaves for leaf in range(n_leaves)]
     L = int(round(np.log2(n_leaves)))
 
     meta = ChemEncodingMeta(
@@ -129,6 +157,7 @@ def encode_molecule(mol: Molecule | None = None,
         is_ghost=is_ghost,
         integrals=integrals,
         chi_layer=chi_layer,
+        orbital_layout=orbital_layout,
     )
     # Build the HF product MERA: per-leaf state |0> or |1>.
     occ = meta.hf_occupation()

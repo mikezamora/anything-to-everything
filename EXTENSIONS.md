@@ -1338,25 +1338,28 @@ already perf-optimized through the M3 perf path
   qpcn-completion-protocol "one domain per audit cycle" rule, these
   extensions are tracked here until a dedicated batch lands them.
 
-## Missing dependency: §11.6 chemistry — non-contiguous active-space JW
-- Limitation: the JW Pauli-string expansion in
-  `src/qft_pcn/chemistry/hamiltonian.py` builds the per-ERI 4-active-site
-  operator by extending the subsystem to include in-range external sites
-  whose JW Z-parity is odd. This is correct for arbitrary active-space
-  geometries when the active sites span a contiguous range bounded by
-  `2 * n_orb` (first-tier H2 / HeH+ / small molecules: yes). When the
-  spin-orbital layout has GHOST (power-of-two padding) leaves AND
-  fermion operators must JW-thread through them, the current builder is
-  still correct (the parity check skips ghosts and the operator support
-  stays within the active set), but it does NOT yet handle the
-  reordered-orbital case where the alpha and beta channels are
-  interleaved in a non-canonical (non-2p, 2p+1) way for performance —
-  e.g. alpha-block followed by beta-block ordering used by some
-  DMRG/MERA chemistry codes.
-- Workaround: stick to the interleaved (2p, 2p+1) layout the encoder
-  emits; larger molecules with > 2 spatial orbitals (4 spin-orbitals)
-  still work bit-for-bit on this layout. The alpha-then-beta block
-  ordering is a future optimization layer, not a correctness gap.
+## RESOLVED: §11.6 chemistry — non-contiguous active-space JW
+- Spec: `QFT_PCN_ARCHITECTURE.md` §11.6 (active-space CASCI/CASSCF
+  workflows that store alpha/beta determinants block-separately).
+- Resolution: `encode_molecule(..., orbital_layout=...)` accepts both
+  `"interleaved"` (default; A3 behavior) and `"alpha_then_beta"`
+  (alpha spin-orbitals at leaves `[0, n_orb)`, beta at
+  `[n_orb, 2*n_orb)`). The JW Pauli-string builder in
+  `chemistry/hamiltonian.py` is layout-honest by construction: it
+  routes every spin-orbital through `meta.site_of_spin_orbital`, and
+  the JW Z-tail in `_jw_a_dag_a` (and the 4-site Pauli decomposition
+  in `_pauli_decompose_four_site`) walks in LEAF order, so
+  block-ordered layouts pick up correctly shorter / longer Z tails
+  per spin channel. `ChemEncodingMeta` records the chosen layout in
+  a new `orbital_layout` field; `evolve.py` enumerates determinants
+  as spin-orbital indices (logical 2p+s) and materializes them via
+  the same `site_of_spin_orbital` map, so it honors the layout
+  without any per-layout branching.
+- Test: `src/qft_pcn/chemistry/tests/test_chemistry_non_contiguous.py`
+  pins (a) H2 STO-3G cross-layout consistency (FCI energy invariant
+  under interleaved vs alpha-then-beta to < 1e-6 Ha) and (b) the JW
+  Pauli string structure for an intra-alpha-block one-body operator
+  under `alpha_then_beta` (no Z tail between alpha and beta blocks).
 
 ## Missing dependency: AlphaProof binary not bundled
 - Spec: `QFT_PCN_ARCHITECTURE.md` §14.3 (line 2595). AlphaProof

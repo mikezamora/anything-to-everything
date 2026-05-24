@@ -215,7 +215,10 @@ class ChemistryHamiltonian:
     def _build_pauli_terms(self) -> list[PauliString]:
         meta = self.meta
         integrals = self.integrals
-        # Spin-orbital index 2p+s -> MERA leaf index.
+        # Spin-orbital index 2p+s -> MERA leaf index. The map respects the
+        # encoder's `orbital_layout` (interleaved or alpha_then_beta) — the
+        # JW Z-string between two operators is always taken in LEAF order,
+        # so this builder is layout-honest by construction.
         so2leaf = meta.site_of_spin_orbital
         terms: list[PauliString] = []
 
