@@ -769,3 +769,85 @@ already catalogued in `EXTENSIONS.md` are not re-listed here.
   contract. The runner exposes `humaneval_typed` and
   `humaneval_full` benchmarks so the negative-comparison delta
   is reportable.
+
+## RESOLVED — A2 + B1: §15 worked end-to-end demo + §10.5 real-LLM bridge wiring
+- Spec: `QFT_PCN_ARCHITECTURE.md` §15 (lines 2663-2884) + §10.5
+  (lines 736-742); spec-gap-analysis A2 + B1.
+- Gap (A2): no single demo reproduced the full §15 trace (NL → LLM →
+  DSL → Hamiltonian → TEBD → AST decode → pretty-print → example
+  verification). The headline §15.13 reader-reproduction claim was
+  unsupported by code.
+- Gap (B1): `bridge/llm.py::OllamaLLM` existed as an HTTP shim, but no
+  module wired it as the upstream producer of the structured spec the
+  substrate consumes; every existing test used canned DSL fixtures.
+- Resolution: new `src/qft_pcn/bridge/llm_emitter.py::LLMToDslEmitter`
+  wraps `OllamaLLM` and emits a validated `TheoremSpec` (theorem
+  surface-string + examples + signature + explanation). The system
+  prompt embeds the host surface grammar + a worked example so
+  gemma4:31b emits a parseable string on the first try; the emitter
+  validates by invoking `ast.parse` on the LLM's theorem field and
+  raises `LlmBadOutputError` on a failing round-trip (no canned
+  fallback per §1.1 anti-shortcut). New
+  `src/qft_pcn/composition/demo_length_synthesis.py::run_demo` drives
+  the full §15 pipeline against `LLMToDslEmitter` + the K-8 substrate
+  parameters (`dt=0.1, steps=300, chi=16`, `frozen_leaves =
+  meta.forall_protected_leaves`) and writes a markdown narrative
+  report to `reports/length_demo_<HEAD>.md`. Example verification
+  (§15.11) instantiates the universally-quantified template at
+  canonical Peano witnesses `x ∈ {0, 1, 3}` (the Nat-arithmetic
+  analogs of the spec's `length [], length [x], length [x,y,z]` — the
+  literal `length : List a -> Nat` target is gated on the
+  S4 substrate-wide refactor catalogued in `EXTENSIONS.md` "List
+  arithmetic in encoder substrate"; the adaptation is documented in
+  the demo module docstring). Run output:
+  ```
+  main theorem residual <H> = 5.78e-19  (PASS at threshold 1e-3)
+  examples passed             = 3/3     (x=0, x=1, x=3 each <H> ≤ 5.78e-19)
+  decoded pretty             : forall _v0:Nat. (_v0 == _v0)
+  ```
+  Report at `reports/length_demo_7a5c009.md`. Tests:
+  `src/qft_pcn/composition/tests/test_demo_length_synthesis.py`
+  (`test_llm_emits_parseable_dsl` + `test_length_demo_end_to_end_runs`)
+  exercise the full pipeline against a live Ollama instance and
+  SKIP (not mock) when the host is unreachable, per the §1.1
+  anti-shortcut directive. The host is selected via
+  `QFT_PCN_OLLAMA_HOST` env var (default `localhost`); on WSL the
+  Windows-host gateway IP works directly.
+
+## RESOLVED — C3: §13.7 type safety operator-algebra `[H_typing, H_eval] = 0`
+
+### C3 — §13.7 commutator-vanishes test on compiled operators — RESOLVED
+- Spec location: `QFT_PCN_ARCHITECTURE.md` §13.7 (lines 2515-2520);
+  `spec_gap_analysis.md` C3.
+- Issue: §13.7 claims type safety is the operator-algebraic statement
+  `[H_typing, H_eval] = 0` — well-typed programs remain well-typed
+  under one step of evaluation. Real-time TEBD machinery and the typing
+  / eval Hamiltonian builders all existed, but no test measured the
+  commutator on the compiled operators.
+- Resolution: new test file
+  `src/qft_pcn/tests/test_type_safety_commutator.py` pins the §13.7
+  claim by computing ``<psi| H_t H_e |psi>`` and ``<psi| H_e H_t |psi>``
+  directly via the substrate factored-window primitive
+  :func:`mera_window_expectation_factored` (the same primitive §12.6
+  goldstone's `_two_term_expectation` uses). The fixture is ``1 + 2`` —
+  well-typed with a live R-Arith eval redex (so H_e|psi> is non-trivial
+  and the test is not vacuous). Each Hamiltonian decomposes into a sum
+  of leaf-factored projector ops (§7.4); the product expectation
+  factors as a sum over (typing-piece, eval-piece) pairs of per-leaf
+  operator products composed via :func:`_compose_leaf_ops` — no dense
+  ``16^k`` materialization (§1.3). Typing factors are extracted by
+  monkeypatching `mera_window_expectation_factored` inside the typing
+  module to record each ops_dict the rule body emits (the real
+  primitive still returns so rule control flow is unaffected). Test 1
+  (`test_typing_eval_hamiltonians_commute_on_well_typed`): asserts
+  ``<H_t H_e> = <H_e H_t>`` within 1e-8 AND both are at the numerical
+  floor (≤ 1e-8) — the joint-null-space content of "well-typed
+  programs cannot go wrong". Test 2
+  (`test_typing_eval_commutator_nonzero_on_ill_typed`): substrate-
+  mutates the literal-int node's type leaf via :func:`mutate_leaf`
+  (mirroring §12.1's anomaly fixture), confirms H_t energy jumps above
+  1e-3, and asserts ``|<H_t H_e>|`` is detectably > 1e-3 — pinning
+  that the §13.7 claim is content-bearing (typing failure produces a
+  non-trivial operator product expectation that vanishes on well-typed
+  programs).
+- Audit source: `spec_gap_analysis.md` C3.
