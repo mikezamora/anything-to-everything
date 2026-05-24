@@ -24,6 +24,7 @@ import {
   type PhiLike,
 } from './common';
 import { FrameInterpreter } from '../components/FrameInterpreter';
+import { ColorRampLegend } from './scales';
 
 type Grid = number[][];
 
@@ -261,6 +262,59 @@ export function ManifoldPanel({
       metricsStrip={metricsStrip}
     >
       <FrameInterpreter layer="manifold" />
+      {/* Axis HUD + Ricci color-ramp legend over the R3F canvas. */}
+      <div
+        data-testid="manifold-axes-hud"
+        style={{
+          position: 'absolute',
+          left: 8,
+          top: 32,
+          fontSize: 10,
+          color: '#7f8bb0',
+          pointerEvents: 'none',
+          lineHeight: 1.4,
+          zIndex: 2,
+        }}
+      >
+        <div>x · y → grid site</div>
+        <div>z = {heightChannel === 'tr_h' ? 'tr(h)' : heightChannel}</div>
+        <div>colour = Ricci R</div>
+      </div>
+      {baseColor && (() => {
+        let lo = Infinity;
+        let hi = -Infinity;
+        for (const row of baseColor) {
+          for (const v of row) {
+            if (Number.isFinite(v)) {
+              if (v < lo) lo = v;
+              if (v > hi) hi = v;
+            }
+          }
+        }
+        if (!Number.isFinite(lo) || !Number.isFinite(hi)) return null;
+        return (
+          <div
+            data-testid="manifold-ricci-legend"
+            style={{
+              position: 'absolute',
+              right: 8,
+              bottom: 8,
+              pointerEvents: 'none',
+              zIndex: 2,
+              background: 'rgba(11, 14, 20, 0.7)',
+              padding: 4,
+              borderRadius: 3,
+            }}
+          >
+            <ColorRampLegend
+              min={lo}
+              max={hi}
+              ramp="diverging"
+              label="Ricci R"
+            />
+          </div>
+        );
+      })()}
       <div style={{ position: 'absolute', inset: 0 }}>
         {hasData && (
           <Canvas camera={{ position: [3.5, 3.5, 3.5], fov: 50 }}>

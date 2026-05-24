@@ -207,6 +207,16 @@ export function QpcnPanel({
   const readouts = (
     <div className="qpcn-readouts">
       <PanelReadouts cells={readoutCells} />
+      {/* Units annotation: energies in the QPCN are reported in arbitrary
+       * energy units (no canonical SI scale once the Hamiltonian is rescaled
+       * by the variational normalisation). Keep this as a sibling tag so the
+       * existing 'energy' label / numeric test hooks remain stable. */}
+      <small
+        data-testid="qpcn-energy-units"
+        style={{ color: '#7f8bb0', marginLeft: 6, fontSize: 10 }}
+      >
+        energy units: arb
+      </small>
       {/* Preserve the legacy energy Δ rendering for back-compat with the
        * existing `.qpcn-energy-delta` test hook. The PanelReadouts cell
        * already shows the Δ in compare mode; this hidden span keeps the

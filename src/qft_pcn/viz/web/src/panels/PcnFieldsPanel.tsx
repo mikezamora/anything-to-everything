@@ -13,6 +13,7 @@ import { PanelToolbar } from './PanelToolbar';
 import { PanelReadouts } from './PanelReadouts';
 import { diverging, normGrid, as2DGrid, type PhiLike } from './common';
 import { FrameInterpreter } from '../components/FrameInterpreter';
+import { ColorRampLegend } from './scales';
 
 type Grid = number[][];
 
@@ -26,7 +27,7 @@ function Heatmap({ grid, w = 90, h = 90 }: { grid: Grid; w?: number; h?: number 
   const rows = grid.length;
   const cols = grid[0]?.length ?? 0;
   if (rows === 0 || cols === 0) return null;
-  const { norm } = normGrid(grid);
+  const { norm, peak } = normGrid(grid);
   const cellW = w / cols, cellH = h / rows;
   const cells = [];
   for (let r = 0; r < rows; r++) {
@@ -37,7 +38,20 @@ function Heatmap({ grid, w = 90, h = 90 }: { grid: Grid; w?: number; h?: number 
               fill={diverging(norm[r][c])} />);
     }
   }
-  return <svg width={w} height={h}>{cells}</svg>;
+  // Color legend below each heatmap so the cell colours read as
+  // honest magnitudes (peak ⇒ saturated, 0 ⇒ neutral).
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 2 }}>
+      <svg width={w} height={h}>{cells}</svg>
+      <ColorRampLegend
+        min={-peak}
+        max={peak}
+        ramp="diverging"
+        width={Math.min(w, 90)}
+        height={6}
+      />
+    </div>
+  );
 }
 
 function norm2(g?: PhiLike) {

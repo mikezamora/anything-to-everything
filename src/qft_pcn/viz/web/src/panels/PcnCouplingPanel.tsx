@@ -78,8 +78,13 @@ export function PcnCouplingPanel({ frame, baselineFrame: _baselineFrame }: {
               x1={140} y1={90} x2={260} y2={90}
               stroke="#6cd0ff" strokeWidth={upWidth}
               markerEnd="url(#arrowhead-up)" />
-        <text x={200} y={75} textAnchor="middle"
+        <text x={200} y={68} textAnchor="middle"
               fill="#9aa3bb" fontSize="11">T_μν</text>
+        <text data-testid="arrow-pcn-to-qft-magnitude"
+              x={200} y={82} textAnchor="middle"
+              fill="#6cd0ff" fontSize="10" fontFamily="monospace">
+          mean|T| = {smallNumberFormat(st.mean_abs_stress_energy)}
+        </text>
 
         {/* QFT -> PCN (bottom arrow): variational energy ⟨H⟩ (proxy for
             per-observable feedback; see explainer for the §3.4 caveat). */}
@@ -87,8 +92,30 @@ export function PcnCouplingPanel({ frame, baselineFrame: _baselineFrame }: {
               x1={260} y1={130} x2={140} y2={130}
               stroke="#fbc66a" strokeWidth={downWidth}
               markerEnd="url(#arrowhead-down)" />
-        <text x={200} y={155} textAnchor="middle"
+        <text x={200} y={146} textAnchor="middle"
               fill="#9aa3bb" fontSize="11">⟨H⟩</text>
+        <text data-testid="arrow-qft-to-pcn-magnitude"
+              x={200} y={160} textAnchor="middle"
+              fill="#fbc66a" fontSize="10" fontFamily="monospace">
+          ⟨H⟩ = {smallNumberFormat(st.qpcn_observable_energy)}
+        </text>
+
+        {/* Arrow-width legend: thin = 0, thick ≈ 1.0. */}
+        <g data-testid="pcn-coupling-arrow-legend">
+          <text x={10} y={196} fill="#7f8bb0" fontSize="9">
+            arrow width
+          </text>
+          <line x1={75} y1={193} x2={120} y2={193}
+                stroke="#5f6b86" strokeWidth={4} />
+          <text x={125} y={196} fill="#7f8bb0" fontSize="9">
+            |·|≈0
+          </text>
+          <line x1={170} y1={193} x2={215} y2={193}
+                stroke="#5f6b86" strokeWidth={20} />
+          <text x={222} y={196} fill="#7f8bb0" fontSize="9">
+            |·|≥1
+          </text>
+        </g>
 
         <defs>
           <marker id="arrowhead-up" markerWidth="8" markerHeight="8"

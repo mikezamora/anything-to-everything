@@ -78,31 +78,80 @@ export function MetricsStrip({ layer, metrics }: Props) {
       .filter(Boolean)
       .join(' ');
 
+  // Y-axis tick labels show the data span so the trace magnitudes are
+  // legible (otherwise the sparkline reads as relative shape only). We
+  // place them inside a small reserved gutter so the rendered series
+  // pixels don't move when the axis is added.
+  const Y_GUTTER = 24;
+  const fmtTick = (v: number) => {
+    if (!Number.isFinite(v)) return '—';
+    if (v === 0) return '0';
+    const a = Math.abs(v);
+    if (a >= 1000 || a < 1e-3) return v.toExponential(1);
+    if (a >= 10) return v.toFixed(1);
+    if (a >= 1) return v.toFixed(2);
+    return v.toFixed(3);
+  };
+
   return (
     <div className="metrics-strip">
-      <svg viewBox={`0 0 ${W} ${H}`} width={W} height={H}>
-        {/* Baseline series rendered first (under the active series) — dashed
-            stroke at 60% alpha so the baseline reads as background context. */}
-        {baselineSeries.map((s) => (
-          <path
-            key={`b:${s.key}`}
-            d={pathD(s.points, baselineFrames.length)}
-            fill="none"
-            stroke={s.color}
-            strokeOpacity={0.6}
-            strokeDasharray="3 2"
-            strokeWidth={1.2}
+      <svg
+        viewBox={`0 0 ${W + Y_GUTTER} ${H}`}
+        width={W + Y_GUTTER}
+        height={H}
+      >
+        <g transform={`translate(${Y_GUTTER},0)`}>
+          {/* Baseline series rendered first (under the active series) — dashed
+              stroke at 60% alpha so the baseline reads as background context. */}
+          {baselineSeries.map((s) => (
+            <path
+              key={`b:${s.key}`}
+              d={pathD(s.points, baselineFrames.length)}
+              fill="none"
+              stroke={s.color}
+              strokeOpacity={0.6}
+              strokeDasharray="3 2"
+              strokeWidth={1.2}
+            />
+          ))}
+          {series.map((s) => (
+            <path
+              key={s.key}
+              d={pathD(s.points, frames.length)}
+              fill="none"
+              stroke={s.color}
+              strokeWidth={1.4}
+            />
+          ))}
+        </g>
+        {/* Y-axis: a thin line + min/max tick labels inside the gutter. */}
+        <g data-testid="metrics-strip-yaxis">
+          <line
+            x1={Y_GUTTER - 0.5}
+            y1={PAD}
+            x2={Y_GUTTER - 0.5}
+            y2={H - PAD}
+            stroke="#3a4660"
           />
-        ))}
-        {series.map((s) => (
-          <path
-            key={s.key}
-            d={pathD(s.points, frames.length)}
-            fill="none"
-            stroke={s.color}
-            strokeWidth={1.4}
-          />
-        ))}
+          <text
+            x={Y_GUTTER - 3}
+            y={PAD + 7}
+            fontSize={8}
+            fill="#7f8bb0"
+            textAnchor="end"
+          >
+            {fmtTick(hi)}
+          </text>
+          <text
+            x={Y_GUTTER - 3}
+            y={H - PAD - 1}
+            fontSize={8}
+            fill="#7f8bb0"
+            textAnchor="end"
+          >
+            {fmtTick(lo)}
+          </text>
+        </g>
       </svg>
       <div className="metrics-strip-legend">
         {series.map((s) => (

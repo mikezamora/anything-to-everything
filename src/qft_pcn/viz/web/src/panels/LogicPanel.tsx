@@ -275,8 +275,22 @@ function BondEntropyChart({ entropies }: { entropies: Array<number | null> }) {
       aria-label="binder bond entropy per cut"
       style={{ display: 'block' }}
     >
+      <line x1={pad} y1={pad} x2={pad} y2={H - pad} stroke="#3a4660" />
+      <line x1={pad} y1={H - pad} x2={W - pad} y2={H - pad} stroke="#3a4660" />
+      <text x={pad - 1} y={pad + 6} fill="#7f8bb0" fontSize={8} textAnchor="end">
+        {maxV.toFixed(2)}
+      </text>
+      <text x={pad - 1} y={H - pad} fill="#7f8bb0" fontSize={8} textAnchor="end">
+        0
+      </text>
+      <text x={pad + 2} y={H - 1} fill="#7f8bb0" fontSize={8}>
+        cut 0
+      </text>
+      <text x={W - pad} y={H - 1} fill="#7f8bb0" fontSize={8} textAnchor="end">
+        cut {n - 1}
+      </text>
       <path d={d} fill="none" stroke="#5fd0c8" strokeWidth={1.5} />
-      <text x={pad} y={10} fill="#7f8bb0" fontSize={9}>
+      <text x={pad + 4} y={10} fill="#7f8bb0" fontSize={9}>
         binder bond S(cut) — real entanglement on logic MPS
       </text>
     </svg>

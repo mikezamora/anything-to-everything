@@ -20,6 +20,7 @@ import { PanelReadouts } from './PanelReadouts';
 import { PanelToolbar, type ToolbarItem } from './PanelToolbar';
 import { tex, diverging } from './common';
 import { FrameInterpreter } from '../components/FrameInterpreter';
+import { ColorRampLegend } from './scales';
 
 interface HamiltonianTerm {
   kind: string;
@@ -43,6 +44,19 @@ interface HamiltonianState {
   /** 1D per-site R(x_k); may legacy-render as 2D if older recordings exist. */
   curvature?: number[] | number[][] | number | null;
   terms?: HamiltonianTerm[] | null;
+}
+
+/** Compute the [min, max] range of a numeric array (Infinity if empty). */
+function rangeOf(values: number[]): [number, number] {
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (const v of values) {
+    if (Number.isFinite(v)) {
+      if (v < lo) lo = v;
+      if (v > hi) hi = v;
+    }
+  }
+  return [lo, hi];
 }
 
 /** 1D strip painting one cell per site, coloured by R(x_k) on the
@@ -76,6 +90,7 @@ function CurvatureStrip({ values }: { values: number[] }) {
     }
   }, [values, W]);
 
+  const [lo, hi] = rangeOf(values);
   return (
     <div data-testid="hamiltonian-curvature-strip">
       <canvas
@@ -103,6 +118,16 @@ function CurvatureStrip({ values }: { values: number[] }) {
         <span>R(x_k) · diverging ramp</span>
         <span>site {values.length - 1}</span>
       </div>
+      {Number.isFinite(lo) && Number.isFinite(hi) && (
+        <div style={{ marginTop: 4 }}>
+          <ColorRampLegend
+            min={lo}
+            max={hi}
+            ramp="diverging"
+            label="R(x_k) range"
+          />
+        </div>
+      )}
     </div>
   );
 }
@@ -126,12 +151,19 @@ function CouplingMatrix({
     return couplings[k1] ?? couplings[k2] ?? 0;
   };
   let peak = 0;
+  let lo = 0;
+  let hi = 0;
   for (const v of Object.values(couplings)) {
-    const a = Math.abs(v);
-    if (Number.isFinite(a) && a > peak) peak = a;
+    if (Number.isFinite(v)) {
+      if (v < lo) lo = v;
+      if (v > hi) hi = v;
+      const a = Math.abs(v);
+      if (a > peak) peak = a;
+    }
   }
   const scale = peak > 0 ? peak : 1;
   return (
+    <div>
     <table
       data-testid={`coupling-matrix-${label}`}
       style={{
@@ -183,6 +215,17 @@ function CouplingMatrix({
         ))}
       </tbody>
     </table>
+    {peak > 0 && (
+      <div style={{ marginTop: 4 }}>
+        <ColorRampLegend
+          min={lo}
+          max={hi}
+          ramp="diverging"
+          label={`${label} range`}
+        />
+      </div>
+    )}
+    </div>
   );
 }
 

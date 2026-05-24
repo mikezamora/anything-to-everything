@@ -253,9 +253,25 @@ function EntropyCutLine({ entropies }: { entropies: Array<number | null> }) {
       aria-label="entropy vs cut"
       style={{ display: 'block' }}
     >
+      {/* x and y axis lines + tick labels (so the curve's vertical span
+       * reads as an actual entropy magnitude, not just relative shape). */}
+      <line x1={pad} y1={pad} x2={pad} y2={H - pad} stroke="#3a4660" />
+      <line x1={pad} y1={H - pad} x2={W - pad} y2={H - pad} stroke="#3a4660" />
+      <text x={pad - 1} y={pad + 6} fill="#7f8bb0" fontSize={8} textAnchor="end">
+        {maxV.toFixed(2)}
+      </text>
+      <text x={pad - 1} y={H - pad} fill="#7f8bb0" fontSize={8} textAnchor="end">
+        0
+      </text>
+      <text x={pad + 2} y={H - 1} fill="#7f8bb0" fontSize={8}>
+        cut 0
+      </text>
+      <text x={W - pad} y={H - 1} fill="#7f8bb0" fontSize={8} textAnchor="end">
+        cut {n - 1}
+      </text>
       <path d={d} fill="none" stroke="#5fd0c8" strokeWidth={1.5} />
-      <text x={pad} y={10} fill="#7f8bb0" fontSize={9}>
-        S vs cut
+      <text x={pad + 4} y={10} fill="#7f8bb0" fontSize={9}>
+        S vs cut (y: entropy nats)
       </text>
     </svg>
   );
@@ -348,6 +364,7 @@ export function MeraPanel({
                 flex: showCompare ? '1 1 50%' : '1 1 100%',
                 minWidth: 0,
                 minHeight: 0,
+                position: 'relative',
               }}
             >
               <MeraScene
@@ -355,6 +372,31 @@ export function MeraPanel({
                 layerDims={layerDims}
                 bondDims={bondDims}
               />
+              {/* Layer-depth legend overlay: which ring = which RG step. */}
+              <div
+                data-testid="mera-layer-legend"
+                style={{
+                  position: 'absolute',
+                  left: 6,
+                  top: 4,
+                  fontSize: 10,
+                  color: '#7f8bb0',
+                  pointerEvents: 'none',
+                  lineHeight: 1.3,
+                  background: 'rgba(11, 14, 20, 0.6)',
+                  padding: '2px 4px',
+                  borderRadius: 3,
+                }}
+              >
+                <div style={{ color: '#5fd0c8' }}>
+                  • boundary = {nLeaves} leaves (depth 0)
+                </div>
+                {layerDims.map((d, i) => (
+                  <div key={i} style={{ color: '#d0a05f' }}>
+                    △ ring {i + 1}: χ = {bondDims[i] ?? '?'} ({d} nodes)
+                  </div>
+                ))}
+              </div>
             </div>
             {showCompare && (
               <div
