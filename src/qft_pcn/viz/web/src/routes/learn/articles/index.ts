@@ -6,11 +6,19 @@
  */
 
 import type { ArticleSpec } from '../../../lib/article-types';
-
-// Articles register themselves via re-export. Each article file exports
-// a const named `article` of type ArticleSpec.
+import { article as orientation } from './orientation';
+import { article as foundationsVectorsTensors } from './foundations-vectors-tensors';
+import { article as foundationsHilbertOperators } from './foundations-hilbert-operators';
+import { article as foundationsVariationalFe } from './foundations-variational-fe';
+import { article as foundationsRiemannian } from './foundations-riemannian';
 
 // IMPORTANT: when adding a new article, import it here AND push it onto
 // ARTICLES below. The order is the textbook outline.
 
-export const ARTICLES: ArticleSpec[] = [];
+export const ARTICLES: ArticleSpec[] = [
+  orientation,
+  foundationsVectorsTensors,
+  foundationsHilbertOperators,
+  foundationsVariationalFe,
+  foundationsRiemannian,
+];
