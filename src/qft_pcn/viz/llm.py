@@ -58,17 +58,16 @@ def _system_prompt_for_dsl(schema: dict, examples: list[dict]) -> str:
     )
 
 
-def generate_dsl(prompt: str, *, model: str, schema: dict,
-                 examples: list[dict]) -> dict:
-    """Ask Ollama to emit a DSL for `prompt`. Validate before returning.
+def _attempt_generate_dsl(prompt: str, *, model: str, system: str) -> dict:
+    """Single round-trip to Ollama; returns a success or failure dict.
 
-    Returns `{"dsl": <validated dict>}` on success, or
-    `{"error": str, "raw": str, "validation_errors": list[str]}` on failure.
+    Success: `{"dsl": <validated dict>}`.
+    Failure: `{"error", "raw", "validation_errors"}`.
     """
     body = {
         "model": model,
         "prompt": prompt,
-        "system": _system_prompt_for_dsl(schema, examples),
+        "system": system,
         "stream": False,
         "format": "json",
     }
@@ -88,6 +87,39 @@ def generate_dsl(prompt: str, *, model: str, schema: dict,
                 "raw": raw, "validation_errors": errors}
 
     return {"dsl": candidate}
+
+
+def generate_dsl(prompt: str, *, model: str, schema: dict,
+                 examples: list[dict], max_retries: int = 0) -> dict:
+    """Ask Ollama to emit a DSL for `prompt`. Validate before returning.
+
+    Returns `{"dsl": <validated dict>}` on success, or
+    `{"error": str, "raw": str, "validation_errors": list[str]}` on failure.
+
+    If `max_retries > 0` and the first attempt fails validation (or returns
+    non-JSON), build a follow-up prompt that quotes the raw output and the
+    validation errors, asking the LLM to emit a corrected DSL. Retry up to
+    `max_retries` additional times. Return the first success or the final
+    failure dict (so callers always see the *last* raw/errors).
+    """
+    system = _system_prompt_for_dsl(schema, examples)
+    result = _attempt_generate_dsl(prompt, model=model, system=system)
+    if "dsl" in result or max_retries <= 0:
+        return result
+
+    for _ in range(max_retries):
+        retry_prompt = (
+            "Your previous DSL failed validation: "
+            f"{result.get('validation_errors') or [result.get('error', '')]}. "
+            "The raw output was:\n"
+            f"{result.get('raw', '')}\n"
+            "Emit a corrected DSL that satisfies the schema."
+        )
+        result = _attempt_generate_dsl(retry_prompt, model=model,
+                                       system=system)
+        if "dsl" in result:
+            return result
+    return result
 
 
 def verbalize(observations: Any, *, model: str,
