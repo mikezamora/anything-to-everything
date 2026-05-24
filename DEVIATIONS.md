@@ -380,6 +380,93 @@ already catalogued in `EXTENSIONS.md` are not re-listed here.
   Bell-marginal value (0.5) against the pre-fix silent-drop result (0).
 - Audit source: §1-§5 (D25 / ND1)
 
+### D20 — `wake_sleep` F_QUARANTINE_PENALTY default uncapped — RESOLVED
+- Location: `src/qft_pcn/composition/wake_sleep.py` (F_QUARANTINE_PENALTY
+  default + plumbing)
+- Spec: §6.6 quarantine free-energy semantics
+- Resolution: bounded penalty applied at SHA `8688e92`; the
+  quarantine-cost term now uses a finite default and is wired through
+  `compute_free_energy` so quarantined sub-graphs no longer dominate
+  the objective via an unbounded constant.
+- Audit source: §10 audit-pass2
+
+### D21 — orchestrator `_solve` flips `status=SOLVED` before assigning `node.result` — RESOLVED
+- Location: `src/qft_pcn/composition/orchestrator.py` `_solve`
+  internal-node SOLVED branch (around the `all_solved(node)` block)
+- Spec: §5.2 / §10.11 SOLVED invariant (every SOLVED node has a result)
+- Issue: between the `node.status = Status.SOLVED` line and the
+  `node.result = _JointResult(...)` assignment, any concurrent
+  `extract_proof_tree` / `compute_free_energy` reader observed a
+  SOLVED node with `result=None`, contradicting the §5.2 invariant
+  and tripping downstream `assert c.result is not None` checks.
+- Resolution: reordered so `node.result` is assigned FIRST, then
+  `node.status = Status.SOLVED` — closes the mid-window race. Fixed
+  at THIS commit. The leaf-goal SOLVED flip is owned by
+  `result_integrator.integrate_child`, which already assigns
+  `node.result` before `node.status = Status.SOLVED` (line 248).
+- Audit source: §10 audit-pass2
+
+### D22 — `_converged` monotonic_tol drifts from `tol` — RESOLVED
+- Location: `src/qft_pcn/composition/orchestrator.py` `_converged`
+  helper (monotonic-tol alignment)
+- Spec: §9.5 convergence semantics
+- Resolution: `monotonic_tol` is now derived from / aligned with the
+  caller-supplied `tol`, eliminating the dual-knob drift where a
+  user-tightened `tol` left `monotonic_tol` at a stale default. Fixed
+  at SHA `2254453`.
+- Audit source: §10 audit-pass2
+
+### D23 — `spectral_gap` returns NaN silently for ill-conditioned operators — RESOLVED
+- Location: `src/qft_pcn/composition/spectral_gap.py` (NaN sentinel
+  path + refusal message)
+- Spec: §6.3 spectral_gap gate semantics
+- Resolution: NaN is now surfaced as an explicit sentinel and the
+  gate emits a clear `refuse(...)` with the underlying numeric
+  reason rather than silently failing-open or rejecting all children.
+  Fixed at SHA `2254453`.
+- Audit source: §10 audit-pass2
+
+### D24 — `strengthen_induction_hypothesis` recurses unboundedly — RESOLVED
+- Location: `src/qft_pcn/composition/revision.py`
+  `strengthen_induction_hypothesis` (recursion cap)
+- Spec: §6.5 induction-hypothesis strengthening
+- Resolution: a recursion / depth cap is now enforced so pathological
+  decomposers cannot drive the strengthening pass into unbounded
+  recursion; cap exhaustion surfaces as a structured refusal rather
+  than a Python `RecursionError`. Fixed at SHA `8688e92`.
+- Audit source: §10 audit-pass2
+
+### D26 — `cached_solutions` returns primitive lemmas as cache hits — RESOLVED
+- Location: `src/qft_pcn/composition/lemma_library.py`
+  `cached_solutions` (primitive filter)
+- Spec: §8 cache semantics (only derived lemmas are cache-eligible)
+- Resolution: `cached_solutions` now filters out primitive lemmas so
+  the §8 cache layer no longer "hits" on base-tier entries that were
+  always trivially in scope; derived lemmas remain cache-eligible.
+  Fixed at SHA `53991c6`.
+- Audit source: §10 audit-pass2
+
+### D27 — `_save_primitive` discards `source_run_id` provenance — RESOLVED
+- Location: `src/qft_pcn/composition/lemma_library.py`
+  `_save_primitive` (source_run_id plumbing)
+- Spec: §8 / §10.9 lemma provenance (every saved lemma carries its
+  originating run id)
+- Resolution: `source_run_id` is now plumbed into the primitive-save
+  path, restoring run-level provenance for primitives on par with
+  derived lemmas. Fixed at SHA `53991c6`.
+- Audit source: §10 audit-pass2
+
+### D28 — `cheapest_for_type` selects primitive lemmas — RESOLVED
+- Location: `src/qft_pcn/composition/lemma_library.py`
+  `cheapest_for_type` (primitive skip)
+- Spec: §8 lemma-selection semantics (primitives are never returned
+  by lookup; they are base-tier moves, not cache entries)
+- Resolution: `cheapest_for_type` now skips primitives during the
+  cost-ordered scan, preventing the optimizer from "selecting" a
+  primitive when a derived lemma is the intended hit. Fixed at SHA
+  `53991c6`.
+- Audit source: §10 audit-pass2
+
 ### D29 — §10.11 spec mandates `composition/demo_hierarchical_proof.py` — RESOLVED
 - Location: `src/qft_pcn/composition/demo_hierarchical_proof.py` (now
   present); load-bearing acceptance remains

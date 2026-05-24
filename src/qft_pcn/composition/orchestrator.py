@@ -379,7 +379,9 @@ def solve_goal_graph(
                 # PENDING_REVISION even when live siblings cover the proof
                 # — collapsing the "explore in parallel" surface.
                 if all_solved(node):
-                    node.status = Status.SOLVED
+                    # D21: assign node.result BEFORE flipping status=SOLVED
+                    # so concurrent extract_proof_tree readers never observe
+                    # status=SOLVED with result=None (mid-window race).
                     # The parent's residual is the joint of its children;
                     # an attribute-only namespace keeps the shape compatible
                     # with ChildResult-consuming utilities (compute_free_energy,
@@ -403,6 +405,7 @@ def solve_goal_graph(
                             c.result.solved_ast for c in live_children
                         ),
                     )
+                    node.status = Status.SOLVED
                 else:
                     node.status = Status.PENDING_REVISION
             else:
