@@ -633,8 +633,14 @@ class TypeHole(Ty):
     equal-amplitude superposition over the candidate tags on the `type`
     register at the hole site.
 
-    Candidates must be flat: TInt, TBool, or single-level TArrow (no nested
-    arrows). The encoder works in the flat-tag basis only.
+    Candidates must be flat ground tags: TInt, TBool, TNat, or single-level
+    TArrow (no nested arrows). TList is intentionally excluded -- its
+    ``elem`` subtype would require per-candidate nested side-table
+    handling that the flat type register does not yet provide; the
+    encoder's per-candidate ``ty_to_tag`` would collapse all
+    ``TList(*)`` candidates to the same TYPE_LIST=9 tag, defeating the
+    superposition. The TNat extension is safe because TNat carries no
+    inner Ty and maps to its own distinct tag (TYPE_NAT=8).
     """
     candidates: tuple
     name: str = ""
@@ -649,10 +655,10 @@ class TypeHole(Ty):
                         f"TypeHole candidates may not include nested arrow "
                         f"types: {c!r}"
                     )
-            elif not isinstance(c, (TInt, TBool)):
+            elif not isinstance(c, (TInt, TBool, TNat)):
                 raise ValueError(
                     f"TypeHole candidates must be Ty "
-                    f"(TInt/TBool/flat TArrow); got {type(c).__name__}"
+                    f"(TInt/TBool/TNat/flat TArrow); got {type(c).__name__}"
                 )
 
 

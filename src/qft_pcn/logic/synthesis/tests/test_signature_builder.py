@@ -35,11 +35,11 @@ def test_parse_simple_signature():
 
 
 def test_signature_to_sketch_lambda_with_hole_body():
-    # `id : a -> a` should yield `\x1:?. HoleVar()`.
+    # `id : a -> a` should yield `\_sig_x1:?. HoleVar()`.
     spec = parse_signature_string("id : a -> a")
     sketch = signature_to_sketch(spec)
     assert isinstance(sketch, Lam)
-    assert sketch.param == "x1"
+    assert sketch.param == "_sig_x1"
     # The polymorphic 'a' became a TypeHole.
     assert isinstance(sketch.param_ty, TypeHole)
     # The body is a structural HoleVar.
@@ -55,9 +55,9 @@ def test_signature_to_sketch_handles_polymorphic():
     spec = parse_signature_string("map : (a -> b) -> List a -> List b")
     assert spec.hole_count == 3  # 2 arrows + body hole
     sketch = signature_to_sketch(spec)
-    # Outer: \x1:(a->b). \x2:List a. HoleVar()
+    # Outer: \_sig_x1:(a->b). \_sig_x2:List a. HoleVar()
     assert isinstance(sketch, Lam)
-    assert sketch.param == "x1"
+    assert sketch.param == "_sig_x1"
     # First arg is itself an arrow type a -> b (polymorphic).
     assert isinstance(sketch.param_ty, TArrow)
     assert isinstance(sketch.param_ty.src, TypeHole)
@@ -65,7 +65,7 @@ def test_signature_to_sketch_handles_polymorphic():
     # Second lambda over List a.
     inner = sketch.body
     assert isinstance(inner, Lam)
-    assert inner.param == "x2"
+    assert inner.param == "_sig_x2"
     assert isinstance(inner.param_ty, TList)
     assert isinstance(inner.param_ty.elem, TypeHole)
     # Body is the structural hole.

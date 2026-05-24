@@ -6,29 +6,60 @@ than left as a TODO or stub. Each entry names the call site, what is
 needed, the workaround currently in tree, and which acceptance criterion
 it unblocks.
 
-## Missing dependency: §5.3 full snapshot-and-compare ΔF estimator for `_frontier_priority`
+## RESOLVED (E1): §5.3 substrate ΔF estimator for `_frontier_priority`
 
-- Where: `src/qft_pcn/composition/orchestrator.py::_frontier_priority`
-- Need: principled per-frontier-node expected-ΔF computation — snapshot
-  the live `goal_graph`, hypothetically decompose the candidate node,
-  diff the post-decomposition `compute_free_energy` against the pre-
-  snapshot baseline, and use the signed ΔF directly as the schedule
-  key. This is the spec §5.3 ideal: schedule by the node whose
-  expansion most reduces the hierarchical free energy.
-- Workaround (in tree, D7 resolution): `_frontier_priority` now
-  returns the principled-but-cheap `precision * coupling` signal
-  (precision from `1/(1 + residual/RESIDUAL_SCALE)` per §6.2,
-  coupling from `1 + bond_entanglement` via §12.16 Schmidt-spectrum
-  cut). Nodes without a substrate measurement fall back to a
-  scaled-down structural fan-out so any measured node outranks them.
-  This matches the §5.3 ordering contract on any node that has been
-  dispatched at least once — which covers the post-warmup regime that
-  the schedule is designed for. A snapshot-and-compare estimator is
-  the heavier refinement that adds clone+rollback machinery on the
-  goal_graph; the current signal is operator-algebraic and tested.
-- Unblocks: spec §5.3 full estimator — if a future workload reveals
-  the precision-weighted signal mis-orders the pre-dispatch frontier,
-  swap in the snapshot diff (no API change to `_frontier_priority`).
+- Where: `src/qft_pcn/composition/free_energy.py` (new module) +
+  `src/qft_pcn/composition/orchestrator.py::_frontier_priority`
+  (consumes the new primitive).
+- Resolution: ships the spec §13.6 variational free energy
+  ``F = ⟨H⟩ + T · S(ρ_cut)`` as a real operator-algebraic reading on
+  the live substrate. ``free_energy(state, H, *, temperature, cut)``
+  reads ⟨H⟩ via the Hamiltonian's ``total_energy`` (MERA-shaped) or
+  ``local_op``/``bond_op`` (MPS-shaped, via ``qft.evolution.energy``)
+  surface and S(ρ_cut) via the substrate's ``entanglement_entropy``
+  Schmidt-spectrum reading at the same canonical mid-network cut used
+  by ``goal_graph._bond_entanglement_of``. ``delta_free_energy(before,
+  after, H, *, temperature, cut)`` is the signed diff -- the spec §5.3
+  expected-ΔF schedule key.
+
+  ``_frontier_priority`` now consumes this primitive: when a node's
+  ChildResult carries BOTH a ``ground_state`` (MERA) and the
+  ``hamiltonian`` under which its residual was measured, the schedule
+  subtracts the substrate F from the existing precision*coupling
+  signal -- nodes with lower F (more substrate compression) outrank
+  their precision-matched siblings. Nodes without a Hamiltonian (the
+  synthetic _JointResult internal-node joins, non-MERA workspaces,
+  and cache-hit results where the lemma library did not persist H)
+  retain the precision*coupling fallback unchanged -- no fabricated F
+  per §1.1 anti-shortcut.
+
+- Tests: `src/qft_pcn/composition/tests/test_free_energy.py`
+  - ``test_free_energy_real_and_finite_on_mps`` /
+    ``..._on_mera`` -- F is a real, finite float on a non-trivial
+    substrate via both expectation surfaces.
+  - ``test_delta_free_energy_negative_for_compressing_lemma`` -- the
+    §10.10 R-AddZero redex ``encode_mera(2 + 0)`` + imaginary-time
+    descent yields ΔF < 0 (the favoured-frontier contract).
+  - ``test_delta_free_energy_zero_for_noop_lemma`` /
+    ``..._noop_mera`` -- ΔF = 0 (up to IEEE noise) when ``before``
+    and ``after`` are the same substrate state.
+  - ``test_free_energy_raises_on_missing_state`` /
+    ``..._missing_hamiltonian`` /
+    ``..._negative_temperature`` -- anti-shortcut guards: refuse to
+    fabricate F when the substrate measurement is absent.
+  - ``test_free_energy_temperature_scaling_is_real`` -- F(T) − F(0) is
+    linear in T and equal to T · S, pinning the entropy channel as
+    the sole T-dependent contribution.
+
+- Heavier refinement (still open, NOT blocking §5.3 acceptance): the
+  snapshot-and-compare ΔF over a CLONED goal_graph (virtually
+  decompose the candidate node, diff ``compute_free_energy`` across
+  the snapshot vs the post-decomposition tree) is the orchestrator-
+  schedule-level analog of the substrate primitive here. The current
+  E1 wiring biases the schedule by the substrate F of the node's
+  own measurement; the snapshot diff would bias it by the predicted
+  ΔF of the node's EXPANSION. Both signals can coexist; the snapshot
+  diff is the heavier path and remains an opt-in refinement.
 
 ## Missing dependency: §12.11 entanglement-spectrum acceptance corpus needs non-product MERA encoding
 
@@ -1442,12 +1473,25 @@ already perf-optimized through the M3 perf path
   `signature_to_sketch(spec) -> Node`. The type sub-grammar mirrors
   `logic.ast` (Int / Bool / Nat / List / parens / `->`) and ADDS
   lowercase identifiers as polymorphic type variables, encoded as
-  `TypeHole(candidates=(TInt(), TBool()))`. The sketch is a chain
-  of lambdas (one per top-level arrow argument) with a structural
-  `HoleVar()` body. `experiments/baselines/qpcn.py` honours
+  `TypeHole(candidates=(TInt(), TBool(), TNat()))` -- the three
+  ground tags that map distinctly in the 16-slot type register
+  (E28 reviewer follow-up; `TypeHole.__post_init__` loosened to
+  admit TNat). TList is intentionally excluded from polymorphic
+  candidates: its `elem` subtype forces all `TList(*)` candidates
+  to the same TYPE_LIST=9 tag, collapsing the per-candidate
+  superposition; lifting that restriction is deferred to a
+  HumanEval container-types EXTENSIONS entry (requires
+  nested-type side-table per-candidate handling). The sketch is a
+  chain of lambdas (one per top-level arrow argument) with binders
+  prefixed `_sig_x1`, `_sig_x2`, ... (collision-safe against
+  future user-supplied binder names) and a structural `HoleVar()`
+  body. `experiments/baselines/qpcn.py` honours
   `problem.payload["signature"]: str` via the new builder, driving
   the canonical `synthesize` entry point; optional
-  `payload["synth_knobs"]` overrides the `SynthesisProblem` knobs.
+  `payload["synth_knobs"]` overrides the `SynthesisProblem` knobs,
+  otherwise the knobs are sized from `spec.hole_count`
+  (`n_samples=max(8, 4*hc)`, `anneal_steps=max(16, 8*hc)`,
+  `chi_max=max(4, 2+hc)`; N keeps the SynthesisProblem default).
 - Tests:
   `src/qft_pcn/logic/synthesis/tests/test_signature_builder.py`
   -- `test_parse_simple_signature`,
@@ -1557,3 +1601,11 @@ already perf-optimized through the M3 perf path
   `test_runspec_to_dsl_round_trips_examples_losslessly`,
   `test_lossless_roundtrip_preserves_unknown_keys`,
   `test_fallback_reconstruction_when_dsl_absent`.
+
+### §12.6 spurious zero-mode gap in ground-subspace counter — OPEN
+
+`count_ground_subspace_strategies` for the commutativity fixture (true topological degeneracy = 2 per §12.3 / Wen 1989) returns ~71 modes at k=200. The §12.6 Hessian (Gram of {H_i|ψ⟩}) has pure-gauge / unphysical zero modes that contaminate the count. Resolution requires projecting out the gauge directions before counting (symplectic quotient or constraint-algebra quotient).
+
+**Why:** without this, the §12.3 second estimator over-counts strategies for any Hamiltonian whose constraint algebra has non-trivial gauge structure. The first estimator (binding-graph) is unaffected.
+
+**How to apply:** before returning the count, project M onto the physical subspace (kernel of the BRST / constraint-algebra operator). Add a unit test pinning `count == 2` on the commutativity fixture once fixed.

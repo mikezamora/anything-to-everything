@@ -182,11 +182,20 @@ def _solve_synthesis_from_signature(
 
         spec = parse_signature_string(signature)
         sketch = signature_to_sketch(spec)
-        # Synthesis knobs may be overridden via payload["synth_knobs"]
-        # (a dict). Defaults match SynthesisProblem defaults; the
-        # benchmark loader uses tighter knobs for the free-form path
-        # since these inputs have no IO examples to discriminate on.
-        knobs = dict(problem.payload.get("synth_knobs") or {})
+        # Synthesis knobs: if payload["synth_knobs"] is provided it
+        # overrides everything; otherwise size the sampler/anneal/chi
+        # from spec.hole_count so deeper signatures get more search
+        # budget (E28 reviewer follow-up). N keeps the SynthesisProblem
+        # default.
+        provided_knobs = problem.payload.get("synth_knobs")
+        if provided_knobs:
+            knobs = dict(provided_knobs)
+        else:
+            knobs = {
+                "n_samples": max(8, 4 * spec.hole_count),
+                "anneal_steps": max(16, 8 * spec.hole_count),
+                "chi_max": max(4, 2 + spec.hole_count),
+            }
         sprob = SynthesisProblem(
             sketch=sketch,
             target_type=None,

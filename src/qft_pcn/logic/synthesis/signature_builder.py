@@ -16,9 +16,14 @@ This module turns such a signature into:
 
 The type grammar extends the surface in ``logic.ast`` with **type
 variables**: any lowercase identifier (``a``, ``b``, ``elem``) becomes a
-polymorphic placeholder encoded as a ``TypeHole`` over the flat
-candidates ``(TInt(), TBool())`` (the only candidate types the
-encoder's flat-tag basis accepts, per ``TypeHole`` invariants).
+polymorphic placeholder encoded as a ``TypeHole`` over the flat ground
+candidates ``(TInt(), TBool(), TNat())``. The flat-tag basis admits
+exactly the ground types that map to a single distinct tag in the
+16-slot type register (TInt=1, TBool=2, TNat=8). TList is intentionally
+excluded -- its ``elem`` subtype would force all ``TList(*)`` candidates
+to collapse to the same TYPE_LIST=9 tag in the flat basis, defeating
+the per-candidate superposition; lifting that restriction is tracked
+under the HumanEval container-types EXTENSIONS entry.
 
 The module does NOT call into the heavy substrate at import time; the
 caller (``experiments/baselines/qpcn.py``) is responsible for wiring the
@@ -44,10 +49,12 @@ from src.qft_pcn.logic.ast import (
 
 
 # Candidates used to ground polymorphic type variables. The encoder's
-# TypeHole basis is flat (TInt / TBool / flat TArrow only), so we use
-# the two base ground types -- the synthesis-pipeline relaxation will
-# select between them.
-_POLY_GROUND_CANDIDATES: tuple[Ty, ...] = (TInt(), TBool())
+# TypeHole basis is flat ground tags (TInt / TBool / TNat / flat TArrow);
+# we use the three base ground tags so polymorphic positions span the
+# integer-ish, boolean, and Peano-natural worlds (the synthesis pipeline
+# relaxes among them via the per-candidate type-leaf superposition).
+# TList is excluded -- see module docstring + EXTENSIONS.md.
+_POLY_GROUND_CANDIDATES: tuple[Ty, ...] = (TInt(), TBool(), TNat())
 
 
 @dataclass(frozen=True)
@@ -230,7 +237,11 @@ def signature_to_sketch(spec: SignatureSpec) -> Node:
     The sketch is a chain of lambdas (one per top-level arrow argument)
     with a structural ``HoleVar()`` body::
 
-        ty = a -> b -> ret    ===>   \\x1:a. \\x2:b. HoleVar()
+        ty = a -> b -> ret    ===>   \\_sig_x1:a. \\_sig_x2:b. HoleVar()
+
+    Binders are prefixed with ``_sig_`` so future user-supplied binder
+    names from richer signature surfaces cannot collide with the
+    auto-generated argument names.
 
     Argument-position polymorphic ``TypeHole``s carry through to each
     ``Lam.param_ty``; the body ``HoleVar`` has an empty candidate tuple
@@ -253,7 +264,7 @@ def signature_to_sketch(spec: SignatureSpec) -> Node:
     # Wrap in lambdas right-to-left so x1 is the outermost binder.
     for idx in range(len(arg_tys) - 1, -1, -1):
         body = Lam(
-            param=f"x{idx + 1}",
+            param=f"_sig_x{idx + 1}",
             param_ty=arg_tys[idx],
             body=body,
         )

@@ -5,9 +5,12 @@ Ties the composition modules together into a single search loop:
     expand -> cycle-check -> dispatch siblings in parallel
             -> gated integration -> revise on failure -> recompute F_hierarchy
 
-The schedule orders the frontier with a structural proxy (boundary size +
-child count); a real expected-ΔF estimator is a follow-on per spec §5.3.
-Plain BFS is the easy fallback only.
+The schedule orders the frontier with the spec §5.3 expected-ΔF signal:
+the §13.6 substrate free energy ``F = ⟨H⟩ + T · S(ρ_cut)`` read off
+the live MERA via :mod:`composition.free_energy`, composed with the
+existing precision*coupling fan-out tiebreak. Nodes without a substrate
+Hamiltonian fall back to the precision*coupling signal alone (no
+fabricated F per §1.1 anti-shortcut). Plain BFS is the easy fallback only.
 
 Spec invariants enforced (per Task 7 in
 ``docs/superpowers/plans/2026-05-22-cross-level-passing-plan.md``):
@@ -124,12 +127,34 @@ def _frontier_priority(node: Node) -> float:
     measurement used by :func:`compute_free_energy` and the §12.16 path-
     fitness signal. It is NOT a classical fan-out look-up.
 
-    Full snapshot-and-compare ΔF estimator (clone goal_graph, virtually
-    decompose, diff ``compute_free_energy``) is the heavier upgrade;
-    that path is recorded in EXTENSIONS.md as a refinement, but the
-    precision-weighted signal already matches the §5.3 ordering
-    contract on every node that has been dispatched at least once.
+    E1 upgrade: when the node carries BOTH a ``ground_state`` (MERA
+    substrate) and the ``hamiltonian`` under which its residual was
+    measured, the schedule is biased by the §13.6 substrate free
+    energy ``F = ⟨H⟩ + T · S(ρ_cut)`` read directly off the
+    substrate (see :mod:`composition.free_energy`). A node with a
+    lower substrate F outranks a node with the same precision /
+    coupling but a higher F -- the genuine spec §5.3 "expansion most
+    reduces the hierarchical free energy" signal, computed from
+    tensor-network contractions on the live state rather than a
+    structural proxy. The bias is additive (subtracted, since lower F
+    is better) and scaled by 1.0 so that a unit-of-F gap dominates
+    the per-node precision*coupling product when both are present.
+
+    A node WITHOUT a substrate Hamiltonian (a synthetic _JointResult
+    internal-node join, a non-MERA workspace, or a cache-hit result
+    where ``hamiltonian`` was not persisted by the lemma library)
+    falls back to the precision*coupling signal alone -- no
+    fabricated substrate F (anti-shortcut §1.1: if there is no
+    operator to contract against, the schedule does not invent one).
+
+    Full snapshot-and-compare ΔF over a CLONED goal_graph (virtually
+    decompose, diff ``compute_free_energy`` across the snapshot vs
+    post-decomposition tree) is the heavier upgrade left in
+    EXTENSIONS.md for the orchestrator-level schedule; the substrate
+    free-energy bias here is its operator-algebraic per-node analog
+    on a single live state, NOT a structural look-up.
     """
+    from .free_energy import free_energy, FreeEnergyError
     from .goal_graph import _bond_entanglement_of
     from .result_integrator import RESIDUAL_SCALE
     res_obj = getattr(node, "result", None)
@@ -144,7 +169,29 @@ def _frontier_priority(node: Node) -> float:
         # admit a deterministic order; never large enough to dominate
         # the precision signal.
         tiebreak = 1e-6 * (len(node.goal.boundary) + len(node.children))
-        return precision * coupling + tiebreak
+        base = precision * coupling + tiebreak
+        # E1: real substrate free-energy bias when both the ground
+        # state and the Hamiltonian under which it was measured are
+        # surfaced on the ChildResult. ``free_energy`` raises on a
+        # missing surface (the §1.1 anti-shortcut "no fabricated F"
+        # contract); we narrow the catch to that documented signal so
+        # a genuine substrate fault (NotImplementedError, instability)
+        # propagates.
+        gs = getattr(res_obj, "ground_state", None)
+        ham = getattr(res_obj, "hamiltonian", None)
+        if gs is not None and ham is not None:
+            try:
+                f_sub = free_energy(gs, ham)
+            except FreeEnergyError:
+                f_sub = None
+            if f_sub is not None:
+                # Lower F is better -- subtract so that more
+                # compression ⇒ higher schedule priority. The unit
+                # weight is intentional: a unit-of-F gap dominates a
+                # unit precision*coupling gap, matching the spec §5.3
+                # claim that ΔF directly orders the frontier.
+                base = base - float(f_sub)
+        return base
     # No substrate measurement yet -- fall back to a scaled-DOWN
     # structural fan-out so any measured node outranks this node.
     return 1e-3 * (len(node.goal.boundary) + len(node.children))
@@ -170,8 +217,9 @@ def solve_goal_graph(
     freeze_library: bool = False,
 ) -> SolveResult:
     """Drive the goal graph to a verified proof tree or a structured failure
-    report. The schedule orders the frontier with a structural fan-out proxy
-    (spec §7); a real expected-ΔF estimator is a follow-on per spec §5.3.
+    report. The schedule orders the frontier with the spec §5.3 expected-ΔF
+    signal (substrate F via :mod:`composition.free_energy`) composed with
+    the precision*coupling fan-out tiebreak -- see :func:`_frontier_priority`.
 
     Parameters
     ----------
