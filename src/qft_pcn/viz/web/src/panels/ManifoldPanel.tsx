@@ -16,7 +16,7 @@ import { PanelShell } from './PanelShell';
 import { PanelToolbar, type ToolbarItem } from './PanelToolbar';
 import { PanelReadouts } from './PanelReadouts';
 import { MetricsStrip } from './MetricsStrip';
-import { diverging, normGrid } from './common';
+import { diverging, normGrid, as2DGrid, type PhiLike } from './common';
 import { FrameInterpreter } from '../components/FrameInterpreter';
 
 type Grid = number[][];
@@ -24,7 +24,11 @@ type Grid = number[][];
 interface ManifoldState {
   metric_h?: { h_xx?: Grid; h_xy?: Grid; h_yy?: Grid } | null;
   ricci?: Grid | null;
-  fields?: Array<{ phi?: Grid; E?: Grid; Pi?: Grid; channels?: number }> | null;
+  // `snapshot_network` emits per-layer phi/E/Pi as 3D `(channels, Nx, Ny)`
+  // (Field.values is shape (C, Nx, Ny) and `_grid` just .tolist()s it). The
+  // overlay surface needs 2D, so `as2DGrid(field.phi, channel)` collapses
+  // the channel axis at the consumer site.
+  fields?: Array<{ phi?: PhiLike; E?: PhiLike; Pi?: PhiLike; channels?: number }> | null;
   mean_abs_ricci?: number | null;
   step?: number | null;
 }
@@ -150,7 +154,10 @@ export function ManifoldPanel({
   }, [curRicci, baseRicci, baselineFrame]);
   const field = st.fields?.[0];
   const nChannels = field?.channels ?? 1;
-  const overlayGrid =
+  // Wire shape is 3D (C, Nx, Ny); collapse to the selected channel before
+  // handing to the Three.js Surface (which builds a PlaneGeometry from the
+  // 2D grid extents — a degenerate 1xN strip otherwise).
+  const overlayRaw =
     overlay === 'phi'
       ? field?.phi
       : overlay === 'E'
@@ -158,6 +165,7 @@ export function ManifoldPanel({
         : overlay === 'Pi'
           ? field?.Pi
           : null;
+  const overlayGrid = as2DGrid(overlayRaw, channel);
 
   const hasData = !!baseHeight && !!baseColor;
 
