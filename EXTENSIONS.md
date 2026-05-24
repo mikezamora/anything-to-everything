@@ -916,7 +916,7 @@ already perf-optimized through the M3 perf path
 
 ## RESOLVED: S1 MPO (Matrix Product Operator) substrate
 
-- Status: RESOLVED at commit `<this-sha>` (substrate task S1). Lands in
+- Status: RESOLVED at commit `25b44a4` (substrate task S1). Lands in
   `src/qft_pcn/qft/mpo.py` with seven acceptance tests in
   `src/qft_pcn/tests/test_mpo.py` (all passing).
 - Surface: `MPO` dataclass over rank-4 tensors `(chi_l, d, d, chi_r)`
