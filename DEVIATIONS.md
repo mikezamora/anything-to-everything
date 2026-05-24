@@ -851,3 +851,41 @@ already catalogued in `EXTENSIONS.md` are not re-listed here.
   non-trivial operator product expectation that vanishes on well-typed
   programs).
 - Audit source: `spec_gap_analysis.md` C3.
+
+## RESOLVED — A1+B3 polish: honest QPCN proof adapter + A4/A7 ablation honesty
+- Spec: `QFT_PCN_ARCHITECTURE.md` §1.6 honest reporting; §14.4
+  ablation matrix.
+- Gap (audit follow-on to A1, B3):
+  * FU1 — `experiments/baselines/qpcn.py::_solve_proof` hardcoded the
+    K-8 AST (`forall x:Nat. Eq (x + Zero) x`) for every proof row,
+    so e.g. `mathd_numbertheory_447` (`forall n:Nat. 0+n=n`) was
+    silently being scored against THE WRONG theorem. §1.6 violation.
+  * FU2 — `experiments/ablations/ablation_runner.py::ABLATION_CONFIGS`
+    had A4 ("no abstraction discovery") and A7 ("no §12 extensions")
+    flagged `wired=True`, but no substrate-level switch is
+    implemented for either; both rows produced identical numbers to
+    BASELINE and the `not_yet_wired` exclusion did not fire, so the
+    ablation table could silently mis-attribute BASELINE evidence to
+    the ablation cell.
+- Resolution:
+  * `experiments/benchmarks/minif2f.py::_BUILTIN` now carries a
+    `qpcn_statement` field per problem (surface-grammar restatement
+    parseable by `src.qft_pcn.logic.ast.parse`), or `None` when the
+    Lean theorem requires a primitive outside our evaluation-rule
+    set (`Nat.add_comm`, `Nat.add_assoc`, `0+n=n` left-zero, ...).
+    `load()` forwards the field into `payload`.
+  * `experiments/baselines/qpcn.py::_solve_proof` now reads
+    `problem.payload["qpcn_statement"]` and dispatches:
+    `None` / missing → honest `out_of_substrate` no-attempt with
+    precise `error=` + `diagnostics={"qpcn_statement": None, ...}`;
+    parse failure → honest `out_of_substrate` no-attempt with the
+    raised `parse_error` recorded in diagnostics; successful parse →
+    `encode_mera + MeraEvalHamiltonian + mera_imaginary_evolve_state`
+    on the per-problem AST. No fallback to a hardcoded AST.
+  * `experiments/ablations/ablation_runner.py::ABLATION_CONFIGS` —
+    A4 + A7 flipped to `wired=False` with `extensions_anchor`
+    pointing at EXTENSIONS.md; the runner now excludes them from
+    per-ablation evidence (`not_yet_wired=True` diagnostic + null
+    metrics) until a real substrate switch lands. Real wiring
+    deferred to EXTENSIONS.md.
+- Audit source: A1+B3 polish follow-ons FU1, FU2.

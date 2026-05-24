@@ -1,0 +1,37 @@
+{
+  "version": "1",
+  "fields": [
+    {"name": "node_kind", "cutoff": 12},
+    {"name": "type",      "cutoff": 8},
+    {"name": "binder_id", "cutoff": 16},
+    {"name": "value",     "cutoff": 8}
+  ],
+  "sites": 12,
+  "boundary": {
+    "0": {"node_kind": "Lambda", "type": "List_a_to_Nat"}
+  },
+  "constraints": [
+    {"kind": "well_typed_subtree", "root": 0, "weight": 10.0},
+    {"kind": "example", "input": "[]",        "output": "0", "weight": 5.0},
+    {"kind": "example", "input": "[x]",       "output": "1", "weight": 5.0},
+    {"kind": "example", "input": "[x, y, z]", "output": "3", "weight": 5.0},
+    {"kind": "vocabulary",
+     "primitives": ["Match", "Cons", "Nil", "Succ", "Zero", "Var", "App"]}
+  ],
+  "observables": [
+    {"site": 0,  "field": "node_kind", "op": "argmax"},
+    {"site": 1,  "field": "node_kind", "op": "argmax"},
+    {"site": 2,  "field": "node_kind", "op": "argmax"},
+    {"site": 3,  "field": "node_kind", "op": "argmax"},
+    {"site": 4,  "field": "node_kind", "op": "argmax"},
+    {"site": 5,  "field": "node_kind", "op": "argmax"},
+    {"site": 6,  "field": "node_kind", "op": "argmax"},
+    {"site": 7,  "field": "node_kind", "op": "argmax"},
+    {"site": 8,  "field": "node_kind", "op": "argmax"},
+    {"site": 9,  "field": "node_kind", "op": "argmax"},
+    {"site": 10, "field": "node_kind", "op": "argmax"},
+    {"site": 11, "field": "node_kind", "op": "argmax"}
+  ],
+  "search": {"method": "imag_time", "runtime": "mera",
+             "steps": 100, "chi_max": 32, "dt": 0.05}
+}

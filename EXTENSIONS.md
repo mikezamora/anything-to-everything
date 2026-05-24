@@ -1390,3 +1390,32 @@ already perf-optimized through the M3 perf path
   problems; the Myth P1..P8 family uses the builder map directly
   and IS wired end-to-end (test_baselines.py covers this).
 
+## A4 ablation: disable abstraction-discovery substrate path
+- Spec: `QFT_PCN_ARCHITECTURE.md` §10.9 + §14.4 row A4 ("No
+  abstraction discovery -- fixed library").
+- Need: a substrate-level switch in `solve_goal_graph` /
+  `LemmaLibrary` that disables on-the-fly lemma promotion and
+  freezes the library to its initial primitive set, so the A4 row
+  measures the true contribution of §10.9 abstraction-discovery
+  vs the BASELINE. Currently the A4 config produced identical
+  numbers to BASELINE because no such switch existed and the
+  runner silently reused the BASELINE attempt.
+- Workaround (A1+B3 polish FU2): `ABLATION_CONFIGS` for A4 flipped
+  to `wired=False` so the row is excluded from per-ablation
+  statistical claims (`not_yet_wired=True` diagnostic), preserving
+  §1.6 honest reporting until the real switch lands.
+
+## A7 ablation: disable §12-extensions substrate path
+- Spec: `QFT_PCN_ARCHITECTURE.md` §12 (entire) + §14.4 row A7
+  ("No §12 extensions -- pure §10 architecture").
+- Need: a substrate-level switch that gates §12 extensions
+  (holographic recovery, gauge symmetry, Goldstone abstraction,
+  Schmidt cuts, anomaly detection, ...) so the A7 row measures
+  what each §12 subsection contributes vs the pure §10 baseline.
+  Currently A7 produced identical numbers to BASELINE because the
+  §12 modules are unconditionally engaged whenever the substrate
+  runs.
+- Workaround (A1+B3 polish FU2): `ABLATION_CONFIGS` for A7 flipped
+  to `wired=False`; row excluded from per-ablation stats via
+  `not_yet_wired=True` diagnostic until the real gating lands.
+

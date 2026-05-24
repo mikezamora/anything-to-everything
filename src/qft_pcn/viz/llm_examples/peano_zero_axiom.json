@@ -1,0 +1,24 @@
+{
+  "version": "1",
+  "fields": [
+    {"name": "node_kind", "cutoff": 8},
+    {"name": "type",      "cutoff": 4}
+  ],
+  "sites": 8,
+  "boundary": {"0": {"node_kind": "App"}},
+  "constraints": [
+    {"kind": "well_typed_subtree", "root": 0, "weight": 10.0},
+    {"kind": "vocabulary",
+     "primitives": ["App", "Var", "Zero", "Succ", "Add", "Eq", "Forall", "Const"]},
+    {"kind": "use_lemma",
+     "lemma_id": "peano-x-plus-0-eq-x",
+     "sites": [2, 3, 4],
+     "weight": 8.0}
+  ],
+  "observables": [
+    {"site": 0, "field": "node_kind", "op": "argmax"},
+    {"site": 7, "field": "node_kind", "op": "argmax"}
+  ],
+  "search": {"method": "imag_time", "runtime": "mera",
+             "steps": 50, "chi_max": 16, "dt": 0.05}
+}

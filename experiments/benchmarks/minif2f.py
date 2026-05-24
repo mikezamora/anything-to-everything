@@ -32,11 +32,20 @@ from ..schema import ProblemSpec
 # as in the openai/miniF2F repository. The QPCN-eligible subset is the
 # Nat/integer arithmetic identities; the rest are tagged
 # ``out_of_substrate`` so the runner records an honest no-attempt.
+#   ``qpcn_statement``: each builtin theorem also carries its
+#   canonical surface-syntax restatement parseable by
+#   ``src.qft_pcn.logic.ast.parse`` so the QPCN adapter encodes THE
+#   theorem-under-test (per problem) rather than a single hardcoded
+#   K-8 AST. Theorems whose Lean statement does NOT round-trip
+#   through our surface grammar (e.g. requires `Nat.add_comm` as a
+#   primitive) carry ``qpcn_statement=None`` and are surfaced as
+#   honest ``out_of_substrate`` no-attempts. §1.6 honest reporting.
 _BUILTIN: tuple[dict, ...] = (
     {
         "id": "mathd_algebra_478",
         "statement": "forall n : Nat, n + 0 = n",
         "lean": "theorem mathd_algebra_478 (n : Nat) : n + 0 = n := by simp",
+        "qpcn_statement": "forall n:Nat. Eq (n + Zero) n",
         "fragment": "nat_arith",
         "difficulty": 0.05,
     },
@@ -44,21 +53,29 @@ _BUILTIN: tuple[dict, ...] = (
         "id": "mathd_numbertheory_447",
         "statement": "forall n : Nat, 0 + n = n",
         "lean": "theorem mathd_numbertheory_447 (n : Nat) : 0 + n = n := by simp",
-        "fragment": "nat_arith",
+        # 0+n=n is NOT the K-8 family (Hamiltonian rewrites x+Zero, not
+        # Zero+x); without a Zero-on-left rule the residual does not
+        # converge below tol. Honest: out_of_substrate.
+        "qpcn_statement": None,
+        "fragment": "out_of_substrate",
         "difficulty": 0.05,
     },
     {
         "id": "induction_nfactltnexpnm1ngt3",
         "statement": "forall a b : Nat, a + b = b + a",
         "lean": "theorem add_comm_nat (a b : Nat) : a + b = b + a := by simp [Nat.add_comm]",
-        "fragment": "nat_arith",
+        # Commutativity over Nat is not a substrate evaluation rule.
+        "qpcn_statement": None,
+        "fragment": "out_of_substrate",
         "difficulty": 0.20,
     },
     {
         "id": "mathd_algebra_148",
         "statement": "forall a b c : Nat, (a + b) + c = a + (b + c)",
         "lean": "theorem add_assoc_nat (a b c : Nat) : (a + b) + c = a + (b + c) := by simp [Nat.add_assoc]",
-        "fragment": "nat_arith",
+        # Associativity over Nat is not a substrate evaluation rule.
+        "qpcn_statement": None,
+        "fragment": "out_of_substrate",
         "difficulty": 0.30,
     },
     {
@@ -137,7 +154,18 @@ def load(limit: Optional[int] = None) -> list[ProblemSpec]:
             domain="proof",
             problem_id=row["id"],
             statement=row["statement"],
-            payload={"lean": row["lean"], "fragment": row["fragment"]},
+            payload={
+                "lean": row["lean"],
+                "fragment": row["fragment"],
+                # Per A1+B3 polish FU1: each builtin theorem carries
+                # its surface-syntax restatement parseable by
+                # ``src.qft_pcn.logic.ast.parse`` so the QPCN adapter
+                # encodes THIS theorem rather than a single hardcoded
+                # K-8 AST. Out-of-substrate / lacking-rule entries
+                # carry ``None`` so the adapter surfaces an honest
+                # out_of_substrate no-attempt per §1.6.
+                "qpcn_statement": row.get("qpcn_statement"),
+            },
             difficulty=row["difficulty"],
             tags=("minif2f", row["fragment"]),
         )

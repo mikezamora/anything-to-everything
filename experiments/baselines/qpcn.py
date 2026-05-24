@@ -48,6 +48,7 @@ def _solve_proof(problem: ProblemSpec, *, timeout_s: float) -> ProofAttempt:
     ``solved=False, error="out_of_substrate"`` (honest no-attempt).
     """
     fragment = problem.payload.get("fragment", "unknown")
+    qpcn_statement = problem.payload.get("qpcn_statement")
     t0 = time.time()
     if fragment == "out_of_substrate":
         return ProofAttempt(
@@ -63,12 +64,32 @@ def _solve_proof(problem: ProblemSpec, *, timeout_s: float) -> ProofAttempt:
             diagnostics={"fragment": fragment},
         )
 
+    # A1+B3 polish FU1: honest per-problem encoding. Parse the surface
+    # statement from the loader. Missing / None / unparseable -> honest
+    # out_of_substrate no-attempt per §1.6 (NEVER fall back to the
+    # hardcoded K-8 AST -- that would fabricate a result for a
+    # different theorem).
+    if qpcn_statement is None:
+        return ProofAttempt(
+            solver="qpcn",
+            problem_id=problem.problem_id,
+            solved=False,
+            well_typed=False,
+            residual_energy=None,
+            candidates=(),
+            wall_time_s=time.time() - t0,
+            error="out_of_substrate: no qpcn_statement on problem "
+                  "payload -- loader did not provide a surface-grammar "
+                  "restatement (see EXTENSIONS.md 'Free-form theorem "
+                  "ingestion').",
+            diagnostics={"fragment": fragment,
+                         "qpcn_statement": None},
+        )
+
     try:
         # Late import: keep adapter import cheap so the framework is
         # introspectable without the heavy substrate already imported.
-        from src.qft_pcn.logic.ast import (
-            Bin, Eq, Forall, TNat, Var, Zero,
-        )
+        from src.qft_pcn.logic.ast import parse as ast_parse
         from src.qft_pcn.logic.mera_encoder import encode_mera
         from src.qft_pcn.logic.mera_evaluation_hamiltonian import (
             MeraEvalHamiltonian,
@@ -77,15 +98,24 @@ def _solve_proof(problem: ProblemSpec, *, timeout_s: float) -> ProofAttempt:
             mera_imaginary_evolve_state,
         )
 
-        # The substrate-supported family: forall x:Nat. Eq (add x Zero) x.
-        # Both ``mathd_algebra_478`` and ``mathd_numbertheory_447`` are
-        # this exact composite (modulo argument order); ``add_comm_nat``
-        # and ``add_assoc_nat`` are not yet covered (would need
-        # additional rules) -- we still attempt them and let the
-        # residual reveal the gap honestly.
-        body = Eq(lhs=Bin(op="+", lhs=Var(name="x"), rhs=Zero()),
-                  rhs=Var(name="x"))
-        ast = Forall(param="x", param_ty=TNat(), body=body)
+        try:
+            ast = ast_parse(qpcn_statement)
+        except Exception as parse_exc:  # noqa: BLE001
+            return ProofAttempt(
+                solver="qpcn",
+                problem_id=problem.problem_id,
+                solved=False,
+                well_typed=False,
+                residual_energy=None,
+                candidates=(),
+                wall_time_s=time.time() - t0,
+                error=(f"out_of_substrate: qpcn_statement failed to "
+                       f"parse via logic.ast.parse: "
+                       f"{type(parse_exc).__name__}: {parse_exc}"),
+                diagnostics={"fragment": fragment,
+                             "qpcn_statement": qpcn_statement,
+                             "parse_error": repr(parse_exc)},
+            )
 
         state, meta = encode_mera(ast)
         H = MeraEvalHamiltonian(meta)
@@ -108,7 +138,8 @@ def _solve_proof(problem: ProblemSpec, *, timeout_s: float) -> ProofAttempt:
             wall_time_s=wall,
             error=None if solved else f"residual {residual:.4f} > tol {_PROOF_RESIDUAL_TOL}",
             diagnostics={"steps": 300, "chi": 16, "dt": 0.1,
-                         "fragment": fragment},
+                         "fragment": fragment,
+                         "qpcn_statement": qpcn_statement},
         )
     except Exception as exc:  # noqa: BLE001  (we report any failure)
         return ProofAttempt(

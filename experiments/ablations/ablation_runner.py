@@ -80,7 +80,13 @@ ABLATION_CONFIGS: tuple[AblationConfig, ...] = (
         label="A4",
         description="No abstraction discovery -- fixed library (§10.9)",
         flag="fixed_library",
-        wired=True,
+        # A1+B3 polish FU2: A4 currently produces identical numbers to
+        # BASELINE because no real substrate switch is implemented (the
+        # library is not actually disabled). Flip to wired=False so the
+        # row is not counted as ablation evidence; real wiring deferred
+        # to EXTENSIONS.md.
+        wired=False,
+        extensions_anchor="A4 ablation: disable abstraction-discovery substrate path",
     ),
     AblationConfig(
         label="A5",
@@ -100,7 +106,13 @@ ABLATION_CONFIGS: tuple[AblationConfig, ...] = (
         label="A7",
         description="No §12 extensions -- pure §10 architecture",
         flag="no_section_12",
-        wired=True,
+        # A1+B3 polish FU2: A7 currently produces identical numbers to
+        # BASELINE because no real substrate switch is implemented (§12
+        # extensions are not actually disabled). Flip to wired=False so
+        # the row is not counted as ablation evidence; real wiring
+        # deferred to EXTENSIONS.md.
+        wired=False,
+        extensions_anchor="A7 ablation: disable §12-extensions substrate path",
     ),
     AblationConfig(
         label="A8",
@@ -117,11 +129,11 @@ def _apply_ablation_to_attempt(
 ) -> ProofAttempt:
     """Tag the attempt with ablation diagnostics.
 
-    For ``wired=True`` configs (BASELINE, A4 fixed-library, A7 no-§12)
-    the attempt itself already reflects the configuration; for
-    ``wired=False`` configs the attempt is the BASELINE result tagged
-    with a not_yet_wired marker so it is excluded from per-ablation
-    statistical claims.
+    For ``wired=True`` configs (currently BASELINE only) the attempt
+    itself already reflects the configuration; for ``wired=False``
+    configs the attempt is the BASELINE result tagged with a
+    not_yet_wired marker so it is excluded from per-ablation
+    statistical claims (§1.6 honest reporting).
     """
     diag = dict(attempt.diagnostics)
     diag["ablation"] = config.label

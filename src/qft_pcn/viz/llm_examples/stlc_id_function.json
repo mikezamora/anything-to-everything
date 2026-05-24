@@ -1,0 +1,21 @@
+{
+  "version": "1",
+  "fields": [
+    {"name": "node_kind", "cutoff": 4},
+    {"name": "type",      "cutoff": 4}
+  ],
+  "sites": 4,
+  "boundary": {"0": {"node_kind": "Lambda"}},
+  "constraints": [
+    {"kind": "well_typed_subtree", "root": 0, "weight": 10.0},
+    {"kind": "vocabulary", "primitives": ["Lambda", "Var", "App", "Const"]}
+  ],
+  "observables": [
+    {"site": 0, "field": "node_kind", "op": "argmax"},
+    {"site": 1, "field": "node_kind", "op": "argmax"},
+    {"site": 2, "field": "node_kind", "op": "argmax"},
+    {"site": 3, "field": "node_kind", "op": "argmax"}
+  ],
+  "search": {"method": "imag_time", "runtime": "mps",
+             "steps": 30, "chi_max": 8, "dt": 0.05}
+}
