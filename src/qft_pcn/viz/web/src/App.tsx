@@ -9,6 +9,7 @@ import { RunControls } from './components/RunControls';
 import { CompareBar } from './components/CompareBar';
 import { ExplainerPane } from './components/ExplainerPane';
 import { RouteSwitcher } from './components/RouteSwitcher';
+import { CommandPalette } from './components/CommandPalette';
 import { DslRoute } from './routes/DslRoute';
 import { LearnRoute } from './routes/LearnRoute';
 import { TrainingRoute } from './routes/TrainingRoute';
@@ -43,6 +44,7 @@ export default function App() {
   const selectedLayer = useVizStore((s) => s.selectedLayer);
   return (
     <div className="app">
+      <CommandPalette />
       <RouteSwitcher />
       {error && <div className="error-bar" role="alert">{error}</div>}
       {route === 'viz' ? (
