@@ -77,3 +77,39 @@ def test_runspec_to_dsl_falls_back_when_no_dsl_companion():
     back = runspec_to_dsl(spec)
     assert validate(back) == []
     assert {f["name"] for f in back["fields"]} == {"A"}
+
+
+def test_lossless_roundtrip_preserves_unknown_keys():
+    # Future/unknown DSL keys (top-level + nested) must survive the
+    # dsl -> RunSpec -> dsl trip verbatim, since the companion stash is
+    # opaque w.r.t. flat-params reconstruction.
+    dsl = {
+        "fields": [{"name": "A", "cutoff": 2}],
+        "hamiltonian": {"terms": [
+            {"kind": "mass", "species": "A", "coefficient": 1.0},
+        ]},
+        "observables": [
+            {"operator": "n", "site": 0, "species": "A", "target": 0.25},
+        ],
+        "run": {"steps": 20, "seed": 0},
+        # Hypothetical future top-level key that today's translator drops:
+        "future_section": {"foo": [1, 2, 3], "bar": "baz"},
+    }
+    assert validate(dsl) == [], "fixture must validate under current schema"
+    spec = dsl_to_runspec(dsl)
+    back = runspec_to_dsl(spec)
+    assert back == dsl
+    assert "future_section" in back
+    assert back["future_section"] == {"foo": [1, 2, 3], "bar": "baz"}
+
+
+def test_fallback_reconstruction_when_dsl_absent():
+    # Explicit no-companion path: drop `spec.dsl` to None and assert the
+    # reverse falls back to flat-params reconstruction (not the stash).
+    spec = dsl_to_runspec(EXAMPLES[0])
+    spec.dsl = None  # force the fallback branch
+    back = runspec_to_dsl(spec)
+    assert validate(back) == []
+    # Reconstruction recovers species + run metadata even without the stash.
+    assert {f["name"] for f in back["fields"]} == {"A"}
+    assert back["run"]["steps"] == spec.steps

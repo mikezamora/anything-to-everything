@@ -167,6 +167,7 @@ def solve_goal_graph(
     provisional_energy_fn=None,
     llm_reviser=None,
     enforce_monotonicity: bool = True,
+    freeze_library: bool = False,
 ) -> SolveResult:
     """Drive the goal graph to a verified proof tree or a structured failure
     report. The schedule orders the frontier with a structural fan-out proxy
@@ -206,6 +207,19 @@ def solve_goal_graph(
         and a violation raises). Production callers replaying a known
         non-monotone trace for diagnostics can pass ``False`` to downgrade
         to record-only; the on_step callback is still invoked.
+    freeze_library:
+        Default ``False``. When ``True``, the orchestrator captures the
+        ``lemma_library.all_ids()`` snapshot at entry and, in a ``finally``
+        guard around the solve, drops every lemma whose id is NOT in that
+        snapshot via ``library._drop``. The solve loop itself still calls
+        ``register_lemma`` / ``Promoter.apply_init_clamp`` as normal -- the
+        in-loop clamp is the §1.1 binding mechanism and skipping it would
+        decay the solver to classical lookup (anti-shortcut) -- but every
+        novel lemma is rolled back when control leaves ``solve_goal_graph``.
+        The post-condition is exactly the §14.4 A4 ablation: "no new lemmas
+        land in the library during the solve". This is the substrate switch
+        for the A4 ablation row (no §10.9 abstraction discovery -- the
+        library is frozen to its initial primitive set across the solve).
     n_top_k:
         Number of candidate proofs to surface via Bayesian ranking
         (spec §12.16). The default ``1`` preserves prior behaviour:
@@ -482,55 +496,89 @@ def solve_goal_graph(
         # unreachable: the for-range is MAX_REVISIONS + 1 >= 1.
         assert False, "unreachable: MAX_REVISIONS + 1 >= 1"
 
+    # A4 ablation substrate switch (§14.4 row A4 / §10.9). When
+    # freeze_library=True, snapshot the library's current id set so any
+    # lemma registered during the solve can be rolled back in the
+    # `finally` guard below. The in-loop register/clamp must still fire
+    # (§1.1 binding = entanglement clamp, not classical lookup -- anti-
+    # shortcut); only the persisted side-effect is reverted at exit.
+    if freeze_library:
+        if not hasattr(lemma_library, "all_ids") or not hasattr(
+            lemma_library, "_drop"
+        ):
+            raise TypeError(
+                "freeze_library=True requires a LemmaLibrary surface with "
+                "all_ids() + _drop(lemma_id); got "
+                f"{type(lemma_library).__name__}"
+            )
+        _frozen_initial_ids: set[str] = set(lemma_library.all_ids())
+    else:
+        _frozen_initial_ids = set()
+
     try:
-        solved = _solve(root, frozenset())
-    except RevisionExhausted as exc:
-        # Spec §6.5: revision exhausted at (or under) the root -- surface
-        # as a structured failure_report, never a fabricated proof.
+        try:
+            solved = _solve(root, frozenset())
+        except RevisionExhausted as exc:
+            # Spec §6.5: revision exhausted at (or under) the root --
+            # surface as a structured failure_report, never a fabricated
+            # proof.
+            f_final = compute_free_energy(root)
+            return SolveResult(
+                solved=False,
+                proof_tree=None,
+                failure_report={
+                    "root_status": root.status.value,
+                    "free_energy": f_final,
+                    "exhausted_goal_id": exc.goal_id,
+                    "revision_attempts": exc.attempts,
+                    "message": "the parent's plan was flawed; revision exhausted",
+                },
+                final_free_energy=f_final,
+            )
         f_final = compute_free_energy(root)
+        if solved:
+            # A back-edge that slipped past detect_cycle is a graph bug;
+            # the assertion turns it into a typed GoalGraphError rather
+            # than a silent corrupt proof tree.
+            assert_acyclic(root)
+            proof_tree = extract_proof_tree(root)
+            # §12.16 Bayesian ranking surface. With a single candidate the
+            # ranking is trivially (proof_tree, weight=1.0) regardless of T.
+            # Multi-candidate generation (n_top_k > 1) requires revision-
+            # tracking and is deferred per EXTENSIONS.md A.3; we still
+            # populate ``ranked_proofs`` so downstream callers can rely on
+            # the API surface unconditionally.
+            candidates = [proof_tree]
+            ranked = tuple(
+                bayesian_rank_proofs(candidates, T=ranking_temperature)
+            )
+            return SolveResult(
+                solved=True,
+                proof_tree=proof_tree,
+                failure_report=None,
+                final_free_energy=f_final,
+                ranked_proofs=ranked,
+            )
         return SolveResult(
             solved=False,
             proof_tree=None,
             failure_report={
                 "root_status": root.status.value,
                 "free_energy": f_final,
-                "exhausted_goal_id": exc.goal_id,
-                "revision_attempts": exc.attempts,
-                "message": "the parent's plan was flawed; revision exhausted",
+                "message": "root did not solve; no revision path remained",
             },
             final_free_energy=f_final,
         )
-    f_final = compute_free_energy(root)
-    if solved:
-        # A back-edge that slipped past detect_cycle is a graph bug; the
-        # assertion turns it into a typed GoalGraphError rather than a
-        # silent corrupt proof tree.
-        assert_acyclic(root)
-        proof_tree = extract_proof_tree(root)
-        # §12.16 Bayesian ranking surface. With a single candidate the
-        # ranking is trivially (proof_tree, weight=1.0) regardless of T.
-        # Multi-candidate generation (n_top_k > 1) requires revision-
-        # tracking and is deferred per EXTENSIONS.md A.3; we still
-        # populate ``ranked_proofs`` so downstream callers can rely on
-        # the API surface unconditionally.
-        candidates = [proof_tree]
-        ranked = tuple(
-            bayesian_rank_proofs(candidates, T=ranking_temperature)
-        )
-        return SolveResult(
-            solved=True,
-            proof_tree=proof_tree,
-            failure_report=None,
-            final_free_energy=f_final,
-            ranked_proofs=ranked,
-        )
-    return SolveResult(
-        solved=False,
-        proof_tree=None,
-        failure_report={
-            "root_status": root.status.value,
-            "free_energy": f_final,
-            "message": "root did not solve; no revision path remained",
-        },
-        final_free_energy=f_final,
-    )
+    finally:
+        # A4 ablation substrate switch: rollback every lemma registered
+        # during the solve so the library exits in its initial state
+        # ("no new lemmas land in the library during the solve").
+        if freeze_library:
+            current_ids = set(lemma_library.all_ids())
+            novel_ids = current_ids - _frozen_initial_ids
+            for lid in novel_ids:
+                # ``_drop`` is the documented eviction surface (used by
+                # ``re_evaluate_provisional``). Outside its provisional-
+                # eviction use it is reserved -- the A4 freeze IS the
+                # other principled caller (§14.4 substrate switch).
+                lemma_library._drop(lid)

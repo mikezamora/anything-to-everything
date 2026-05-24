@@ -1245,20 +1245,28 @@ already perf-optimized through the M3 perf path
 - Unblocks: §12.12 tight bound — minimize over proof-MERA topologies
   matching the theorem encoding.
 
-## Missing dependency: proper `tier` field on `Lemma` (deferred from D19)
+## RESOLVED — D19 follow-up: proper `tier` field on `Lemma`
 
-- Where: `src/qft_pcn/composition/lemma_library_adapter.py` (tier_of_callable
-  / `_tiers`); `src/qft_pcn/composition/wake_sleep.py:150-156` (TODO marker)
-- Need: a first-class `tier: Literal["core","dynamic"]` field on `Lemma`
-  so the adapter does not need a sidecar `_tiers` dict and so §3.3
-  core-immunity is enforceable from the persisted record itself.
-- Workaround: `LemmaLibraryAdapter._tiers` is populated explicitly by the
-  orchestrator on register/replace. `tier_of` consults that map (or the
-  optional `tier_of_callable` override) and defaults to `"dynamic"`.
-  `use_log` is deliberately NOT used as a tier signal — it carries
-  provenance plus `"replace:{old_id}"` markers and would misclassify
-  subsumed primitives as "core".
-- Unblocks: removing the sidecar tier map and the wake_sleep TODO.
+- Where: `src/qft_pcn/composition/lemma_library.py` (Lemma dataclass +
+  save/load), `src/qft_pcn/composition/lemma_library_adapter.py`.
+- Resolution: added `tier: str = "dynamic"` field to the `Lemma`
+  dataclass with the canonical label set
+  `{"core","dynamic","primitive","consolidated"}`. The field
+  round-trips through `LemmaLibrary.save` / `LemmaLibrary.load` on the
+  underlying `.npz` (legacy stores without the key fall back to
+  `"dynamic"`). `LemmaLibraryAdapter._tiers` sidecar dict removed;
+  `tier_of` now reads `Lemma.tier` from the persisted record (a fresh
+  adapter on the same library sees the correct tiers across process
+  restarts). `register_lemma` accepts a `tier=` kwarg; the adapter sets
+  `tier="primitive"` on `_save_primitive`, `tier="consolidated"` on
+  `_save_consolidated`, `tier="dynamic"` on solved-triple register.
+  `tier_of_callable` override still wins when supplied. `wake_sleep.py`
+  consults `library.tier_of(sid)` unchanged — the abstraction was
+  already correct at the call site.
+- Pinned by: `composition/tests/test_lemma_tier_field.py`
+  (round-trip + cross-process fresh-adapter read + callable override).
+- §3.3 core-immunity is now enforceable from the persisted record
+  itself.
 
 ## Missing dependency: cache-hit Hamiltonian persistence (D34)
 
@@ -1396,20 +1404,34 @@ already perf-optimized through the M3 perf path
   problems; the Myth P1..P8 family uses the builder map directly
   and IS wired end-to-end (test_baselines.py covers this).
 
-## A4 ablation: disable abstraction-discovery substrate path
+## A4 ablation: disable abstraction-discovery substrate path -- RESOLVED (E26)
 - Spec: `QFT_PCN_ARCHITECTURE.md` §10.9 + §14.4 row A4 ("No
   abstraction discovery -- fixed library").
-- Need: a substrate-level switch in `solve_goal_graph` /
-  `LemmaLibrary` that disables on-the-fly lemma promotion and
-  freezes the library to its initial primitive set, so the A4 row
-  measures the true contribution of §10.9 abstraction-discovery
-  vs the BASELINE. Currently the A4 config produced identical
-  numbers to BASELINE because no such switch existed and the
-  runner silently reused the BASELINE attempt.
-- Workaround (A1+B3 polish FU2): `ABLATION_CONFIGS` for A4 flipped
-  to `wired=False` so the row is excluded from per-ablation
-  statistical claims (`not_yet_wired=True` diagnostic), preserving
-  §1.6 honest reporting until the real switch lands.
+- Resolution (E26): `solve_goal_graph` now accepts
+  `freeze_library: bool = False`. When `True` the orchestrator
+  snapshots `lemma_library.all_ids()` at entry and, in a `finally`
+  guard around the solve, drops every lemma whose id is NOT in the
+  snapshot via `lemma_library._drop`. The in-loop
+  `register_lemma` + `Promoter.apply_init_clamp` still fire (§1.1
+  binding = entanglement clamp, NOT classical lookup -- the clamp
+  cannot be skipped without decaying the solver to lookup); only
+  the persisted side-effect is rolled back at solve exit, so the
+  post-condition is exactly "no new lemmas land in the library
+  during the solve" (§14.4 row A4).
+  `ABLATION_CONFIGS["A4"]` is flipped to `wired=True`, and
+  `run_ablation_matrix` builds a freeze-aware `QPCNBaseline`
+  instance for the A4 row when the adapter exposes a
+  `freeze_library` attribute (graceful fallback to BASELINE
+  attempts otherwise; the `freeze_library=True` diagnostic still
+  surfaces on every A4 attempt so post-hoc analysis can confirm
+  the substrate switch fired).
+- Tests: `experiments/tests/test_a4_ablation.py` --
+  `test_a4_freezes_lemma_library` asserts the library is unchanged
+  across an A4 solve while the same solve under
+  `freeze_library=False` (BASELINE) DOES grow the library;
+  `test_a4_solves_problems_solvable_from_initial_library` exercises
+  the §1.1 in-loop clamp guarantee (a substrate-supported theorem
+  still solves under A4 freeze).
 
 ## A7 ablation: disable §12-extensions substrate path
 - Spec: `QFT_PCN_ARCHITECTURE.md` §12 (entire) + §14.4 row A7
@@ -1468,3 +1490,17 @@ already perf-optimized through the M3 perf path
 - **Status:** simplified projector — penalises typed-kind sites with `type == "unknown"`.
 - **Needed:** full §10.2 T-Var / T-App / T-Abs elaboration (W3.T2b).
 - **Unused parameter:** `root` is currently a no-op; the full elaboration will scope per-site projectors to the subtree rooted at `root`.
+
+## RESOLVED — viz DSL lossless RunSpec round-trip
+
+- **Status:** RESOLVED. Cross-reference to `src/qft_pcn/viz/EXTENSIONS.md`
+  → "DSL — lossless RunSpec round-trip (RESOLVED)".
+- **Substrate change:** `RunSpec` (in `src/qft_pcn/viz/runs.py`) gained an
+  optional `dsl: dict | None = None` companion field. `dsl_to_runspec`
+  deep-copies the input DSL onto `spec.dsl`; `runspec_to_dsl` returns
+  that verbatim when present, falling back to flat-params reconstruction
+  when absent. Unknown/future DSL keys now survive the round-trip.
+- **Tests:** `src/qft_pcn/tests/test_viz_dsl.py` —
+  `test_runspec_to_dsl_round_trips_examples_losslessly`,
+  `test_lossless_roundtrip_preserves_unknown_keys`,
+  `test_fallback_reconstruction_when_dsl_absent`.

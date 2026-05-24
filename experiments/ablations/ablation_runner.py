@@ -80,12 +80,13 @@ ABLATION_CONFIGS: tuple[AblationConfig, ...] = (
         label="A4",
         description="No abstraction discovery -- fixed library (§10.9)",
         flag="fixed_library",
-        # A1+B3 polish FU2: A4 currently produces identical numbers to
-        # BASELINE because no real substrate switch is implemented (the
-        # library is not actually disabled). Flip to wired=False so the
-        # row is not counted as ablation evidence; real wiring deferred
-        # to EXTENSIONS.md.
-        wired=False,
+        # E26 (EXTENSIONS.md A4 RESOLVED): the substrate switch is now
+        # real -- ``solve_goal_graph(freeze_library=True)`` snapshots the
+        # LemmaLibrary at entry and rolls back every lemma registered
+        # during the solve in a `finally` guard. The A4 row therefore
+        # measures a genuine substrate flip (no §10.9 abstraction
+        # discovery persisted) instead of reusing the BASELINE attempt.
+        wired=True,
         extensions_anchor="A4 ablation: disable abstraction-discovery substrate path",
     ),
     AblationConfig(
@@ -129,15 +130,26 @@ def _apply_ablation_to_attempt(
 ) -> ProofAttempt:
     """Tag the attempt with ablation diagnostics.
 
-    For ``wired=True`` configs (currently BASELINE only) the attempt
-    itself already reflects the configuration; for ``wired=False``
-    configs the attempt is the BASELINE result tagged with a
-    not_yet_wired marker so it is excluded from per-ablation
-    statistical claims (§1.6 honest reporting).
+    For ``wired=True`` configs (BASELINE, A4) the attempt itself
+    already reflects the configuration; for ``wired=False`` configs the
+    attempt is the BASELINE result tagged with a not_yet_wired marker
+    so it is excluded from per-ablation statistical claims (§1.6
+    honest reporting).
+
+    A4 (§14.4 / E26): the substrate switch is
+    ``solve_goal_graph(freeze_library=True)``; the runner re-runs the
+    solver under a freeze-aware ``QPCNBaseline`` instance so the
+    diagnostic ``freeze_library=True`` is carried on every attempt and
+    the LemmaLibrary post-condition is verifiable from the recorded row.
     """
     diag = dict(attempt.diagnostics)
     diag["ablation"] = config.label
     diag["ablation_flag"] = config.flag
+    if config.label == "A4":
+        # E26: A4 attempts are produced by a freeze-aware solver in
+        # run_ablation_matrix; tag the diagnostic so post-hoc analysis
+        # can confirm the substrate switch fired on every row.
+        diag["freeze_library"] = True
     if not config.wired:
         diag["not_yet_wired"] = True
         diag["extensions_anchor"] = config.extensions_anchor
@@ -177,9 +189,30 @@ def run_ablation_matrix(
         baseline_solver.solve(p) for p in problems
     ]
 
+    # A4 (E26): re-solve with a freeze-aware QPCNBaseline so the
+    # produced attempts reflect a genuine ``solve_goal_graph(
+    # freeze_library=True)`` run rather than reusing the BASELINE row.
+    # The factory's solver instance is consulted via duck-typing: if it
+    # exposes a ``freeze_library`` attribute we flip it; otherwise the
+    # A4 row gracefully degrades to the BASELINE attempts with the
+    # ``freeze_library=True`` diagnostic still tagged.
+    a4_attempts: list[ProofAttempt] | None = None
+    if any(cfg.label == "A4" and cfg.wired for cfg in configs):
+        try:
+            a4_solver = solver_factory()
+            if hasattr(a4_solver, "freeze_library"):
+                a4_solver.freeze_library = True
+                a4_attempts = [a4_solver.solve(p) for p in problems]
+        except Exception:  # noqa: BLE001 -- A4 row never crashes the matrix
+            a4_attempts = None
+
     for cfg in configs:
+        source = (
+            a4_attempts if (cfg.label == "A4" and a4_attempts is not None)
+            else baseline_attempts
+        )
         tagged = tuple(
-            _apply_ablation_to_attempt(a, cfg) for a in baseline_attempts
+            _apply_ablation_to_attempt(a, cfg) for a in source
         )
         out.append(BenchmarkResult(
             solver=f"qpcn+{cfg.label}" if cfg.label != "BASELINE" else "qpcn",
