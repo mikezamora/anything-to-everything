@@ -41,4 +41,32 @@ describe('FrameInterpreter', () => {
       expect(fn({}, 0)).toBeNull();
     }
   });
+
+  it('every interpreter returns null for an empty layer_state without throwing', () => {
+    for (const [key, fn] of Object.entries(INTERPRETERS)) {
+      expect(fn({}, 0), `${key} should return null for empty state`).toBeNull();
+    }
+  });
+
+  it('every interpreter has a citation pointing to a learn-route article id', () => {
+    // Citations are exercised in T9 article-coverage; here we just ensure
+    // every interpreter that returns output sets a citation.
+    for (const [key, fn] of Object.entries(INTERPRETERS)) {
+      // Stress with a generously populated state — most return non-null.
+      const out = fn({
+        mean_abs_ricci: 0.3, mean_abs_coupling: 0.3,
+        bond_dims: [4], entropies: [0.5],
+        n_sites: 4, d_local: 2, species: ['A'],
+        energy: -1.5, n_leaves: 4, layer_dims: [2, 2],
+        n_qubits: 3, n_layers: 2,
+        total_energy: 0.5, forall_protected_leaves: [],
+        trotter_steps: 10, layers: [{}, {}],
+        total_free_energy: 1.2,
+        mean_abs_stress_energy: 0.01,
+      }, 1);
+      if (out !== null) {
+        expect(out.citation, `${key} output should carry a citation`).toBeTruthy();
+      }
+    }
+  });
 });
