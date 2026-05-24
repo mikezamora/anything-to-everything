@@ -687,6 +687,55 @@ def test_two_site_expectation_handles_non_identity_intra():
     )
 
 
+# ---- D30: MERA.inner cross-network inter-pair drop (third sister) --------
+
+
+def test_inner_handles_non_identity_inter_disentanglers():
+    """D30 fix: ``MERA.inner``'s cross-network helpers ``_cross_layer1`` and
+    ``_cross_ascend`` only folded the intra-pair disentangler composed with
+    the isometry; the layer-0 INTER-pair disentangler was silently dropped.
+    After ``apply_two_site_gate`` on an odd leaf, ``norm_sq`` (which calls
+    ``inner(self, self)``) and any non-product two-MERA overlap were biased.
+    Fix: route ``inner`` via ``_materialize`` whenever any layer-0
+    disentangler is non-identity (same guard as D5 + D25).
+    """
+    from src.qft_pcn.qft.mera import MERA
+    psi_0 = np.array([1.0, 0.0], dtype=complex)
+    psi_1 = np.array([0.0, 1.0], dtype=complex)
+    psi_plus = np.array([1.0, 1.0], dtype=complex) / np.sqrt(2.0)
+    # Build two distinct 4-leaf MERAs, then perturb one with an inter-pair
+    # (odd-leaf) gate so its layer-0 inter_disentanglers become non-identity.
+    m_a = MERA.from_product([psi_plus, psi_0, psi_1, psi_0], chi_layer=4)
+    m_b = MERA.from_product([psi_plus, psi_0, psi_1, psi_0], chi_layer=4)
+    SWAP = np.array([[1, 0, 0, 0],
+                     [0, 0, 1, 0],
+                     [0, 1, 0, 0],
+                     [0, 0, 0, 1]], dtype=complex)
+    err = m_a.apply_two_site_gate(leaf=1, gate=SWAP, chi_max=4)
+    assert err < 1e-10
+    assert m_a._layer0_any_nontrivial(), (
+        "precondition: inter-pair gate must write a non-identity layer-0 "
+        "disentangler"
+    )
+    # Self-overlap norm_sq via inner(self, self) — pre-fix would deviate
+    # from 1 because the inter_disentangler was dropped.
+    n_a = float(np.real(m_a.inner(m_a)))
+    psi_a = m_a._materialize()
+    n_ref = float(np.real(np.vdot(psi_a.ravel(), psi_a.ravel())))
+    assert abs(n_a - n_ref) < 1e-9, (
+        f"inner(self, self) = {n_a}, materialize-ref = {n_ref}; "
+        "inter_disentangler being dropped from the cross-network fold"
+    )
+    # Two-MERA non-product overlap: m_a (gated) vs m_b (un-gated).
+    ov = m_a.inner(m_b)
+    psi_b = m_b._materialize()
+    ov_ref = complex(np.vdot(psi_a.ravel(), psi_b.ravel()))
+    assert abs(ov - ov_ref) < 1e-9, (
+        f"inner(m_a, m_b) = {ov}, materialize-ref = {ov_ref}; "
+        "cross-network inter_disentangler drop"
+    )
+
+
 # ---- Task 18: General entanglement entropy via materialization -----------
 
 

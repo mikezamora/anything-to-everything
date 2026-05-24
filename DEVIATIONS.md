@@ -480,3 +480,33 @@ already catalogued in `EXTENSIONS.md` are not re-listed here.
   test module's symbols verbatim. Runnable via
   `python -m src.qft_pcn.composition.demo_hierarchical_proof`.
 - Audit source: §10.11 deviation sweep
+
+### D30 — `MERA.inner` cross-network helpers drop layer-0 inter disentanglers — RESOLVED
+- Location: `src/qft_pcn/qft/mera.py` `MERA.inner` + helpers
+  `_cross_layer1` / `_cross_ascend` (around lines 744-877)
+- Spec: §5.4 / §5.5 double-network <psi|psi> and <bra|ket>
+- Issue: Third sister of D5 + D25. `_cross_layer1` and
+  `_cross_ascend` build the per-layer cross "double" tensor from the
+  intra-pair disentangler composed with the isometry
+  (`W = w · u`); the layer-0 INTER-pair disentangler
+  (`inter_disentanglers[0][j]`) and any higher-layer inter never enter
+  the fold. The product-state fast path requires `_is_product()` for
+  both operands, so any post-`apply_two_site_gate` state falls
+  through to the biased network contraction. Result: `norm_sq`
+  (which calls `inner(self, self)`) and any non-product two-MERA
+  overlap silently deviate from unity / the true overlap after any
+  odd-leaf gate.
+- Resolution: extended the D25 `_layer0_any_nontrivial` guard to
+  `MERA.inner`. When EITHER operand has a non-trivial layer-0
+  disentangler (intra OR inter) and neither is a term-superposition
+  state, both states are materialized via `_materialize` and the
+  inner product is a leaf-basis dot product. `_materialize` honors
+  the layer-0-only-modifiable invariant (raises
+  `NotImplementedError` on layer-≥1 non-identity) so the fallback
+  loud-fails outside the gate-application regime. New test
+  `test_inner_handles_non_identity_inter_disentanglers` pins the
+  fix: builds two 4-leaf MERAs, perturbs one with an inter-pair
+  (odd-leaf) SWAP, and asserts both `inner(self, self)` and
+  `inner(m_a, m_b)` match the materialize-then-dot reference to
+  1e-9.
+- Audit source: §5.4 / §5.5 D5+D25 sister sweep

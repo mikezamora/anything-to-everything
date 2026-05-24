@@ -854,6 +854,21 @@ class MERA:
                 ket = other.leaves[k][0, :, 0]
                 val *= complex(bra @ ket)
             return val
+        # D30 fix (third sister of D5 + D25): the cross-network helpers
+        # ``_cross_layer1`` / ``_cross_ascend`` only fold the intra-pair
+        # disentangler composed with the isometry; they silently drop the
+        # layer-0 INTER-pair disentanglers. After ``apply_two_site_gate`` on
+        # an odd leaf those become non-identity and the network contraction
+        # is biased. Route via leaf-basis materialization (cost O(d^N), but
+        # the gate-application invariant — only layer-0 mutates — is the
+        # same regime that already triggers D5/D25's materialize routing).
+        if (self._superposition_terms is None
+                and other._superposition_terms is None
+                and (self._layer0_any_nontrivial()
+                     or other._layer0_any_nontrivial())):
+            psi_b = self._materialize()
+            psi_k = other._materialize()
+            return complex(np.vdot(psi_b.ravel(), psi_k.ravel()))
         if L == 1:
             # N=2: top sits directly above the two leaves (no isometry
             # ascent consumed in norm_sq either). Contract leaves with
