@@ -129,7 +129,7 @@ export const article: ArticleSpec = {
     },
   ],
   citations: [
-    { label: 'QFT_PCN_ARCHITECTURE.md §5 (QPCN)', href: '../../QFT_PCN_ARCHITECTURE.md' },
+    { label: 'QFT_PCN_ARCHITECTURE.md §2.3 + §4.7.5 (QPCN — quantum predictive coder)', href: '../../QFT_PCN_ARCHITECTURE.md' },
     { label: 'src/qft_pcn/qft/qpcn.py', href: '../../../qft/qpcn.py' },
   ],
 };
