@@ -193,3 +193,95 @@ def test_add_child_rejects_reparent():
     # child still belongs to parent1; parent2 did not pick it up
     assert child.parent is parent1
     assert child not in parent2.children
+
+
+# --- D6: §9.5 monotonicity enforcement -------------------------------------
+
+def test_free_energy_assertion_fires_on_violation():
+    """D6 (§9.5): a step that strictly increases F_hierarchy must RAISE.
+
+    Engineer a rising sequence (10.0 -> 10.0 -> 10.5) and confirm the
+    tracker raises :class:`MonotonicityViolation` exactly on the inflation
+    step. The plateau (10.0 -> 10.0) is tolerated. The default mode is
+    ``strict=True`` so test wiring catches the violation without opt-in.
+    """
+    import pytest as _pytest
+    from src.qft_pcn.composition.goal_graph import (
+        make_monotonicity_tracker, MonotonicityViolation,
+    )
+    sink: list[float] = []
+    tracker = make_monotonicity_tracker(sink=sink)
+    tracker(10.0)            # first value: no comparison
+    tracker(10.0)            # plateau: allowed
+    with _pytest.raises(MonotonicityViolation):
+        tracker(10.5)        # strict increase: violation
+    # Sink recorded every observed value — including the one that raised.
+    assert sink == [10.0, 10.0, 10.5]
+
+
+def test_free_energy_assertion_disabled_on_strict_false():
+    """D6 production knob: strict=False downgrades to record-only.
+
+    A violation no longer raises, but every value is still recorded. The
+    spec-level invariant is unchanged; the knob exists for diagnostic
+    replay of a known non-monotone trace.
+    """
+    from src.qft_pcn.composition.goal_graph import make_monotonicity_tracker
+    sink: list[float] = []
+    tracker = make_monotonicity_tracker(strict=False, sink=sink)
+    tracker(1.0)
+    tracker(2.0)            # would raise in strict mode
+    tracker(3.0)            # ditto
+    assert sink == [1.0, 2.0, 3.0]
+
+
+# --- D9: quarantine respected in all_solved --------------------------------
+
+def test_all_solved_skips_quarantined():
+    """D9 (§6.6): a parent whose live children are all SOLVED completes,
+    even when a sibling branch is quarantined. Spec calls for "explore in
+    parallel"; the live coverage must not be blocked by the quarantined
+    sibling.
+    """
+    from src.qft_pcn.composition.goal_graph import all_solved
+    g_p = make_sub_goal(_spec("p"), goal_prop="P", boundary={}, parent_leaves=())
+    g_a = make_sub_goal(_spec("a"), goal_prop="A", boundary={}, parent_leaves=(0,))
+    g_b = make_sub_goal(_spec("b"), goal_prop="B", boundary={}, parent_leaves=(1,))
+    parent = Node(goal=g_p, status=Status.PENDING)
+    live = Node(goal=g_a, status=Status.SOLVED)
+    quarantined = Node(goal=g_b, status=Status.FAILED)
+    quarantined.quarantined = True
+    parent.add_child(live)
+    parent.add_child(quarantined)
+    assert all_solved(parent) is True
+
+
+def test_all_solved_false_when_live_child_unsolved():
+    """D9 negative: a live (non-quarantined) PENDING child still blocks."""
+    from src.qft_pcn.composition.goal_graph import all_solved
+    g_p = make_sub_goal(_spec("p2"), goal_prop="P", boundary={}, parent_leaves=())
+    g_a = make_sub_goal(_spec("a2"), goal_prop="A", boundary={}, parent_leaves=(0,))
+    g_b = make_sub_goal(_spec("b2"), goal_prop="B", boundary={}, parent_leaves=(1,))
+    parent = Node(goal=g_p, status=Status.PENDING)
+    pending = Node(goal=g_a, status=Status.PENDING)
+    quarantined = Node(goal=g_b, status=Status.FAILED)
+    quarantined.quarantined = True
+    parent.add_child(pending)
+    parent.add_child(quarantined)
+    assert all_solved(parent) is False
+
+
+def test_all_solved_false_when_all_children_quarantined():
+    """D9 edge case: every child quarantined => no covering proof => False.
+
+    The orchestrator must drop into PENDING_REVISION in this case, not
+    declare the parent solved on an empty live set.
+    """
+    from src.qft_pcn.composition.goal_graph import all_solved
+    g_p = make_sub_goal(_spec("p3"), goal_prop="P", boundary={}, parent_leaves=())
+    g_a = make_sub_goal(_spec("a3"), goal_prop="A", boundary={}, parent_leaves=(0,))
+    parent = Node(goal=g_p, status=Status.PENDING)
+    q = Node(goal=g_a, status=Status.FAILED)
+    q.quarantined = True
+    parent.add_child(q)
+    assert all_solved(parent) is False
