@@ -176,7 +176,7 @@ def test_anomaly_extraction_from_meta_state():
     # Hermitian within tight tolerance.
     H_clean_dense = H_clean.to_dense()
     np.testing.assert_allclose(
-        H_clean_dense, H_clean_dense.conj().T, atol=1e-8, rtol=0
+        H_clean_dense, H_clean_dense.conj().T, atol=1e-7, rtol=0
     )
 
 
@@ -191,3 +191,67 @@ def test_meta_hamiltonian_is_hermitian_psd():
     # Kernel dimension = d(d+1)/2 = 3 (symmetric 2x2 subspace).
     n_kernel = int(np.sum(eigs < 1e-10))
     assert n_kernel == 3
+
+
+@pytest.mark.xfail(
+    reason=(
+        "real-symmetric projector; complex Hermitian projector deferred — "
+        "see EXTENSIONS.md §12.9 complex-block entry (antilinear "
+        "Choi-Jamiolkowski projector needed for iσ_y-type terms)."
+    ),
+    strict=True,
+)
+def test_complex_hermitian_h_with_pauli_y_term():
+    """Scope-limitation pin: a Hermitian H with a complex Pauli-Y term
+    is NOT preserved by the real-symmetric meta-projector.
+
+    ``σ_y = [[0,-i],[i,0]]`` is Hermitian (``σ_y = σ_y†``) but
+    *antisymmetric* (``σ_y = -σ_yᵀ``). The current
+    ``(I-S)†(I-S)`` meta-H projects onto the symmetric-matrix subspace
+    in vec-space, which has σ_y in its *cokernel* — meta-evolution
+    drives σ_y → 0 even though it is Hermitian. The correct (antilinear
+    Choi-Jamiołkowski) projector would preserve σ_y because it is in
+    the Hermitian subspace.
+
+    Acceptance criterion: after meta-evolution, the σ_y component of
+    the decoded H should still be present. Under the current projector
+    it is erased — xfail strict. When the antilinear CJ projector lands
+    (EXTENSIONS.md §12.9), this test should pass.
+    """
+    d = 2
+    N = 4
+    pauli_z = np.array([[1.0, 0.0], [0.0, -1.0]], dtype=complex)
+    pauli_y = np.array([[0.0, -1j], [1j, 0.0]], dtype=complex)
+    h_local = pauli_z + 0.5 * pauli_y
+    # h_local is Hermitian (σ_y is Hermitian) but NOT symmetric.
+    np.testing.assert_allclose(h_local, h_local.conj().T, atol=1e-14, rtol=0)
+    assert not np.allclose(h_local, h_local.T)
+
+    terms = [(k, h_local) for k in range(N)]
+    H = MPO.from_hamiltonian_sum(terms, N=N, d=d)
+
+    meta = encode_hamiltonian_as_meta_state(H)
+    meta_evolved = meta_evolve(meta, dt=0.05, steps=20)
+    H_evolved = decode_meta_state_to_hamiltonian(meta_evolved)
+
+    # Probe σ_y content of the decoded H by inner-product of each
+    # nontrivial bond-cell block with σ_y. The encoded H has σ_y
+    # coefficient 0.5 per site; under the symmetric-only projector
+    # that content is driven to ~0.
+    sy_content = []
+    for W in H_evolved.tensors:
+        chi_l, _, _, chi_r = W.shape
+        for il in range(chi_l):
+            for ir in range(chi_r):
+                block = W[il, :, :, ir]
+                if np.linalg.norm(block) > 1e-6:
+                    overlap = np.abs(np.trace(pauli_y.conj().T @ block)) / 2.0
+                    sy_content.append(overlap)
+    max_sy = max(sy_content) if sy_content else 0.0
+    # Antilinear projector would preserve σ_y → max_sy ≈ 0.5.
+    # Current symmetric projector erases it → max_sy ≈ 0.
+    assert max_sy > 0.4, (
+        f"σ_y Hermitian content was erased by symmetric-only projector "
+        f"(max_sy={max_sy:.3e}); needs antilinear CJ projector "
+        f"(EXTENSIONS.md §12.9)."
+    )

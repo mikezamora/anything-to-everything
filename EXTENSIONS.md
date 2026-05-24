@@ -973,3 +973,20 @@ already perf-optimized through the M3 perf path
     higher-bond MPO assembly that is not yet a one-call constructor.
     Callers can build such MPOs explicitly using the documented index
     conventions.
+
+## Missing dependency: §12.9 complex-block Hermiticity needs antilinear projector
+
+- Where: `src/qft_pcn/composition/meta_hamiltonian.py::hermiticity_meta_hamiltonian`
+  at commit 31b2858 (+ polish) projects onto symmetric matrices
+  `(I-S)†(I-S)`, equivalent to Hermitian-projection only on REAL-
+  coefficient lower-level Hs. QPCN-typical lower-level Hs (Z + X Pauli
+  combos from `MeraEvalHamiltonian`) are real, so the impl is correct
+  for current callers.
+- Need: complex-coefficient Hermitian Hs (e.g. `iσ_y` terms) require
+  the antilinear Choi-Jamiołkowski projector
+  `vec(M) ↔ SWAP·conj(vec(M))`. A single-site *linear* meta-H cannot
+  express this; needs an antilinear gate construction (e.g. a
+  complex-conjugation step interleaved with SWAP).
+- Workaround: scope-limit to real-block lower-level Hs. Document the
+  restriction in callers.
+- Unblocks: full §12.9 acceptance on Hs with complex Pauli-Y terms.

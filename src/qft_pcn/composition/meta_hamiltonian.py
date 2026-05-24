@@ -34,13 +34,21 @@ QPCN realization (spec §12.9):
 
     where ``S`` is the swap on the vectorization index pair
     ``(s_out, s_in) ↔ (s_in, s_out)`` — i.e. the operator that maps the
-    vectorization of ``M`` to the vectorization of ``M†``. The
-    *meta-eigenstates* of ``h_meta = 0`` are exactly the Hermitian
-    operator vectorizations. Imag-time evolution toward the
-    meta-ground state therefore **projects the lower-level H onto its
-    Hermitian part** — bounded self-modification that preserves the
-    fundamental operator-algebraic invariant (real spectrum) while
-    relaxing redundancy in the antihermitian directions.
+    vectorization of ``M`` to the vectorization of ``Mᵀ``. The
+    *meta-eigenstates* of ``h_meta = 0`` are exactly the
+    **real-symmetric operator vectorizations** (= Hermitian for
+    real-coefficient lower-level blocks; complex-block Hermiticity
+    requires the antilinear Choi-Jamiołkowski projector
+    ``vec(M) ↔ SWAP·conj(vec(M))`` — a single-site *linear* meta-H
+    cannot express this, see EXTENSIONS.md §12.9 complex-block entry).
+    QPCN-typical lower-level Hs (Z + X Pauli blocks from
+    `MeraEvalHamiltonian`) have real coefficients, where symmetric ↔
+    Hermitian, so the impl is correct for current callers. Imag-time
+    evolution toward the meta-ground state therefore **projects the
+    lower-level H onto its real-symmetric part** — bounded
+    self-modification that preserves the fundamental operator-algebraic
+    invariant (real spectrum on real blocks) while relaxing redundancy
+    in the antisymmetric directions.
   * Meta-energy is the sum over operator-sites of
     ``<phi_k| h_meta |phi_k>`` on the per-site MPS reduced state
     ``phi_k``. With the convention used here (vectorized form of an
@@ -238,9 +246,16 @@ def hermiticity_meta_hamiltonian(d: int) -> np.ndarray:
 
     ``h_meta = (I - S)†(I - S)`` with ``S`` the vec-transpose. Returns a
     Hermitian, positive-semidefinite ``(d², d²)`` complex matrix whose
-    zero-eigenspace is the symmetric-matrix subspace. See
-    :func:`_hermiticity_swap` for the precise scope (symmetric =
-    Hermitian for real-block lower-level Hs, the QPCN-typical case).
+    zero-eigenspace is the **real-symmetric** matrix subspace
+    (``M = Mᵀ``), NOT the full Hermitian subspace (``M = M†``).
+
+    Scope: symmetric ↔ Hermitian for real-coefficient lower-level Hs
+    (the QPCN-typical case: Z + X Pauli combos from
+    `MeraEvalHamiltonian` are real). Complex-block Hermiticity (e.g.
+    ``iσ_y`` terms) would require the antilinear Choi-Jamiołkowski
+    projector ``vec(M) ↔ SWAP·conj(vec(M))``, which no single-site
+    *linear* meta-H can express — see EXTENSIONS.md §12.9 complex-block
+    entry for the deferred antilinear-gate construction.
     """
     S = _hermiticity_swap(d)
     I = np.eye(d * d, dtype=complex)
