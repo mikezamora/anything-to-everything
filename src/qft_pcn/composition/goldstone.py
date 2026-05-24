@@ -67,12 +67,19 @@ from src.qft_pcn.qft.mera import MERA
 # Defaults
 # ---------------------------------------------------------------------------
 
-# An eigenvalue below this is considered "near-null" (a Goldstone mode).
-# Calibrated against the typical per-term residual scale of a relaxed
-# theorem (~1e-6 floor under imaginary-time descent) and the typical
-# minimum positive eigenvalue when at least one term carries residual
-# > 1e-3 (spec §12.6 "near-zero energy" band).
-DEFAULT_GOLDSTONE_THRESHOLD = 1e-3
+# A constraint-Hessian eigenvalue at or below this is admitted as a
+# Goldstone-mode candidate. With M_ii = <H_t> (the per-term residual,
+# spec §7.4 projector-like; <H_t^2> = <H_t> so the first moment is the
+# Hessian diagonal), eigenvalues lie in [0, 1] for the projector
+# basis: the symmetric vacuum (satisfied direction) sits at eigenvalue
+# 0, and a fully-broken constraint saturates at 1. We admit the entire
+# excitation range above the residual floor as Goldstone candidates
+# (spec §12.6 line 1597: "lowest-energy excitation above the ground
+# state" — the ground state being the satisfied null space at
+# eigenvalue 0; an excitation can sit anywhere up to the projector
+# saturation). A small epsilon above 1 absorbs numerical jitter in
+# the off-diagonal coupling additions.
+DEFAULT_GOLDSTONE_THRESHOLD = 1.0 + 1e-6
 
 # Below this per-term residual a term is treated as "satisfied" and does
 # not anchor a candidate-missing-lemma site. The same floor used by
@@ -299,8 +306,28 @@ def diagnose_missing_lemma(
             candidates=(), modes=(), spectrum=(),
             residual_energy=residual_energy, threshold=threshold,
         )
-    eigvals, eigvecs = compute_near_null_subspace(H, state, k=k)
-    spectrum = tuple(float(x) for x in eigvals)
+    # Compute the FULL spectrum here (n is small — term basis ~ tens
+    # to low hundreds — so dense eigh is both fast and robust on the
+    # near-degenerate constraint Hessian §7.4 projector basis). The
+    # public ``compute_near_null_subspace`` returns the k smallest
+    # eigenpairs (the literal "near-null" contract its callers rely
+    # on, e.g. test_compute_near_null_returns_sorted_ascending); the
+    # diagnostic itself needs to walk the WHOLE spectrum so it can
+    # surface the broken-symmetry directions (which sit at the upper
+    # end of the projector-basis spectrum, eigenvalue ~ residual; spec
+    # §12.6 line 1597 "lowest-energy excitation above the ground
+    # state" — the ground state being the satisfied null space at
+    # eigenvalue 0, so an excitation is any eigenpair with eigenvalue
+    # > residual_floor whose eigenvector localizes on a residual-
+    # carrying term).
+    M, _residuals_unused, _terms_unused = _build_constraint_matrix(H, state)
+    eigvals_full, eigvecs_full = np.linalg.eigh(M)
+    order_full = np.argsort(eigvals_full)
+    eigvals = eigvals_full[order_full]
+    eigvecs = eigvecs_full[:, order_full]
+    # Public spectrum view: k smallest, matching compute_near_null_subspace.
+    k_view = min(k, len(eigvals))
+    spectrum = tuple(float(x) for x in eigvals[:k_view])
     # Re-fetch residuals (the matrix builder discards them).
     residuals = [float(H.term_energy(state, t)) for t in terms]
 
@@ -308,6 +335,14 @@ def diagnose_missing_lemma(
     candidate_buckets: dict[tuple[str, int], list[CandidateMissingLemma]] = {}
     for idx in range(len(eigvals)):
         ev = float(eigvals[idx])
+        # Skip the satisfied null space (eigenvalue ≤ residual_floor):
+        # those directions are the symmetric vacuum, not excitations.
+        if ev <= residual_floor:
+            continue
+        # Skip super-saturated eigenvalues outside the projector-basis
+        # band (numerical artifacts of the off-diagonal coupling
+        # heuristic: a legitimate projector-basis residual is bounded
+        # by 1.0 per §7.4 P^2 = P).
         if ev > threshold:
             continue
         vec = np.asarray(eigvecs[:, idx]).real
@@ -344,13 +379,16 @@ def diagnose_missing_lemma(
             term_indices=tuple(idxs),
         ))
         # Each support entry contributes a candidate at this mode.
-        # Confidence: inverse-eigenvalue (smaller ev = more Goldstone-
-        # like = higher confidence) scaled by amplitude weight.
-        inv_ev = 1.0 / max(ev, 1e-12)
+        # Confidence: amplitude weight × eigenvalue (= the per-direction
+        # residual in the projector basis, spec §7.4). Larger eigenvalue
+        # means more unsatisfied constraint mass concentrated in this
+        # direction — the broken-symmetry direction §12.6 wants
+        # surfaced — and larger amplitude on a specific (rule, node)
+        # localizes that mass to that site.
         for (rule, node, w) in support:
             cand = CandidateMissingLemma(
                 rule_id=rule, node=node,
-                confidence=float(w * inv_ev),
+                confidence=float(w * ev),
                 mode_eigenvalue=ev,
             )
             candidate_buckets.setdefault((rule, node), []).append(cand)
