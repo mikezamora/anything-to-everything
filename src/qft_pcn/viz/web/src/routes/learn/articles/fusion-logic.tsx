@@ -16,7 +16,7 @@ export const article: ArticleSpec = {
       kind: 'prose',
       body: [
         'The Logic panel reframes program evaluation as a physical relaxation. Instead of running a tree-walking interpreter that reduces an AST step by step, we build a Hamiltonian whose ground state **is** the fully-reduced, well-typed term, and let the QPCN\'s imag-time evolution find that ground state. Each typing rule and each reduction rule contributes one local term to the Hamiltonian; the ground-state energy is zero iff the term is well-typed and fully reduced; any non-zero energy localises the rule violation.',
-        'This is not a syntactic curiosity — it is the load-bearing observation that lets the QPCN do logic at all. Bond entanglement is the variable-binding mechanism (from the §1.1 architecture-soul note); reduction-rule terms in H are the dynamics. Putting them together gives a substrate where executing a program is the same operation as relaxing an MPS toward its ground state. The §1.1 directive — variable binding equals bond entanglement, never classical lookup — is what justifies treating reduction as physical evolution.',
+        'This is not a syntactic curiosity — it is the load-bearing observation that lets the QPCN do logic at all. Bond entanglement is the variable-binding mechanism (from the §8.1 architecture-soul note); reduction-rule terms in H are the dynamics. Putting them together gives a substrate where executing a program is the same operation as relaxing an MPS toward its ground state. The §8.1 directive — variable binding equals bond entanglement, never classical lookup — is what justifies treating reduction as physical evolution.',
       ],
     },
     {

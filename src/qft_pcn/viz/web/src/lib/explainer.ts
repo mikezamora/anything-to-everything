@@ -357,7 +357,7 @@ export const EXPLAINERS: Record<string, ExplainerSpec> = {
         ],
         elements: [
           { name: 'Term nodes', meaning: 'per-rule (rule_id, site, arity); fill opacity tracks per-term residual energy so a relaxed (satisfied) term reads pale, a high-residual term reads saturated', code: 'snapshot_logic:terms / residuals' },
-          { name: 'Binder bond entropy chart', meaning: 'per-bond von Neumann entropy on the logic-encoded MPS — the load-bearing §1.1 "variable binding = entanglement" signal; a binder live on a bond contributes entropy across the use→declaration path', code: 'snapshot_logic:bond_entropies' },
+          { name: 'Binder bond entropy chart', meaning: 'per-bond von Neumann entropy on the logic-encoded MPS — the load-bearing §8.1 "variable binding = entanglement" signal; a binder live on a bond contributes entropy across the use→declaration path', code: 'snapshot_logic:bond_entropies' },
           { name: 'λ legend', meaning: 'global term-weight scalars (λ_β / λ_arith / λ_if). These describe relative term weights only, NOT binder geometry.' },
           { name: 'Total energy', meaning: 'sum of all residual term energies' },
         ],
@@ -368,7 +368,7 @@ export const EXPLAINERS: Record<string, ExplainerSpec> = {
         setup: 'Encode (λx. x) y as a logic-MPS with one β-redex; λ_β = 1.0; initial residual on the β-rule term H_β^{(i)} = 1.',
         steps: [
           { description: 'Imag-time evolve under H_eval = λ_β · H_β^{(i)}; the β-redex relaxes toward its reduced form y.', result: 'Per-term residual on H_β decays toward 0; total energy drops by ≈ 1.0.' },
-          { description: 'Observe the binder bond entropy: the bond carrying the x↔y binding contracts as the binder is consumed.', result: 'Bond entropy on the binder edge drops from log 2 to ≈ 0 — the §1.1 "binding = entanglement" signal in reverse.' },
+          { description: 'Observe the binder bond entropy: the bond carrying the x↔y binding contracts as the binder is consumed.', result: 'Bond entropy on the binder edge drops from log 2 to ≈ 0 — the §8.1 "binding = entanglement" signal in reverse.' },
         ],
         takeaway: 'Reduction = relaxation: a satisfied rule term reads pale; a live binder reads as a bond-entropy spike. Both fade together as the program reduces.',
       },
@@ -376,16 +376,16 @@ export const EXPLAINERS: Record<string, ExplainerSpec> = {
         updateRuleId: '',
         expect: [
           'Term node opacity drops as residual energy decays (relaxation).',
-          'Binder bond entropy spikes mark live binders — the §1.1 invariant.',
+          'Binder bond entropy spikes mark live binders — the §8.1 invariant.',
         ],
         pathologies: [
-          { signal: 'binder entropy stuck at log(2) but total energy decays', cause: 'binder is being treated as a classical lookup, not an entangled pair; check the §1.1 invariant.' },
+          { signal: 'binder entropy stuck at log(2) but total energy decays', cause: 'binder is being treated as a classical lookup, not an entangled pair; check the §8.1 invariant.' },
           { signal: 'total energy plateaus above zero', cause: 'conflicting rule terms (e.g. λ_arith too large vs. λ_β) — re-balance the global weights or check for ill-formed terms.' },
         ],
       },
       watch: [
         { label: 'Term node opacity drops as residual energy decays (relaxation)' },
-        { label: 'Binder bond entropy spikes mark live binders — the §1.1 invariant' },
+        { label: 'Binder bond entropy spikes mark live binders — the §8.1 invariant' },
       ],
     },
     references: [{ label: 'Architecture: logic section', href: '../../QFT_PCN_ARCHITECTURE.md' }],
@@ -423,7 +423,7 @@ export const EXPLAINERS: Record<string, ExplainerSpec> = {
           {
             name: '∀-protected leaves',
             meaning:
-              'leaf indices held bitwise stable by the trotter step (`frozen_leaves=`); the load-bearing §1.1 / §10.10 invariant. Must stay non-empty for any `forall …` proposition.',
+              'leaf indices held bitwise stable by the trotter step (`frozen_leaves=`); the load-bearing §8.1 / §10.10 invariant. Must stay non-empty for any `forall …` proposition.',
             code: 'mera_encoder:forall_protected_leaves',
           },
         ],
@@ -436,7 +436,7 @@ export const EXPLAINERS: Record<string, ExplainerSpec> = {
           { description: 'Call `mera_trotter_step(state, H_eval, dτ=0.05, frozen_leaves={7})`; gates touching leaf 7 are dropped at dispatch.', result: 'Leaf 7 is bitwise identical before and after the step.' },
           { description: 'Re-measure total energy and the per-term residuals on R-AddZero / R-Eq-Refl.', result: 'Total energy drops to ≈ 2.28 (≈ 5% per step); residuals on the two relevant rules decay; the AST round-trip still contains "forall".' },
         ],
-        takeaway: 'The §1.1 / §10.10 invariant in action: relaxation reduces residual energy WITHOUT mutating the bound variable. Drop the freeze and the theorem witness disintegrates within a few steps.',
+        takeaway: 'The §8.1 / §10.10 invariant in action: relaxation reduces residual energy WITHOUT mutating the bound variable. Drop the freeze and the theorem witness disintegrates within a few steps.',
       },
       trainingDynamics: {
         updateRuleId: '',

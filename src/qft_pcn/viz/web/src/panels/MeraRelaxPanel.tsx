@@ -8,7 +8,7 @@
  *   - per-term residuals as a coloured table (one row per term);
  *   - the AST text round-tripped from the live MERA leaves;
  *   - the indices of the Forall-protected leaves (clamped by the trotter
- *     step's `frozen_leaves=` argument — the load-bearing §1.1 / §10.10
+ *     step's `frozen_leaves=` argument — the load-bearing §8.1 / §10.10
  *     invariant).
  */
 

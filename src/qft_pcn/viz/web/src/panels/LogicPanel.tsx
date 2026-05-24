@@ -7,7 +7,7 @@
  *     family, and coloured *intensity* scaled by per-term residual energy
  *     (relaxation progress). Arity is shown as a thin connector to the
  *     reach site.
- *   - The real "binder-entanglement" signal §1.1 demands is rendered as
+ *   - The real "binder-entanglement" signal §8.1 demands is rendered as
  *     a separate inline-SVG per-bond entropy curve (`bond_entropies`).
  *     This reads from the logic-encoded MPS state directly, so it ACTUALLY
  *     measures the variable-binding bonds the architecture's soul invariant
@@ -46,7 +46,7 @@ interface LogicState {
   residuals?: number[] | null;
   total_energy?: number | null;
   /** Per-bond von Neumann entropy on the logic-encoded MPS state — the
-   * REAL binder-entanglement signal per §1.1 / §8 / §10.1. One float (or
+   * REAL binder-entanglement signal per §8.1 / §8 / §10.1. One float (or
    * null) per internal bond. */
   bond_entropies?: Array<number | null> | null;
 }
@@ -246,7 +246,7 @@ function LogicDiagram({ st }: { st: LogicState }) {
 }
 
 /** Real per-bond von Neumann entropy on the logic-encoded MPS state.
- * §1.1 / §8: variable binding is realized as bond entanglement on the
+ * §8.1 / §8: variable binding is realized as bond entanglement on the
  * use→declaration path, so this chart is the panel's load-bearing display
  * of the binder-as-entanglement invariant. */
 function BondEntropyChart({ entropies }: { entropies: Array<number | null> }) {

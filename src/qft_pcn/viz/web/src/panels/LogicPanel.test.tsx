@@ -44,7 +44,7 @@ it('renders terms and total_energy when fed a live frame', () => {
 });
 
 it('renders the real per-bond entropy chart when bond_entropies is supplied (D-4)', () => {
-  // bond_entropies is the load-bearing §1.1 readout: binder = entanglement.
+  // bond_entropies is the load-bearing §8.1 readout: binder = entanglement.
   // The chart MUST be rendered when this field is present so a viewer can
   // verify the soul invariant rather than the previous decorative arcs.
   const frame = {
