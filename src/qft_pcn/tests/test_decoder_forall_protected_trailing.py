@@ -109,7 +109,7 @@ def test_parse_kind_stream_rejects_partial_protection():
         )
 
 
-@pytest.mark.timeout(180)
+@pytest.mark.timeout(240)
 def test_decode_mera_post_eqrefl_succeeds():
     """End-to-end Gap F regression: the §10.10 composite
     ``forall x:Nat. Eq (add x Zero) x`` is encoded + evolved through

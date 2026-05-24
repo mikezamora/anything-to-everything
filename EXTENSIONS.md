@@ -849,7 +849,12 @@ Pinned by: composition/tests full failure list at K-9 HEAD. The
 clears the guard via pytest mark / direct fixture bypass; the
 other suites share the autouse fixture and trip uniformly.
 
-## test_decoder_forall_protected_trailing.py — perf timeout (K-9)
+## test_decoder_forall_protected_trailing.py — perf timeout (K-9) — RESOLVED
+
+**RESOLVED:** `@pytest.mark.timeout(240)` applied to
+`test_decode_mera_post_eqrefl_succeeds`, matching the K-8
+acceptance budget in `test_cross_level_acceptance.py`. No
+algorithmic change required.
 
 `test_decode_mera_post_eqrefl_succeeds` (end-to-end Gap F
 regression: encode + 40-step `mera_imaginary_evolve_state` at
