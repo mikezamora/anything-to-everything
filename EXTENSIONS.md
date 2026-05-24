@@ -913,3 +913,36 @@ already perf-optimized through the M3 perf path
   can detect corruption manually post-hoc. Sufficient for unit-test
   acceptance, insufficient for the §10.10 dispatcher contract.
 - Unblocks: §12.5 production wiring + §10.10 corruption-aware acceptance.
+
+## RESOLVED: S1 MPO (Matrix Product Operator) substrate
+
+- Status: RESOLVED at commit `<this-sha>` (substrate task S1). Lands in
+  `src/qft_pcn/qft/mpo.py` with seven acceptance tests in
+  `src/qft_pcn/tests/test_mpo.py` (all passing).
+- Surface: `MPO` dataclass over rank-4 tensors `(chi_l, d, d, chi_r)`
+  with conventions documented in the module docstring. Six entry
+  points: `from_local_operators` (product MPO, bond 1),
+  `from_hamiltonian_sum` (Schollwock bond-dim-2 sum-of-local-terms
+  construction for `H = sum_i h_i`), `apply_to_mps`, `compose`,
+  `expectation`, and the test-only `to_dense`. Convenience
+  `identity(N, d)` is also provided.
+- Acceptance: tests verify product action, Z-eigenstate expectation,
+  `from_hamiltonian_sum` against the dense ⊕-of-Krons reference,
+  composition against dense matmul, identity-compose, sandwich
+  Hermiticity, and constructor-validation failures.
+- Unblocks: §12.9 self-modification meta-Hamiltonian (operator-valued
+  substrate is now in place, ready for `composition/meta_hamiltonian.py`).
+  Partial §12.17 QCA-index reading over MPO forms (the MPO form itself
+  is now first-class; the index extractor remains to be written).
+- Deferred / known gaps:
+  - **No SVD-truncation / compression on `apply_to_mps`**: bond
+    dimensions grow multiplicatively (`chi_op * chi_mps`). Honest for
+    prototype use at small N; production meta-Hamiltonian work at
+    larger N will need a compress-after-apply pass. Flagged in the
+    module docstring.
+  - **`from_hamiltonian_sum` covers single-site terms only**: the
+    standard bond-dim-2 Schollwock pattern handles `H = sum_i h_i`;
+    two-site or longer-range terms (XY chains, Heisenberg) require a
+    higher-bond MPO assembly that is not yet a one-call constructor.
+    Callers can build such MPOs explicitly using the documented index
+    conventions.
