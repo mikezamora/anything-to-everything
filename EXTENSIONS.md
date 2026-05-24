@@ -872,41 +872,35 @@ already perf-optimized through the M3 perf path
   test deferred.
 - Unblocks: §12.16 production acceptance.
 
-## Missing dependency: §12.2 real Jones polynomial / Kauffman-bracket evaluation
+## RESOLVED: §12.2 real Jones polynomial / Kauffman-bracket evaluation (A.5)
 
-- Where: `src/qft_pcn/composition/topological_invariants.py` at commit
-  25fab9b shipped `compute_jones_polynomial` returning a `Polynomial`
-  whose coefficients were sorted-by-magnitude Wilson-loop expectations.
-  Spec review found this was a Wilson-loop fingerprint dressed as a
-  polynomial — NOT a Laurent polynomial in `t**(1/4)`, NOT derived from
-  Kauffman-bracket recursion, NOT built from a braid word. The function
-  has been renamed to `compute_wilson_loop_signature` returning a
-  `LoopSignature` dataclass (no polynomial dressing) per
-  `memory/no-placeholders.md`. Spec §12.2 (Witten 1988,
-  Reshetikhin-Turaev 1991) calls for the actual Jones polynomial:
-  - Extract closed loops from binding diagram (variable use -> binder bonds)
-  - Construct braid word from leaf crossings
-  - Evaluate Kauffman bracket `<L> = A<L_0> + A^{-1}<L_oo>` recursively
-  - Writhe-normalize to obtain V(t) as Laurent polynomial in `t**(1/4)`
-- Need:
-  - `extract_braid_word(state) -> BraidWord` — read closed loops from
-    bond entanglement structure of the encoded state.
-  - `kauffman_bracket(braid) -> LaurentPoly` — recursive evaluation
-    of `<L> = A<L_0> + A^{-1}<L_oo>` with unknot normalization
-    `<O> = -A^2 - A^{-2}`.
-  - `jones_polynomial(braid) -> LaurentPoly` — writhe-normalize the
-    Kauffman bracket to a topological invariant in `t**(1/4)`.
-  - Spec acceptance pairs (currently XFAIL in
-    `test_topological_invariants.py`):
-    * identify `\x:Int. x+0` with `\x:Int. x` (beta-equivalent, same
-      leaf count)
-    * identify `map f . map g` with `map (f . g)` (functor law)
-- Workaround: `compute_wilson_loop_signature` provides a NECESSARY but
-  not SUFFICIENT fingerprint. Two structurally-distinct programs that
-  happen to share Wilson loops would collide; spec §12.2's "exact
-  program equivalence" promise requires the full Jones polynomial.
-- Unblocks: §12.2 spec acceptance (the four example pairs in spec
-  §12.2 risk table).
+- Resolved at: `src/qft_pcn/composition/topological_invariants.py`. Ships
+  the full Jones-polynomial machinery per Witten 1988 / Reshetikhin-
+  Turaev 1991:
+  - `BraidWord` + `LaurentPoly` dataclasses (integer exponents in units
+    of `A^1 = t^{-1/4}`, exact arithmetic — no floating-point exponents).
+  - `extract_braid_word(state, meta) -> BraidWord` reads closed loops
+    from `meta.use_to_binder` (the §1.1 binding-diagram bonds) and
+    computes interleaving crossings on the 1-D leaf spine.
+  - `kauffman_bracket(braid) -> LaurentPoly` recursively evaluates
+    `<L> = A<L_0> + A^{-1}<L_oo>` with unknot `<O> = -A^2 - A^{-2}`.
+  - `jones_polynomial(state, meta) -> LaurentPoly` writhe-normalizes
+    via `V(L) = (-A)^{-3w} <L>`.
+  - `jones_equivalent(s1, m1, s2, m2) -> bool` decides §12.2 link
+    equivalence on the binding diagrams.
+- Spec acceptance pairs (in `test_topological_invariants.py`):
+  - PASSING: `\x:Int. x+0` ~ `\x:Int. x` (beta-equivalence; both have
+    one unknot bond, same Jones polynomial).
+  - PASSING: alpha-invariance of Jones polynomial.
+  - PASSING: Kauffman-bracket unit pins (empty / unknot / disjoint
+    unknots).
+  - XFAIL (List-substrate dependent — C-deferred per S4):
+    `map f . map g` ~ `map (f . g)` — pending `map` / function-
+    composition support in the encoder. The Jones-polynomial machinery
+    itself is verified on in-substrate pairs.
+- Backward compat: `compute_wilson_loop_signature` retained as a
+  necessary-but-not-sufficient side check (now: side check, not the
+  primary §12.2 oracle).
 
 ## Missing dependency: §12.5 holographic-code RECOVERY routine + 5%-noise acceptance
 

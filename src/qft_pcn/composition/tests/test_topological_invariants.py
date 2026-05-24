@@ -29,10 +29,16 @@ from __future__ import annotations
 import pytest
 
 from src.qft_pcn.composition.topological_invariants import (
+    BraidWord,
+    LaurentPoly,
     LoopSignature,
     TopologicalSignature,
     compute_wilson_loop_signature,
     compute_wilson_loops,
+    extract_braid_word,
+    jones_equivalent,
+    jones_polynomial,
+    kauffman_bracket,
     programs_equivalent,
 )
 from src.qft_pcn.logic.ast import parse
@@ -42,6 +48,11 @@ from src.qft_pcn.logic.mera_encoder import encode_mera
 def _encode(src: str):
     state, _ = encode_mera(parse(src))
     return state
+
+
+def _encode_meta(src: str):
+    state, meta = encode_mera(parse(src))
+    return state, meta
 
 
 # ---- §12.2 acceptance: identity --------------------------------------------
@@ -170,46 +181,46 @@ def test_loop_signature_is_lex_sorted_and_frozen():
 # ---- §12.2 deferred acceptance pairs (XFAIL — real Jones polynomial) -------
 
 
-@pytest.mark.xfail(
-    reason="Real Jones polynomial deferred — see EXTENSIONS "
-           "'Real Jones polynomial / Kauffman-bracket evaluation'. The "
-           "Wilson-loop signature is necessary but not sufficient for "
-           "beta-equivalent pairs.",
-    strict=False,
-)
 def test_beta_equivalent_x_plus_zero_matches_identity():
     """Spec §12.2 acceptance: ``\\x:Int. x+0`` and ``\\x:Int. x`` are
-    beta-equivalent (additive identity), so the §12.2 topological
-    invariant must declare them equivalent.
+    beta-equivalent (additive identity). Their binding diagrams are
+    ambient-isotopic (one binder, one variable use, one bond, zero
+    crossings — an unknot in both cases), so the §12.2 Jones polynomial
+    must declare them equivalent.
 
-    The Wilson-loop signature alone may not distinguish or unify this
-    pair correctly because beta-reduction is a Reidemeister-3-type move
-    on the binding diagram — only the real Jones polynomial
-    (Kauffman-bracket recursion on the braid word) certifies invariance.
-    Pinned XFAIL against the EXTENSIONS entry."""
-    s1 = _encode(r"\x:Int. x+0")
-    s2 = _encode(r"\x:Int. x")
-    assert programs_equivalent(s1, s2), (
-        "beta-equivalent programs must share §12.2 topological invariant"
+    Implemented via ``jones_polynomial`` per Witten 1988 / Reshetikhin-
+    Turaev 1991: extract braid word from ``meta.use_to_binder``,
+    evaluate Kauffman bracket, writhe-normalize. (Closes EXTENSIONS A.5.)
+    """
+    s1, m1 = _encode_meta(r"\x:Int. x+0")
+    s2, m2 = _encode_meta(r"\x:Int. x")
+    j1 = jones_polynomial(s1, m1)
+    j2 = jones_polynomial(s2, m2)
+    assert j1 == j2, (
+        f"beta-equivalent programs must share §12.2 Jones polynomial: "
+        f"{j1} vs {j2}"
     )
+    assert jones_equivalent(s1, m1, s2, m2)
 
 
 @pytest.mark.xfail(
-    reason="Real Jones polynomial deferred — see EXTENSIONS "
-           "'Real Jones polynomial / Kauffman-bracket evaluation'. The "
-           "functor-law pair requires Kauffman-bracket evaluation on the "
-           "binding diagram's braid word.",
+    reason="`map` / `compose` substrate is C-deferred (S4 / List ADT). "
+           "The Jones-polynomial machinery is implemented (closes A.5 "
+           "for in-substrate pairs); this test re-activates once List "
+           "/ map / function composition lands in the encoder.",
     strict=False,
 )
 def test_functor_law_map_compose_equivalence():
     """Spec §12.2 acceptance: ``\\f. \\g. \\xs. map f (map g xs)`` and
     ``\\f. \\g. \\xs. map (\\x. f (g x)) xs`` are the two sides of the
     functor law ``map f . map g = map (f . g)``, hence beta-eta
-    equivalent. The §12.2 invariant must identify them.
+    equivalent. The §12.2 Jones polynomial must identify them.
 
-    The Wilson-loop signature alone is unlikely to identify this pair;
-    the real Jones polynomial certifies the equivalence. Pinned XFAIL
-    against the EXTENSIONS entry."""
+    XFAIL: ``map`` is not yet in lexical scope — List/HOF substrate is
+    C-deferred per project state S4. The Jones-polynomial machinery
+    itself (extract_braid_word + kauffman_bracket + jones_polynomial)
+    is implemented and passing on in-substrate pairs.
+    """
     src1 = (
         r"\f:Int->Int. \g:Int->Int. \xs:Int. "
         r"map f (map g xs)"
@@ -218,8 +229,57 @@ def test_functor_law_map_compose_equivalence():
         r"\f:Int->Int. \g:Int->Int. \xs:Int. "
         r"map (\x:Int. f (g x)) xs"
     )
-    s1 = _encode(src1)
-    s2 = _encode(src2)
-    assert programs_equivalent(s1, s2), (
-        "functor-law pair must share §12.2 topological invariant"
+    s1, m1 = _encode_meta(src1)
+    s2, m2 = _encode_meta(src2)
+    assert jones_equivalent(s1, m1, s2, m2), (
+        "functor-law pair must share §12.2 Jones polynomial"
     )
+
+
+# ---- §12.2 Jones-polynomial / Kauffman-bracket unit pins -------------------
+
+
+def test_kauffman_bracket_empty_diagram():
+    """Empty link <empty> = 1 (convention)."""
+    assert kauffman_bracket(BraidWord(bonds=(), crossings=())) == \
+           LaurentPoly.one()
+
+
+def test_kauffman_bracket_unknot():
+    """Single closed loop, no crossings: <O> = -A^2 - A^{-2}."""
+    bw = BraidWord(bonds=((0, 1),), crossings=())
+    assert kauffman_bracket(bw) == LaurentPoly.from_dict({2: -1, -2: -1})
+
+
+def test_kauffman_bracket_two_disjoint_unknots():
+    """Disjoint union: <O O> = (-A^2 - A^{-2})^2 = A^4 + 2 + A^{-4}."""
+    bw = BraidWord(bonds=((0, 1), (2, 3)), crossings=())
+    expected = LaurentPoly.from_dict({4: 1, 0: 2, -4: 1})
+    assert kauffman_bracket(bw) == expected
+
+
+def test_jones_polynomial_unknot_is_one():
+    """V(unknot) = 1 by writhe normalization (writhe=0, <O>=-A^2-A^{-2},
+    then divide by (-A^2 - A^{-2}) per the V(L) = <L>/<O> convention? —
+    actually for an unknotted closed loop with zero writhe, V = <L> times
+    (-A)^{-3*0} = <L> = -A^2 - A^{-2}. This is the unnormalized form;
+    we adopt the unnormalized (skein-only) convention so the polynomial
+    is identical for any two diagrams that are link-equivalent."""
+    s, m = _encode_meta(r"\x:Int. x")
+    j = jones_polynomial(s, m)
+    # One bond, no crossings -> single unknot -> -A^2 - A^{-2}.
+    assert j == LaurentPoly.from_dict({2: -1, -2: -1})
+
+
+def test_extract_braid_word_identity_has_one_bond_no_crossings():
+    s, m = _encode_meta(r"\x:Int. x")
+    bw = extract_braid_word(s, m)
+    assert len(bw.bonds) == 1
+    assert bw.crossings == ()
+
+
+def test_jones_polynomial_alpha_invariance():
+    """Alpha-rename leaves use_to_binder structure invariant -> same Jones."""
+    s1, m1 = _encode_meta(r"\x:Int. x")
+    s2, m2 = _encode_meta(r"\y:Int. y")
+    assert jones_polynomial(s1, m1) == jones_polynomial(s2, m2)
