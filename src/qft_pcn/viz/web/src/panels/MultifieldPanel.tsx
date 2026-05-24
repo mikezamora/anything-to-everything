@@ -22,6 +22,7 @@ import {
   speciesColor,
   diverging,
   as2DGrid,
+  smallNumberFormat,
   type PhiLike,
   type Grid2D as Grid,
 } from './common';
@@ -250,7 +251,7 @@ export function MultifieldPanel({
       cells={[
         {
           label: 'mean |g|',
-          value: st.mean_abs_coupling?.toFixed(3),
+          value: smallNumberFormat(st.mean_abs_coupling),
           baselineValue: bst.mean_abs_coupling ?? null,
           highlightId: 'mean_abs_coupling',
         },
@@ -305,29 +306,109 @@ export function MultifieldPanel({
     >
       <FrameInterpreter layer="multifield" />
       <div className="viz-panel__split" style={{ height: '100%' }}>
-        <div style={{ position: 'relative' }}>
-          {hasData && (
-            <Canvas camera={{ position: [3, 3, 4], fov: 50 }}>
-              <color attach="background" args={['#0b0e14']} />
-              <ambientLight intensity={0.7} />
-              <directionalLight position={[4, 6, 3]} intensity={0.7} />
-              {names.map((name, i) => {
-                const grid = as2DGrid(fields[name]?.phi);
-                if (!grid) return null;
-                return (
-                  <FieldSurface
-                    key={name}
-                    grid={grid}
-                    y={(i - (names.length - 1) / 2) * 1.3}
-                    color={speciesColor(name, names)}
+        {/* Left half: 3D species surfaces. The outer wrapper sets
+         * `position: relative` AND `minHeight: 0` so the inner absolute
+         * Canvas wrapper resolves to a non-zero height inside the flex
+         * row (without min-height: 0 a flex item may inherit content
+         * height from the Canvas — which is 0 until measured, collapsing
+         * the panel to a blank strip). Matches ManifoldPanel's pattern. */}
+        <div style={{ position: 'relative', minWidth: 0, minHeight: 0 }}>
+          <div style={{ position: 'absolute', inset: 0 }}>
+            {hasData && (
+              <Canvas camera={{ position: [3, 3, 4], fov: 50 }}>
+                <color attach="background" args={['#0b0e14']} />
+                <ambientLight intensity={0.7} />
+                <directionalLight position={[4, 6, 3]} intensity={0.7} />
+                {names.map((name, i) => {
+                  const grid = as2DGrid(fields[name]?.phi);
+                  if (!grid) return null;
+                  return (
+                    <FieldSurface
+                      key={name}
+                      grid={grid}
+                      y={(i - (names.length - 1) / 2) * 1.3}
+                      color={speciesColor(name, names)}
+                    />
+                  );
+                })}
+                <OrbitControls enablePan={false} />
+              </Canvas>
+            )}
+          </div>
+          {/* 3D axis HUD: orient the viewer relative to (x, y, z=Φ). */}
+          <div
+            data-testid="multifield-axes-hud"
+            style={{
+              position: 'absolute',
+              left: 6,
+              top: 4,
+              fontSize: 10,
+              color: '#7f8bb0',
+              pointerEvents: 'none',
+              lineHeight: 1.4,
+            }}
+          >
+            <div>x · y → grid site</div>
+            <div>z = Φ (peak-normalised)</div>
+            <div style={{ marginTop: 4 }}>
+              {names.map((n) => (
+                <span key={n} style={{ marginRight: 8 }}>
+                  <span
+                    style={{
+                      display: 'inline-block',
+                      width: 8,
+                      height: 8,
+                      background: speciesColor(n, names),
+                      marginRight: 3,
+                      verticalAlign: 'middle',
+                    }}
                   />
-                );
-              })}
-              <OrbitControls enablePan={false} />
-            </Canvas>
-          )}
+                  {n}
+                </span>
+              ))}
+            </div>
+          </div>
         </div>
-        <CouplingGraph names={names} couplings={st.couplings ?? {}} />
+        <div style={{ position: 'relative', minWidth: 0, minHeight: 0 }}>
+          <CouplingGraph names={names} couplings={st.couplings ?? {}} />
+          {/* Edge-width legend: thin = 0, thick = max|g| */}
+          <div
+            data-testid="multifield-coupling-legend"
+            style={{
+              position: 'absolute',
+              right: 6,
+              bottom: 4,
+              fontSize: 10,
+              color: '#7f8bb0',
+              pointerEvents: 'none',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 4,
+            }}
+          >
+            <span>edge: thin g≈0</span>
+            <svg width={40} height={10} viewBox="0 0 40 10">
+              <line
+                x1={0}
+                y1={5}
+                x2={40}
+                y2={5}
+                stroke="#7f8bb0"
+                strokeWidth={1}
+              />
+              <line
+                x1={0}
+                y1={5}
+                x2={40}
+                y2={5}
+                stroke="#7f8bb0"
+                strokeWidth={7}
+                opacity={0.4}
+              />
+            </svg>
+            <span>thick max|g|</span>
+          </div>
+        </div>
       </div>
     </PanelShell>
   );

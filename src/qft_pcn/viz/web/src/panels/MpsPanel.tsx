@@ -25,7 +25,13 @@ interface MpsState {
 }
 
 /** D3 chain: site circles joined by bonds whose width tracks bond dimension. */
-function TensorChain({ bondDims }: { bondDims: number[] }) {
+function TensorChain({
+  bondDims,
+  nSites: nSitesProp,
+}: {
+  bondDims: number[];
+  nSites?: number | null;
+}) {
   const [ref, size] = useSize<HTMLDivElement>();
   const svgRef = useRef<SVGSVGElement>(null);
 
@@ -33,15 +39,19 @@ function TensorChain({ bondDims }: { bondDims: number[] }) {
     const svg = d3.select(svgRef.current);
     svg.selectAll('*').remove();
     const { width, height } = size;
-    // bond_dims has n_sites + 1 entries (the outer two are the 1-d edges).
-    const nSites = Math.max(0, bondDims.length - 1);
+    // bond_dims is the interior-bond list (length n_sites - 1). Prefer the
+    // explicit n_sites field; fall back to bondDims.length + 1.
+    const nSites = Math.max(
+      0,
+      nSitesProp != null && nSitesProp > 0 ? nSitesProp : bondDims.length + 1,
+    );
     if (nSites <= 0) return;
 
     const margin = 40;
     const y = height / 2;
     const xs = d3
       .scaleLinear()
-      .domain([0, nSites - 1])
+      .domain([0, Math.max(1, nSites - 1)])
       .range([margin, width - margin]);
     const maxBond = d3.max(bondDims) ?? 1;
     const wScale = d3
@@ -49,9 +59,9 @@ function TensorChain({ bondDims }: { bondDims: number[] }) {
       .domain([1, Math.max(1, maxBond)])
       .range([1, 16]);
 
-    // Interior bonds connect site i to i+1, dim = bondDims[i+1].
+    // Interior bonds connect site i to i+1, dim = bondDims[i].
     for (let i = 0; i < nSites - 1; i++) {
-      const dim = bondDims[i + 1] ?? 1;
+      const dim = bondDims[i] ?? 1;
       svg
         .append('line')
         .attr('x1', xs(i))
@@ -91,7 +101,7 @@ function TensorChain({ bondDims }: { bondDims: number[] }) {
         .attr('dy', 3)
         .text(i);
     }
-  }, [bondDims, size]);
+  }, [bondDims, nSitesProp, size]);
 
   return (
     <div ref={ref} style={{ width: '100%', height: '100%' }}>
@@ -115,8 +125,8 @@ function EntropyCurve({
     if (!el) return;
     const x = entropies.map((_, i) => i);
     const s = entropies.map((v) => (v == null ? null : v));
-    // ceiling for bond i+1 is log(chi).
-    const ceil = entropies.map((_, i) => Math.log(Math.max(1, bondDims[i + 1] ?? 1)));
+    // entropy[i] cuts the i-th interior bond, whose dimension is bondDims[i].
+    const ceil = entropies.map((_, i) => Math.log(Math.max(1, bondDims[i] ?? 1)));
 
     Plotly.react(
       el,
@@ -236,7 +246,7 @@ export function MpsPanel({
         style={{ display: 'flex', flexDirection: 'column', height: '100%' }}
       >
         <div style={{ flex: '0 0 45%', minHeight: 0 }}>
-          <TensorChain bondDims={bondDims} />
+          <TensorChain bondDims={bondDims} nSites={st.n_sites} />
         </div>
         <div style={{ flex: '1 1 55%', minHeight: 0 }}>
           {entropies.length > 0 ? (

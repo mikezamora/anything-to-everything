@@ -86,7 +86,8 @@ export const mpsFrame: Frame = {
   step: 12,
   layer_states: {
     mps: {
-      bond_dims: [1, 2, 4, 4, 2, 1],
+      // interior bonds only — length is n_sites - 1.
+      bond_dims: [2, 4, 4, 2, 2],
       entropies: [0.0, 0.31, 0.62, 0.45, 0.12],
       n_sites: 6,
       d_local: 2,

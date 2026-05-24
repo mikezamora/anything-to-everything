@@ -62,6 +62,26 @@ function Circuit({ theta }: { theta: number[][][] }) {
         .text(`q${q}`);
     }
 
+    // Layer axis tick labels along the top.
+    for (let l = 0; l < nLayers; l++) {
+      svg
+        .append('text')
+        .attr('x', xOf(l))
+        .attr('y', 14)
+        .attr('fill', '#7f8bb0')
+        .attr('font-size', 9)
+        .attr('text-anchor', 'middle')
+        .text(`L${l}`);
+    }
+    // Axis legend caption.
+    svg
+      .append('text')
+      .attr('x', mx)
+      .attr('y', height - 6)
+      .attr('fill', '#5f6b86')
+      .attr('font-size', 9)
+      .text('x = layer · y = qubit · gate = R_y(θ_y) R_z(θ_z)');
+
     for (let l = 0; l < nLayers; l++) {
       for (let q = 0; q < nQubits; q++) {
         const [ty = 0, tz = 0] = theta[l][q] ?? [];
@@ -183,7 +203,8 @@ export function VqcPanel({
       <FrameInterpreter layer="vqc" />
       <div className="viz-panel__split" style={{ height: '100%' }}>
         <Circuit theta={theta} />
-        <div style={{ position: 'relative' }}>
+        <div style={{ position: 'relative', minWidth: 0, minHeight: 0 }}>
+          <div style={{ position: 'absolute', inset: 0 }}>
           {hasData && (
             <Canvas camera={{ position: [0, 0, 6], fov: 50 }}>
               <color attach="background" args={['#0b0e14']} />
@@ -209,6 +230,24 @@ export function VqcPanel({
               })}
             </Canvas>
           )}
+          </div>
+          {/* Bloch-sphere axis HUD: explain the projection. */}
+          <div
+            data-testid="vqc-bloch-hud"
+            style={{
+              position: 'absolute',
+              left: 6,
+              top: 4,
+              fontSize: 10,
+              color: '#7f8bb0',
+              pointerEvents: 'none',
+              lineHeight: 1.4,
+            }}
+          >
+            <div>x = sin θ_y cos θ_z</div>
+            <div>y = cos θ_y &nbsp; z = sin θ_y sin θ_z</div>
+            <div>last-layer angles</div>
+          </div>
         </div>
       </div>
     </PanelShell>
