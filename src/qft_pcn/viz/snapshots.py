@@ -629,6 +629,7 @@ def snapshot_pcn_dynamics(net: Any) -> dict:
     kappa_R = _safe(lambda: float(net.cfg.kappa_R))
 
     per_layer_F: list[float | None] = []
+    per_layer_kl: list[float | None] = []
     per_layer_e_norm: list[float | None] = []
     per_layer_pi_mean: list[float | None] = []
 
@@ -645,6 +646,10 @@ def snapshot_pcn_dynamics(net: Any) -> dict:
                       float(l.free_energy(b, kappa_R))) \
                 if below is not None else None
             per_layer_F.append(f)
+            kl = _safe(lambda l=layer, b=below:
+                       float(l.kl_divergence(b))) \
+                if below is not None else None
+            per_layer_kl.append(kl)
             per_layer_e_norm.append(_safe(
                 lambda l=layer: float(np.linalg.norm(l.error.values))))
             per_layer_pi_mean.append(_safe(
@@ -658,6 +663,7 @@ def snapshot_pcn_dynamics(net: Any) -> dict:
     return {
         "total_free_energy": total_F,
         "per_layer_free_energy": per_layer_F,
+        "per_layer_kl": per_layer_kl,
         "per_layer_e_norm": per_layer_e_norm,
         "per_layer_pi_mean": per_layer_pi_mean,
         "n_layers": len(layers),
