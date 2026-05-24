@@ -201,11 +201,29 @@ def assert_acyclic(root: Node) -> None:
 
 # --- free energy (spec §7) -------------------------------------------------
 
+# Per-quarantine F penalty (D20): a quarantined leaf has residual_energy
+# = inf, which the accuracy sum cannot absorb without poisoning the
+# whole trace. The honest §6.6 accounting is "quarantine is a state
+# change that costs work" — so we charge a fixed positive penalty per
+# quarantined node. The §9.5 monotonicity tracker will then observe a
+# step UP on the integration step that quarantines a child, which is
+# correct (quarantining records work-not-done, not work-erased).
+F_QUARANTINE_PENALTY = 1.0
+
+
 def compute_free_energy(root: Node) -> float:
     """F_hierarchy = accuracy (sum of residual energies) + complexity.
 
     The same F = accuracy + complexity a single predictive-coding layer
     minimizes, instantiated at whole-QPCN scale (spec §7, §10.10).
+
+    D20 fix: quarantined nodes contribute :data:`F_QUARANTINE_PENALTY`
+    instead of being silently dropped from the accuracy sum. Without
+    this, a quarantine event made F strictly DECREASE (the failure
+    residual `inf` was filtered out, n_nodes was unchanged), violating
+    the §6.6 honest-accounting invariant. The §9.5 tracker now sees a
+    legitimate step UP and records the quarantine as the state change
+    it is.
     """
     accuracy = 0.0
     n_nodes = 0
@@ -213,6 +231,16 @@ def compute_free_energy(root: Node) -> float:
     def _walk(n: Node) -> None:
         nonlocal accuracy, n_nodes
         n_nodes += 1
+        # D20: a quarantined node is an out-of-band failure recorded by
+        # the orchestrator §6.6 path. Its residual is `inf` (filtered
+        # below) and is silently dropped from accuracy; the penalty
+        # below restores the cost in F so quarantine is not free.
+        if n.quarantined:
+            accuracy += F_QUARANTINE_PENALTY
+            # Do NOT recurse into a quarantined subtree: its children
+            # are detached from the live proof and their residuals do
+            # not belong in F.
+            return
         # Internal nodes carry a synthetic _JointResult whose residual is
         # already the sum of their children's residuals (orchestrator
         # §6.3 joint). Counting both would double-count and break the

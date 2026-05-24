@@ -440,8 +440,25 @@ def solve_goal_graph(
             # path in ``revision.revise`` is reachable from the orchestrator.
             # When ``llm_reviser`` is None the heuristic catalogue is used,
             # preserving prior behaviour exactly.
+            # D24: thread the host MERA's leaf cap so
+            # ``strengthen_induction_hypothesis`` cannot append a leaf
+            # past the substrate's footprint. ``parent_meta`` may be a
+            # stub carrying only ``n_nodes``; fall back to
+            # ``n_nodes * LEAVES_PER_NODE`` per the
+            # ``result_integrator`` precedent.
+            host_n_leaves = None
+            if parent_meta is not None:
+                n_leaves_attr = getattr(parent_meta, "n_leaves", None)
+                if n_leaves_attr is not None:
+                    host_n_leaves = int(n_leaves_attr)
+                else:
+                    n_nodes_attr = getattr(parent_meta, "n_nodes", None)
+                    if n_nodes_attr is not None:
+                        from ..logic.mera_encoding import LEAVES_PER_NODE
+                        host_n_leaves = int(n_nodes_attr) * LEAVES_PER_NODE
             alt = revise(
                 node, llm=llm_reviser, reviser=reviser, cache=cache,
+                host_n_leaves=host_n_leaves,
             )
             cache.mark_failed(
                 node.goal.goal_id,

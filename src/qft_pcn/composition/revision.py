@@ -71,11 +71,22 @@ class HeuristicReviser:
     def __init__(self) -> None:
         self._cursor: dict[str, int] = {}
 
-    def decompose(self, node: Node) -> list[SubGoal]:
+    def decompose(self, node: Node,
+                  *, host_n_leaves: int | None = None) -> list[SubGoal]:
         """Cycle through the catalogue, returning the first SUBSTRATE-feasible
         permutation for this node. Returns ``[]`` when no remaining entry can
         produce a substrate-different decomposition (caller treats this as
         ``RevisionExhausted``).
+
+        D24 fix: ``host_n_leaves`` (caps the maximum admissible leaf
+        index, exclusive) is threaded through so
+        ``strengthen_induction_hypothesis`` cannot append a leaf past
+        the host MERA's footprint. When the cap is reached the strategy
+        returns ``None`` here, the catalogue cursor advances, and
+        exhaustion surfaces honestly as an empty list — rather than
+        burning a revision attempt on a decomposition that
+        ``integrate_child`` raises ``ValueError`` on (past D24, the
+        exception leaked past ``RevisionExhausted``).
         """
         gid = node.goal.goal_id
         idx = self._cursor.get(gid, 0)
@@ -83,7 +94,7 @@ class HeuristicReviser:
             strategy = _HEURISTIC_CATALOGUE[
                 (idx + offset) % len(_HEURISTIC_CATALOGUE)
             ]
-            alt = self._build(node, strategy)
+            alt = self._build(node, strategy, host_n_leaves=host_n_leaves)
             if alt is not None:
                 self._cursor[gid] = idx + offset + 1
                 return alt
@@ -91,7 +102,8 @@ class HeuristicReviser:
         self._cursor[gid] = idx + len(_HEURISTIC_CATALOGUE)
         return []
 
-    def _build(self, node: Node, strategy: str) -> list[SubGoal] | None:
+    def _build(self, node: Node, strategy: str,
+               *, host_n_leaves: int | None = None) -> list[SubGoal] | None:
         """Materialise ``strategy`` as a substrate-different decomposition.
 
         Returns ``None`` when the strategy's substrate precondition fails
@@ -142,10 +154,20 @@ class HeuristicReviser:
             # Single child whose footprint is widened by one fresh leaf
             # (next index after the current max). Substrate precondition:
             # the existing footprint must be non-empty (we need a max to
-            # extend from).
+            # extend from). D24: refuse the strategy entirely when the
+            # extended index would land *past* the host MERA's
+            # ``n_leaves`` footprint — otherwise ``integrate_child``
+            # raises ``ValueError`` downstream, leaking past
+            # ``RevisionExhausted`` and burning a revision attempt on an
+            # unrecoverable footprint. Returning ``None`` here lets the
+            # catalogue cursor advance to the next strategy and (if all
+            # exhausted) surfaces as a clean empty list to the caller.
             if not leaves:
                 return None
-            extended = tuple(leaves) + (max(leaves) + 1,)
+            new_idx = max(leaves) + 1
+            if host_n_leaves is not None and new_idx >= int(host_n_leaves):
+                return None
+            extended = tuple(leaves) + (new_idx,)
             spec = dict(node.goal.dsl_spec)
             return [make_sub_goal(
                 spec,
@@ -160,7 +182,8 @@ class HeuristicReviser:
 
 def revise(node: Node, *, llm: LLMReviser | None = None,
            reviser: HeuristicReviser | None = None,
-           cache: FailedDecompositionCache | None = None) -> list[SubGoal]:
+           cache: FailedDecompositionCache | None = None,
+           host_n_leaves: int | None = None) -> list[SubGoal]:
     """Return an alternative decomposition for a PENDING_REVISION node.
 
     Prefers G's LLM frontend when provided; falls back to the heuristic
@@ -194,7 +217,7 @@ def revise(node: Node, *, llm: LLMReviser | None = None,
     # ``RevisionExhausted``.
     alt: list[SubGoal] = []
     for _ in range(len(_HEURISTIC_CATALOGUE)):
-        alt = reviser.decompose(node)
+        alt = reviser.decompose(node, host_n_leaves=host_n_leaves)
         if not alt:
             return []  # exhausted -- no remaining feasible variation
         if not cache.is_failed(node.goal.goal_id, alt):

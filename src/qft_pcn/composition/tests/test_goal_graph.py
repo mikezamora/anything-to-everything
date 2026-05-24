@@ -285,3 +285,52 @@ def test_all_solved_false_when_all_children_quarantined():
     q.quarantined = True
     parent.add_child(q)
     assert all_solved(parent) is False
+
+
+# --- D20: quarantine cost is charged to F_hierarchy ------------------------
+
+def test_quarantine_increases_free_energy():
+    """D20: a quarantined leaf must charge ``F_QUARANTINE_PENALTY`` to the
+    accuracy term — previously its ``inf`` residual was silently filtered
+    to zero, making ``compute_free_energy`` *strictly decrease* across a
+    quarantine event. The §9.5 monotonicity tracker only fires on
+    increases, so the violation passed without anyone seeing it; the §6.6
+    spec language ("quarantine and continue") does NOT authorise zero-
+    rating a failed branch's residual contribution.
+    """
+    from src.qft_pcn.composition.goal_graph import F_QUARANTINE_PENALTY
+
+    g_root = make_sub_goal(_spec("root"), goal_prop="R", boundary={},
+                           parent_leaves=())
+    g_a = make_sub_goal(_spec("a"), goal_prop="A", boundary={},
+                        parent_leaves=(0,))
+    g_b = make_sub_goal(_spec("b"), goal_prop="B", boundary={},
+                        parent_leaves=(1,))
+    root = Node(goal=g_root, status=Status.SOLVED)
+    live = Node(goal=g_a, status=Status.SOLVED)
+    fail = Node(goal=g_b, status=Status.FAILED)
+    root.add_child(live)
+    root.add_child(fail)
+
+    class _R:
+        def __init__(self, r): self.residual_energy = r
+
+    live.result = _R(1e-7)
+    # Mirror the orchestrator §6.6 path: a failed leaf has its residual
+    # frozen at +inf BEFORE the quarantine flag is flipped.
+    fail.result = _R(float("inf"))
+    f_pre = compute_free_energy(root)
+    fail.quarantined = True
+    f_post = compute_free_energy(root)
+
+    # F must STRICTLY INCREASE by at least F_QUARANTINE_PENALTY (less the
+    # `inf`-filter contribution that was dropped pre-flag, which was zero
+    # by the `res != inf` guard).
+    assert f_post > f_pre, (
+        f"D20 broken: quarantine event must increase F (work-not-done is "
+        f"charged); got f_pre={f_pre}, f_post={f_post}"
+    )
+    assert (f_post - f_pre) >= F_QUARANTINE_PENALTY - 1e-12, (
+        f"D20 contract: penalty must be at least F_QUARANTINE_PENALTY="
+        f"{F_QUARANTINE_PENALTY}; got delta={f_post - f_pre}"
+    )
