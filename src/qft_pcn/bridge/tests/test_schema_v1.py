@@ -92,3 +92,40 @@ def test_use_lemma_requires_nonempty_sites():
         parse_and_validate(_v1_with_constraint(
             '{"kind": "use_lemma", "lemma_id": "x", "sites": [], "weight": 1.0}'
         ))
+
+
+def _v1_with_decomposition(decomp: str) -> str:
+    spec = _minimal_v1()
+    # Insert "decomposition": {...} before the closing brace
+    insertion_point = spec.rstrip().rstrip('}')
+    return insertion_point.rstrip().rstrip(',') + f', "decomposition": {decomp} }}'
+
+
+def test_decomposition_accepted_with_children():
+    child = """{
+      "id": "child-1",
+      "spec": {
+        "version": "1",
+        "fields": [{"name": "n", "cutoff": 4}],
+        "sites": 2,
+        "constraints": [{"kind": "local", "site": 0, "term": "n == 0", "weight": 1.0}],
+        "observables": [{"site": 0, "field": "n", "op": "n"}],
+        "search": {"method": "imag_time", "runtime": "mps", "steps": 10, "chi_max": 8, "dt": 0.05}
+      },
+      "integrates_at_sites": [0],
+      "weight": 8.0
+    }"""
+    dsl = parse_and_validate(_v1_with_decomposition(
+        f'{{"children": [{child}], "execution": "parallel"}}'
+    ))
+    assert dsl["decomposition"]["children"][0]["id"] == "child-1"
+
+
+def test_decomposition_omitted_is_ok():
+    dsl = parse_and_validate(_minimal_v1())
+    assert "decomposition" not in dsl or dsl.get("decomposition") is None
+
+
+def test_decomposition_rejects_empty_children():
+    with pytest.raises(BadSchemaError):
+        parse_and_validate(_v1_with_decomposition('{"children": []}'))

@@ -166,6 +166,38 @@ SCHEMA: dict[str, Any] = {
             },
             "default": _DEFAULT_SEARCH,
         },
+        "decomposition": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["children"],
+            "properties": {
+                "children": {
+                    "type": "array", "minItems": 1,
+                    "items": {
+                        "type": "object",
+                        "required": ["id", "spec", "integrates_at_sites"],
+                        "additionalProperties": False,
+                        "properties": {
+                            "id":     {"type": "string",
+                                       "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,63}$"},
+                            "spec":   {"$ref": "#"},
+                            "integrates_at_sites": {
+                                "type": "array",
+                                "items": {"type": "integer", "minimum": 0},
+                                "minItems": 1, "uniqueItems": True,
+                            },
+                            "weight": {"type": "number", "minimum": 0,
+                                       "default": 1.0},
+                            "dependsOn": {"type": "array",
+                                          "items": {"type": "string"},
+                                          "uniqueItems": True, "default": []},
+                        },
+                    },
+                },
+                "execution": {"enum": ["parallel", "sequential"],
+                              "default": "parallel"},
+            },
+        },
     },
 }
 
