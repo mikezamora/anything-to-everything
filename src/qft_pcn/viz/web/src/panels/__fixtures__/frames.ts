@@ -20,6 +20,9 @@ const ripple = (x: number, y: number) =>
   Math.sin(x * 0.6) * Math.cos(y * 0.6);
 
 // --- manifold -> snapshot_network -------------------------------------------
+// `snapshot_network` emits phi/E/Pi as 3D `(channels, Nx, Ny)` (Field.values is
+// (C, Nx, Ny) in numpy; `_grid` just .tolist()s it). Fixtures mirror the live
+// wire shape so panel render tests catch shape-mismatch regressions.
 export const manifoldFrame: Frame = {
   step: 7,
   layer_states: {
@@ -32,9 +35,9 @@ export const manifoldFrame: Frame = {
       ricci: grid(8, (x, y) => ripple(x, y)),
       fields: [
         {
-          phi: grid(8, ripple),
-          E: grid(8, (x, y) => 0.4 * ripple(x + 2, y)),
-          Pi: grid(8, () => 1.0),
+          phi: [grid(8, ripple)],
+          E: [grid(8, (x, y) => 0.4 * ripple(x + 2, y))],
+          Pi: [grid(8, () => 1.0)],
           channels: 1,
         },
       ],
@@ -45,25 +48,26 @@ export const manifoldFrame: Frame = {
 };
 
 // --- multifield -> snapshot_multifield --------------------------------------
+// Wire shape: phi/E/Pi are 3D `(channels, Nx, Ny)` (see manifoldFrame note).
 export const multifieldFrame: Frame = {
   step: 3,
   layer_states: {
     multifield: {
       fields: {
         alpha: {
-          phi: grid(8, ripple),
-          E: grid(8, (x, y) => 0.3 * ripple(x, y)),
-          Pi: grid(8, () => 1.0),
+          phi: [grid(8, ripple)],
+          E: [grid(8, (x, y) => 0.3 * ripple(x, y))],
+          Pi: [grid(8, () => 1.0)],
         },
         beta: {
-          phi: grid(8, (x, y) => ripple(x + 3, y)),
-          E: grid(8, (x, y) => 0.3 * ripple(x + 3, y)),
-          Pi: grid(8, () => 0.8),
+          phi: [grid(8, (x, y) => ripple(x + 3, y))],
+          E: [grid(8, (x, y) => 0.3 * ripple(x + 3, y))],
+          Pi: [grid(8, () => 0.8)],
         },
         gamma: {
-          phi: grid(8, (x, y) => ripple(x, y + 3)),
-          E: grid(8, (x, y) => 0.3 * ripple(x, y + 3)),
-          Pi: grid(8, () => 1.2),
+          phi: [grid(8, (x, y) => ripple(x, y + 3))],
+          E: [grid(8, (x, y) => 0.3 * ripple(x, y + 3))],
+          Pi: [grid(8, () => 1.2)],
         },
       },
       couplings: {
