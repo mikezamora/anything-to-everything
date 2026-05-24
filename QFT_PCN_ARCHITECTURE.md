@@ -3021,10 +3021,17 @@ src/qft_pcn/
 │   ├── ast.py                          # AST node types
 │   ├── encoder.py                      # AST → MPS encoder
 │   ├── decoder.py                      # MPS → AST decoder
-│   ├── typing_rules.py                 # STLC typing rules
-│   ├── hamiltonian_compiler.py         # rules → Hamiltonian terms
-│   ├── evaluation_hamiltonian.py       # beta-reduction Hamiltonian
+│   ├── typing_hamiltonian.py           # STLC typing rules + Hamiltonian compiler
+│   │                                   #   (spec called these typing_rules.py +
+│   │                                   #    hamiltonian_compiler.py; folded
+│   │                                   #    together since the rule table only
+│   │                                   #    exists to seed the compiler)
+│   ├── _mera_typing_rules.py           # MERA-substrate typing rule helpers
+│   ├── evaluation_hamiltonian.py       # beta-reduction Hamiltonian (MPS)
+│   ├── mera_evaluation_hamiltonian.py  # beta-reduction Hamiltonian (MERA)
 │   ├── debugger.py                     # residual-energy → error report
+│   ├── synthesis/                      # STLC synthesis pipeline
+│   ├── mera_synthesis/                 # MERA-substrate synthesis pipeline
 │   └── demo_stlc_synthesis.py          # first publishable milestone
 ├── qft/                                         # § 10.4
 │   ├── mera.py                         # MERA state representation
@@ -3032,11 +3039,25 @@ src/qft_pcn/
 ├── bridge/                                      # § 10.5
 │   ├── __init__.py
 │   ├── api.py                          # RPC server for LLM frontend
-│   ├── dsl.py                          # DSL schema + parser
-│   └── runtime.py                      # problem runner
+│   ├── llm.py                          # Ollama LLM client
+│   ├── llm_emitter.py                  # LLM → DSL emitter
+│   ├── dsl/                            # PACKAGE (spec called this dsl.py).
+│   │   ├── schema.py                   #   DSL schema
+│   │   ├── expr_parser.py              #   expression parser
+│   │   ├── compiler.py                 #   DSL → Hamiltonian compiler
+│   │   ├── pipeline.py                 #   end-to-end DSL pipeline
+│   │   └── ...                         #   (vocab, term, cross_validate, ...)
+│   └── runtime/                        # PACKAGE (spec called this runtime.py).
+│       ├── hamiltonian.py              #   problem-runner Hamiltonian builder
+│       ├── initial_state.py            #   initial-state preparation
+│       ├── evolution.py                #   driver
+│       ├── observables.py              #   observable evaluation
+│       ├── clamp.py                    #   constraint clamping
+│       └── result.py                   #   RunResult / diagnostics
 └── composition/                                 # § 10.8 - 10.11 and § 12
     ├── __init__.py
     ├── lemma_library.py                # § 10.8: storage + indexing + registration
+    ├── lemma_library_adapter.py        # § 10.8: adapter (cache / pruning / cheapest_for_type)
     ├── promoter.py                     # § 10.8: use_lemma DSL constraint compiler
     ├── subtree_miner.py                # § 10.9: enumerate sub-MPSes
     ├── abstraction.py                  # § 10.9: cluster + canonical form computation
@@ -3045,19 +3066,33 @@ src/qft_pcn/
     ├── dispatcher.py                   # § 10.10: spawn + collect QPCN runs
     ├── result_integrator.py            # § 10.10: bottom-up clamping
     ├── revision.py                     # § 10.10: LLM-guided alternative decomposition
+    ├── orchestrator.py                 # § 10.10: goal-graph driver
     ├── demo_hierarchical_proof.py      # § 10.11: second publishable milestone
     ├── anomaly.py                      # § 12.1: provable impossibility detection
     ├── topological_invariants.py       # § 12.2: program-equivalence via Wilson loops
     ├── topological_degeneracy.py       # § 12.3: a-priori proof-strategy counting
+    │                                   #   (renamed from spec's bare name per
+    │                                   #    D12 honesty trail — the entropy/
+    │                                   #    proof-homotopy distinction matters)
     ├── bootstrap.py                    # § 12.4: conformal-bootstrap for type-only reasoning
+    │                                   #   (D13: now delivers a real
+    │                                   #    type-derived complexity bound)
     ├── holographic_correction.py       # § 12.5: fault-tolerant reasoning via QEC
     ├── goldstone.py                    # § 12.6: automatic missing-lemma identification
-    ├── replica.py                      # § 12.7: predictive typical-case complexity
+    ├── replica_complexity.py           # § 12.7: predictive typical-case complexity
+    │                                   #   (renamed from spec's `replica.py` per
+    │                                   #    D14 honesty trail — distinguishes
+    │                                   #    leaf-marginal observable from a true
+    │                                   #    proof-space partition function)
     ├── dynamical_pt.py                 # § 12.8: self-detecting curriculum
     ├── meta_hamiltonian.py             # § 12.9: self-modification (operator-valued substrate)
     ├── holographic_compilation.py      # § 12.10: provably-correct compiler passes via RG
+    │                                   #   (D15: real optimization pass + non-
+    │                                   #    tautological verify)
     ├── entanglement_spectrum.py        # § 12.11: modular-Hamiltonian proof classification
     ├── quantum_extremal_surface.py     # § 12.12: a priori proof complexity from QES
+    │                                   #   (D16: a-priori prediction, not post-
+    │                                   #    hoc ranking)
     ├── bidirectional.py                # § 12.13: forward + backward simultaneous evolution
     ├── quantum_walk.py                 # § 12.14: quantum-walk speedup for goal-graph search
     ├── witten_index.py                 # § 12.15: topological theorem fingerprints
@@ -3065,7 +3100,7 @@ src/qft_pcn/
     ├── qca_classification.py           # § 12.17: QCA framework + topological index
     ├── noether_discovery.py            # § 12.18: automated conservation-law discovery
     └── tests/
-        ├── test_lemma_library.py
+        ├── test_library_store.py       # (lemma library storage)
         ├── test_subtree_miner.py
         ├── test_wake_sleep.py
         ├── test_goal_graph.py
@@ -3076,19 +3111,48 @@ src/qft_pcn/
         ├── test_bootstrap.py
         ├── test_holographic_correction.py
         ├── test_goldstone.py
-        ├── test_replica.py
+        ├── test_replica_complexity.py  # (renamed from test_replica per D14)
         ├── test_dynamical_pt.py
         ├── test_meta_hamiltonian.py
         ├── test_holographic_compilation.py
         ├── test_entanglement_spectrum.py
         ├── test_quantum_extremal_surface.py
-        ├── test_bidirectional.py
+        ├── test_bidirectional_evolution.py
         ├── test_quantum_walk.py
         ├── test_witten_index.py
         ├── test_worldline_pi.py
         ├── test_qca_classification.py
         └── test_noether_discovery.py
 ```
+
+**Honest-rename trail (§12.x renames per D12–D16).** Several
+`composition/` modules carry names slightly different from those the
+spec used in earlier drafts. The renames are *not* gratuitous; each
+encodes a substantive correctness fix surfaced during the audit loop
+and is recorded in `DEVIATIONS.md`:
+
+- D12 — `composition/topological_degeneracy.py` (was a bare Betti
+  count; now a proof-homotopy count distinct from
+  binding-graph entropy);
+- D13 — `composition/bootstrap.py` (was tautological; now delivers a
+  type-derived complexity bound);
+- D14 — `composition/replica_complexity.py` (renamed from
+  `replica.py`; the leaf-marginal observable is honestly named to
+  avoid the partition-function confusion);
+- D15 — `composition/holographic_compilation.py` (now ships a real
+  RG-fixed-point optimization pass with a non-tautological verify);
+- D16 — `composition/quantum_extremal_surface.py` (a-priori
+  prediction, not post-hoc ranking).
+
+Additionally, `bridge/dsl/` and `bridge/runtime/` are *packages*, not
+single files; `logic/typing_hamiltonian.py` folds together what the
+spec originally split as `typing_rules.py` + `hamiltonian_compiler.py`
+(the rule table only ever existed to seed the compiler). Future
+readers grepping for spec names should consult this section first
+before assuming a missing module.
+
+Open research questions raised by §16.3 are tracked in
+`OPEN_QUESTIONS.md` at the repo root.
 
 ---
 

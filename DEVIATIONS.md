@@ -635,6 +635,45 @@ already catalogued in `EXTENSIONS.md` are not re-listed here.
   flags this as a corpus-saturation pathology, not a fitter bug);
   full §14 benchmark-driven trajectories are the natural next driver.
 
+### A5 — §17 spec-named module renames lack documentation — RESOLVED
+- Spec location: `QFT_PCN_ARCHITECTURE.md` §17 (lines 3017-3036);
+  spec-gap-analysis A5.
+- Issue: §17 listed spec-era filenames (`logic/typing_rules.py`,
+  `logic/hamiltonian_compiler.py`, `bridge/dsl.py`, `bridge/runtime.py`,
+  `composition/replica.py`, `composition/tests/test_replica.py`) that
+  had been renamed or repackaged during implementation. Readers
+  grepping for spec names found nothing.
+- Resolution: §17 rewritten to reflect the actual filesystem layout:
+  `logic/typing_hamiltonian.py` (folds `typing_rules.py` +
+  `hamiltonian_compiler.py`), `bridge/dsl/` + `bridge/runtime/` as
+  PACKAGES, `composition/replica_complexity.py` (D14),
+  `composition/topological_degeneracy.py` (D12), additional
+  surfaced files (`lemma_library_adapter.py`, `orchestrator.py`,
+  `mera_evaluation_hamiltonian.py`, `synthesis/`, `mera_synthesis/`),
+  and the §12.x test renames (`test_replica_complexity.py`,
+  `test_bidirectional_evolution.py`). An "honest-rename trail"
+  paragraph at the foot of §17 cross-links each rename back to its
+  D12-D16 audit-trail entry so future readers do not re-introduce the
+  drift. A pointer to `OPEN_QUESTIONS.md` (the A6 resolution) is
+  included.
+- Audit source: spec-gap-analysis pass 2.
+
+### A6 — §16.3 Open research questions not tracked — RESOLVED
+- Spec location: `QFT_PCN_ARCHITECTURE.md` §16.3 (lines 2919-2935);
+  spec-gap-analysis A6.
+- Issue: §16.3 named open research questions but nothing in the repo
+  tracked them; the audit-loop required each be tracked or deliberately
+  deferred.
+- Resolution: new top-level `OPEN_QUESTIONS.md` summarises every
+  §16.3 bullet with its verbatim line reference and current status
+  (open / partially addressed by §X.Y / D-id / deferred). Q3 routes to
+  D5/D25/D30 (MERA topology hardening), Q5 routes to A4 + D14
+  (capability-growth + replica complexity), Q6 routes to D11/D38/D39
+  (consolidation correctness). The two §16.2 unproven assumptions that
+  spec-gap A6 conflated with §16.3 are recorded at the foot of
+  `OPEN_QUESTIONS.md` with their D17/D23/D1 cross-links.
+- Audit source: spec-gap-analysis pass 2.
+
 ### A3 — §11.6 non-PL target domains — RESOLVED (chemistry first-tier)
 - Spec location: `QFT_PCN_ARCHITECTURE.md` §11.6 (lines 1218-1252);
   spec-gap-analysis A3.
