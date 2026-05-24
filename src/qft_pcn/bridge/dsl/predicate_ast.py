@@ -81,3 +81,68 @@ class _Visitor(ast.NodeVisitor):
         if node.id in self.allowed_callees or node.id in self.bound_names:
             return
         self.free_names.add(node.id)
+
+
+def evaluate_predicate(parsed: ParsedPredicate, env: dict) -> bool:
+    """Evaluate a parsed predicate against `env`.
+
+    `env` is a dict of bound names → values. Helper functions are looked up
+    from `env["_helpers"]` (or the empty dict if absent). Returns a bool.
+    """
+    helpers = env.get("_helpers", {})
+    return bool(_eval(parsed.tree.body, env, helpers))
+
+
+def _eval(node: ast.AST, env: dict, helpers: dict):
+    if isinstance(node, ast.Constant):
+        return node.value
+    if isinstance(node, ast.Name):
+        if node.id in helpers:
+            return helpers[node.id]
+        if node.id in env:
+            return env[node.id]
+        raise PredicateRejected(f"unbound name during eval: {node.id}")
+    if isinstance(node, ast.BoolOp):
+        vals = [_eval(v, env, helpers) for v in node.values]
+        return all(vals) if isinstance(node.op, ast.And) else any(vals)
+    if isinstance(node, ast.UnaryOp):
+        v = _eval(node.operand, env, helpers)
+        if isinstance(node.op, ast.Not):
+            return not v
+        if isinstance(node.op, ast.USub):
+            return -v
+        if isinstance(node.op, ast.UAdd):
+            return +v
+    if isinstance(node, ast.BinOp):
+        l, r = _eval(node.left, env, helpers), _eval(node.right, env, helpers)
+        if isinstance(node.op, ast.Add): return l + r
+        if isinstance(node.op, ast.Sub): return l - r
+        if isinstance(node.op, ast.Mult): return l * r
+    if isinstance(node, ast.Compare):
+        left = _eval(node.left, env, helpers)
+        for op, comp in zip(node.ops, node.comparators):
+            right = _eval(comp, env, helpers)
+            ok = _cmp(op, left, right)
+            if not ok:
+                return False
+            left = right
+        return True
+    if isinstance(node, ast.Call):
+        fn = _eval(node.func, env, helpers)
+        args = [_eval(a, env, helpers) for a in node.args]
+        return fn(*args)
+    if isinstance(node, (ast.Tuple, ast.List)):
+        return [_eval(e, env, helpers) for e in node.elts]
+    raise PredicateRejected(f"unsupported at eval time: {type(node).__name__}")
+
+
+def _cmp(op: ast.cmpop, left, right) -> bool:
+    if isinstance(op, ast.Eq):    return left == right
+    if isinstance(op, ast.NotEq): return left != right
+    if isinstance(op, ast.Lt):    return left < right
+    if isinstance(op, ast.LtE):   return left <= right
+    if isinstance(op, ast.Gt):    return left > right
+    if isinstance(op, ast.GtE):   return left >= right
+    if isinstance(op, ast.In):    return left in right
+    if isinstance(op, ast.NotIn): return left not in right
+    raise PredicateRejected(f"unsupported comparator: {type(op).__name__}")
