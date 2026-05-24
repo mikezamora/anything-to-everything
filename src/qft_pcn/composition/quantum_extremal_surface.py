@@ -73,6 +73,16 @@ def _bond_dim_at_subtree_root(state: MERA, layer: int) -> int:
     return state.layer_dims[state.L - 1]
 
 
+def _subtree_status(layer: int, node_index: int,
+                    region: set[int]) -> tuple[int, int]:
+    """Return ``(inside_count, sub_size)`` for the subtree at (layer, node)."""
+    sub_size = 1 << layer
+    leaf_start = node_index * sub_size
+    leaf_end = leaf_start + sub_size
+    inside = sum(1 for k in range(leaf_start, leaf_end) if k in region)
+    return inside, sub_size
+
+
 def _min_cut_subtree(
     state: MERA,
     layer: int,
@@ -81,48 +91,69 @@ def _min_cut_subtree(
 ) -> tuple[float, int]:
     """Minimum-cut area through the subtree rooted at (``layer``, ``node_index``).
 
-    Returns ``(area_nats, num_bonds_cut)``. ``area_nats`` is the sum of
-    ``log(bond_dim)`` over bonds severed by the minimum cut; the bond
-    count is reported separately for diagnostics.
+    Returns ``(area_nats, num_bonds_cut)`` where ``area_nats`` is the sum
+    of ``log(bond_dim)`` over bonds severed by the minimum cut. This
+    function is called by the parent: its contract is "produce a clean
+    cut that separates the inside-leaves of this subtree from
+    everything else in the tree (including this subtree's siblings)".
+
+    Standard tree min-cut recursion. For a split internal node with
+    children L, R:
+
+    - If a child is wholly INSIDE the region, the only way to separate
+      its leaves from outside-leaves elsewhere in the tree is to sever
+      its up-bond → cost ``log(bond_dim_up(child))``.
+    - If a child is wholly OUTSIDE the region, no cut is needed for it
+      (the inside-leaves are extracted from its sibling; the outside
+      child remains attached to the ambient outside).
+    - If a child is itself split, recurse — the recursive call returns a
+      cut that disconnects the child's inside-leaves from everything
+      else (including its sibling).
+
+    Note: the leaf-level "split" case is unreachable (a single leaf
+    cannot be split), but a leaf can be pure-inside in which case its
+    parent charges ``log(d_local)`` for the up-bond cut.
 
     The subtree at (ell, j) covers leaves ``[j * 2**ell, (j+1) * 2**ell)``
     in the canonical binary MERA layout (Swingle 2012; ``causal_cone_path``
     in ``qft.mera`` uses this same indexing).
-
-    Three cases:
-    - Subtree leaves entirely INSIDE the region: cut goes ABOVE this node;
-      no internal bonds need severing. (area=0, n=0)
-    - Subtree leaves entirely OUTSIDE the region: same. (area=0, n=0)
-    - Subtree leaves SPLIT by the region: must separate inside-leaves
-      from outside-leaves. Two options:
-        (a) Sever the bond going up from this node — cost
-            ``log(bond_dim_up)``. The cut is the parent edge; below it
-            the region's leaves and the complement's leaves mingle in
-            the same subtree, which is invalid for a clean cut. So this
-            option is only valid for LEAVES (layer 0); for internal
-            nodes a split subtree REQUIRES recursing into both children.
-        (b) Recurse into the two children and sum their minimum cuts.
-      For a leaf split (layer 0), the "cut" is the leaf bond itself.
     """
-    sub_size = 1 << layer
-    leaf_start = node_index * sub_size
-    leaf_end = leaf_start + sub_size
-    inside = sum(1 for k in range(leaf_start, leaf_end) if k in region)
+    inside, sub_size = _subtree_status(layer, node_index, region)
     if inside == 0 or inside == sub_size:
-        # Wholly outside or wholly inside: no cut in this subtree.
+        # Wholly outside or wholly inside: the parent decides whether to
+        # cut our up-bond. From inside the subtree, no cuts are needed.
         return 0.0, 0
     if layer == 0:
-        # Split at a single leaf: that leaf is on the inside boundary.
-        # The cut severs the bond ABOVE this leaf (the leaf-to-layer-1
-        # input bond), which carries the full d_local Hilbert space.
+        # A single leaf cannot be partially inside the region. This is
+        # unreachable on well-formed integer regions; kept for safety.
         d_up = _bond_dim_at_subtree_root(state, 0)
         return float(np.log(d_up)), 1
-    # Internal split node: must recurse into both children.
-    left_area, left_n = _min_cut_subtree(
-        state, layer - 1, 2 * node_index, region)
-    right_area, right_n = _min_cut_subtree(
-        state, layer - 1, 2 * node_index + 1, region)
-    return left_area + right_area, left_n + right_n
+    # Split internal node: handle each child by its own status.
+    total_area = 0.0
+    total_n = 0
+    for child_node in (2 * node_index, 2 * node_index + 1):
+        child_layer = layer - 1
+        c_inside, c_size = _subtree_status(child_layer, child_node, region)
+        if c_inside == c_size:
+            # Pure-inside child: sever its up-bond to extract it from the
+            # rest of the tree (its sibling, which contains outside-leaves
+            # either directly or below).
+            d_up = _bond_dim_at_subtree_root(state, child_layer)
+            total_area += float(np.log(d_up))
+            total_n += 1
+        elif c_inside == 0:
+            # Pure-outside child: no cut needed; the inside-leaves are
+            # below the split sibling and are extracted there.
+            continue
+        else:
+            # Split child: recurse — the call returns a cut that
+            # disconnects the child's inside-leaves from everything
+            # outside (including this child's sibling).
+            sub_area, sub_n = _min_cut_subtree(
+                state, child_layer, child_node, region)
+            total_area += sub_area
+            total_n += sub_n
+    return total_area, total_n
 
 
 def compute_geometric_rt_area(
