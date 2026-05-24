@@ -61,6 +61,30 @@ class TProp(Ty):
     """The sort of propositions (the type of Forall / Eq results)."""
 
 
+@dataclass(frozen=True)
+class TPi(Ty):
+    """Dependent product (Π) type: ``Π(x:src). dst``.
+
+    Substrate-level marker for the tensor-network typechecker
+    (``src/qft_pcn/composition/tn_typechecker.py``, EXTENSIONS.md
+    E11 resolution). At the AST level a Π type is structurally an
+    arrow whose codomain may mention the bound variable; the QPCN
+    encoder represents the dependency as a ``Forall`` binder whose
+    own bid leaf and bound-Var leaves are entangled (recorded in
+    ``MeraEncodingMeta.forall_protected_leaves``). ``TPi`` lets the
+    tensor-network typechecker name "this lemma is dependent product
+    over ``src``" without collapsing the dependency to a flat
+    ``TArrow``.
+
+    ``param_name`` is informational only — alpha-renaming preserves
+    the substrate verdict because bond structure (Forall kind + the
+    protected-leaf set) is binding-name-independent.
+    """
+    src: Ty
+    dst: Ty
+    param_name: str = ""
+
+
 # ---- expression nodes -----------------------------------------------------
 
 

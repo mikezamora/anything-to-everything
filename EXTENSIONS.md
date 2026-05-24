@@ -1126,40 +1126,63 @@ already perf-optimized through the M3 perf path
   restriction in callers.
 - Unblocks: full §12.9 acceptance on Hs with complex Pauli-Y terms.
 
-## Tensor-network typechecker for lemma decode validation
+## RESOLVED — E11: Tensor-network typechecker for lemma decode validation
 
-- Where: `src/qft_pcn/composition/lemma_library.py::_validate_decoded`
-  (spec §4.5 step-2 validation pass). The function currently returns
-  `(True, "no-checker-available")` -- a deliberate tautology. The §1.6
-  operator-algebraic anti-shortcut directive forbids the obvious "fix"
-  (an inline Python AST typecheck on the decoded result): admission of a
-  lemma must be gated by physics (residual energy under the
-  Hamiltonian), not by a classical type tree walk. The residual gate
-  (`eps_register`, §4.5 step-1) currently carries the full validation
-  load.
-- Need: a tensor-network-side typechecker that confirms the decoded
-  state satisfies the proposition's type signature without dropping back
-  into Python AST traversal. Candidate shape: an operator
-  `Π_type` (projector onto well-typed states) constructed from the
-  encoder's type-signature meta-Hamiltonian, applied as a final
-  validation measurement `<Psi|Π_type|Psi> ≈ 1`. The existing
-  `MeraTypingHamiltonian` (`src/qft_pcn/logic/mera_typing_hamiltonian.py`)
-  already encodes the type-discipline penalties; what's missing is the
-  "validation projector" surface that consumes the converged state and
-  returns a {0,1}-valued type-correctness verdict in the operator
-  algebra, not as a Python tree walk.
-- Workaround: the §4.5 step-1 residual gate. A lemma whose decoded
-  state would fail a classical typecheck overwhelmingly also fails the
-  residual gate (the type-discipline penalties are part of the
-  Hamiltonian), so the soft tautology rarely admits a bad candidate in
-  practice. Tests that need the rejection branch monkeypatch
-  `_validate_decoded` directly.
-- Unblocks: closing the gap between the residual gate's "approximately
-  ground state" verdict and the spec §4.5's "well-typed decoded AST"
-  acceptance criterion. Strictly speaking the current pipeline is
-  residual-only; a real `Π_type` measurement would let `register_lemma`
-  reject a state that minimised the energy but landed in a non-type-
-  inhabiting branch.
+- Resolution: new module
+  `src/qft_pcn/composition/tn_typechecker.py` exposes
+  `tn_typecheck(lemma, expected: Ty) -> TypeCheckOk | TypeCheckError`
+  and the {0,1}-valued projector surface
+  `pi_type_projector_expectation(lemma, expected)` (the
+  `<Psi|Π_type|Psi> ≈ 1` measurement the original entry asked for).
+  Admission gate: `register_lemma(..., expected_type=Ty)` runs the
+  bond-structure check as a second admission criterion alongside the
+  residual gate; default `expected_type=None` preserves the prior
+  residual-only pipeline.
+- Substrate-only check (§1.6 anti-shortcut honored): the typechecker
+  reads ONLY (a) the root node's `kind` / `type` / `value` leaf
+  one-hot indices via `_read_leaf_onehot`, (b) the meta side tables
+  `nested_type_index` and `forall_protected_leaves`. No call to
+  `decode_mera`; no AST walk; no name lookup. Variable binding is
+  consulted via the bond-bookkeeping (`forall_protected_leaves`,
+  populated by `_collect_forall_protected_leaves` in
+  `logic/mera_encoder.py`) — the §1.1 binding-as-entanglement
+  invariant.
+- Π_type surface: a new `TPi(src, dst, param_name)` Ty subclass
+  (`src/qft_pcn/logic/ast.py`) names dependent products at the AST
+  level. Substrate signature checked by the typechecker:
+  (i) root kind leaf = KIND_FORALL, (ii) root value leaf carries
+  `ty_to_tag(src)`, (iii) `meta.forall_protected_leaves` non-empty —
+  a vacuous quantification (no bound-Var uses, empty protected set)
+  is rejected as `pi_missing_forall_entanglement`. This is the
+  fiber-bundle-over-substrate-index check the original entry asked
+  for: a non-dependent TArrow lemma is rejected against a TPi query
+  on the root-kind bond.
+- Supported expected types: `TInt`, `TBool`, `TNat`, `TList`,
+  `TProp`, `TEq` (atomic — root type-leaf tag), `TArrow` (flat
+  ARR_II/IB/BI/BB or `TYPE_ARR_NESTED` + `nested_type_index[0]`
+  full-Ty match), and `TPi` (Forall + protected-leaf entanglement).
+  Unsupported expected types surface as `unsupported_expected_type`
+  rather than silently passing.
+- Tests:
+  `src/qft_pcn/composition/tests/test_tn_typechecker.py` (14 cases):
+  arrow / atomic accept paths, type-tag mismatch reject, atomic-vs-
+  arrow kind-tag reject, leaf-corruption reject (proves the check
+  consults bond amplitudes, not the source AST), TPi accept on a
+  dependent `forall x:Nat. Eq x x`, TPi reject on wrong param tag,
+  TPi reject on a plain Lam lemma (the "Π is not arrow" pin),
+  projector returning 1.0 / 0.0, and the `register_lemma` wiring
+  for the `expected_type` gate (correct -> accepted; wrong ->
+  `tn_typecheck_failed:*` reason). All 14 pass; the 25 adjacent
+  lemma-library tests (`test_lemma_tier_field`, `test_library_store`,
+  `test_lemma_library_meta_json`, `test_lemma_library_provisional`)
+  still pass — `expected_type` defaults to `None` so legacy callers
+  are byte-identical.
+- Unblocks: closes the gap between the residual gate's "approximately
+  ground state" verdict and the §4.5 "well-typed decoded AST"
+  acceptance criterion. The soft tautology in
+  `lemma_library._validate_decoded` is preserved (legacy callers
+  rely on it), but callers that carry an expected `Ty` now have a
+  hard substrate-side gate available.
 
 ## Missing dependency: §12.4 conformal bootstrap full bound capabilities
 

@@ -913,11 +913,22 @@ def _content_id(bundle: MeraTensorBundle, proposition_type: str,
 def register_lemma(library: LemmaLibrary, state, meta, hamiltonian,
                    derivation: DerivationMetadata,
                    eps_register: float = 1e-8,
-                   tier: str = "dynamic") -> RegistrationResult:
+                   tier: str = "dynamic",
+                   expected_type=None) -> RegistrationResult:
     """Validated registration (spec §4.5). Total: always returns a
     RegistrationResult, never throws for a bad candidate. Failures are
     appended to ``<library.root>/near_misses.log`` and surface via the
-    returned ``reason``."""
+    returned ``reason``.
+
+    ``expected_type``: optional :class:`logic.ast.Ty` to gate admission
+    on the tensor-network typechecker (EXTENSIONS.md E11 resolution).
+    When supplied, the bundle's bond structure is checked against the
+    expected type via
+    :func:`composition.tn_typechecker.tn_typecheck_bundle` *in addition
+    to* the residual gate. The TN typechecker reads only leaf-vector
+    one-hot indices + ``meta.forall_protected_leaves`` — no AST walk
+    (§1.6 anti-shortcut). Default ``None`` preserves prior behavior:
+    the soft ``_validate_decoded`` tautology gate runs alone."""
     near_log = library.root / "near_misses.log"
 
     # 1. residual gate
@@ -953,6 +964,25 @@ def register_lemma(library: LemmaLibrary, state, meta, hamiltonian,
 
     # 5. compress + persist
     bundle = bundle_from_mera(state)
+
+    # 4b. Tensor-network typecheck (EXTENSIONS.md E11): if the caller
+    # supplied an ``expected_type``, gate admission on the substrate-
+    # side bond-structure check. The check is bond-only (leaf one-hot
+    # tags + forall_protected_leaves), not an AST walk; it complements
+    # the residual gate without re-doing classical typechecking.
+    if expected_type is not None:
+        from src.qft_pcn.composition.tn_typechecker import (
+            tn_typecheck_bundle, TypeCheckError,
+        )
+        tn_verdict = tn_typecheck_bundle(bundle, meta, expected_type)
+        if isinstance(tn_verdict, TypeCheckError):
+            with near_log.open("a") as fh:
+                fh.write(
+                    f"tn_typecheck_failed {tn_verdict.kind}:"
+                    f"{tn_verdict.detail}\n")
+            return RegistrationResult(
+                False, None,
+                f"tn_typecheck_failed:{tn_verdict.kind}")
     if hamiltonian is not None:
         # MeraTypingHamiltonian / MeraEvalHamiltonian expose `.total_energy`;
         # fall back to `.energy` if a future Hamiltonian API renames it.
