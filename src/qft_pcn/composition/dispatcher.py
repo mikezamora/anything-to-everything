@@ -115,11 +115,26 @@ def _timeout_result(sub_goal: SubGoal) -> ChildResult:
 
 
 def dispatch_siblings(nodes: list[Node], backend: DispatchBackend, *,
-                      runner=run_child, timeout_s: float) -> list[ChildResult]:
+                      runner=run_child, timeout_s: float,
+                      parent_state: typing.Any = None,
+                      qec_threshold: float = 1e-4,
+                      qec_snapshots: typing.Mapping[str, typing.Any] | None = None,
+                      ) -> list[ChildResult]:
     """Submit all sibling nodes at once; collect results as they complete.
 
     A straggler past timeout_s resolves to a non-converged ChildResult and
     never blocks its siblings (spec §5.4).
+
+    §10.10 / §12.5 wiring: when ``parent_state`` is a MERA, every
+    converged child with a ``ground_state`` is run through the
+    holographic-code corruption detector against the parent's bulk
+    reconstruction. A flagged child is either routed through
+    :func:`apply_holographic_recovery` (if ``qec_snapshots`` carries a
+    pre-corruption MERA for that ``goal_id``) or marked non-converged
+    with a structured ``error='qec_corruption:...'`` so the integrator
+    refuses with a §6.5 failure_report. When ``parent_state`` is None
+    (legacy and stub-runner tests), QEC is skipped — the call is a
+    bitwise no-op on the result list and node statuses.
     """
     futures: dict = {}
     for node in nodes:
@@ -165,4 +180,111 @@ def dispatch_siblings(nodes: list[Node], backend: DispatchBackend, *,
                 )
             node.result = res
             results.append(res)
+
+    # --- §12.5 / §10.10 QEC pass ---------------------------------------
+    # Run the holographic-code syndrome on every converged child that
+    # produced a real MERA ground state. Lazy import: holographic_correction
+    # imports MERA, which we want to avoid at module load for the legacy
+    # stub-runner tests that never touch a real substrate.
+    if parent_state is not None:
+        # Build the children-states map keyed by goal_id. Skip children
+        # that did not converge (their ChildResult is already a refusal
+        # the integrator surfaces) and any child whose ground_state is
+        # not a MERA — the QEC code only knows the MERA substrate
+        # (§12.5 is literally a MERA holographic code).
+        try:
+            from src.qft_pcn.qft.mera import MERA  # noqa: WPS433 (intentional lazy)
+            from .holographic_correction import (
+                detect_logical_corruption,
+                apply_holographic_recovery,
+            )
+        except Exception:                           # noqa: BLE001
+            # If the QEC module fails to import (substrate broken), do
+            # not silently mask the children's results — re-raise so the
+            # caller sees the substrate fault loudly per §1.6.
+            raise
+
+        children_states: dict = {}
+        if isinstance(parent_state, MERA):
+            for res in results:
+                gs = res.ground_state
+                if (res.converged and isinstance(gs, MERA)
+                        and gs.layer_dims == parent_state.layer_dims
+                        and gs.N == parent_state.N):
+                    children_states[res.goal_id] = gs
+        if children_states:
+            report = detect_logical_corruption(
+                parent_state, children_states, threshold=qec_threshold,
+            )
+            recovery = apply_holographic_recovery(
+                parent_state, report, snapshots=qec_snapshots,
+            ) if report.flagged else None
+            if report.flagged:
+                # Index results by goal_id for in-place rewrite. ChildResult
+                # is frozen — we replace the entry rather than mutate it.
+                by_id = {r.goal_id: i for i, r in enumerate(results)}
+                node_by_id = {n.goal.goal_id: n for n in nodes}
+                for cid in report.flagged:
+                    idx = by_id.get(cid)
+                    if idx is None:
+                        continue
+                    dist = report.syndrome_distances.get(cid, float('inf'))
+                    if recovery is not None and cid in recovery.recovered:
+                        # Recovery succeeded: replace the corrupted ground
+                        # state with the snapshot-rollback MERA. The child
+                        # is now consistent with the parent's bulk; the
+                        # integrator's residual/gap gates still apply to
+                        # the snapshot's diagnostics, which the caller
+                        # is responsible for keeping coherent.
+                        old = results[idx]
+                        recovered_state = recovery.recovered[cid]
+                        new_diag = dict(old.run_diagnostic)
+                        new_diag["qec_recovery_applied"] = True
+                        new_diag["qec_corruption_distance"] = float(dist)
+                        new_res = ChildResult(
+                            goal_id=old.goal_id,
+                            converged=old.converged,
+                            residual_energy=old.residual_energy,
+                            ground_state=recovered_state,
+                            solved_ast=old.solved_ast,
+                            run_diagnostic=new_diag,
+                            error=old.error,
+                            meta=old.meta,
+                            hamiltonian=old.hamiltonian,
+                            trotter_steps=old.trotter_steps,
+                        )
+                        results[idx] = new_res
+                        n = node_by_id.get(cid)
+                        if n is not None:
+                            n.result = new_res
+                    else:
+                        # No recovery available: refuse the integration
+                        # with a structured QEC error (§6.5). The
+                        # integrator's converged-gate will route this
+                        # through _refuse and surface PENDING_REVISION.
+                        old = results[idx]
+                        reason = (
+                            recovery.refused.get(cid, "qec corruption")
+                            if recovery is not None else "qec corruption"
+                        )
+                        new_diag = dict(old.run_diagnostic)
+                        new_diag["qec_recovery_applied"] = False
+                        new_diag["qec_corruption_distance"] = float(dist)
+                        new_diag["qec_refusal_reason"] = reason
+                        new_res = ChildResult(
+                            goal_id=old.goal_id,
+                            converged=False,
+                            residual_energy=math.inf,
+                            ground_state=None,
+                            solved_ast=None,
+                            run_diagnostic=new_diag,
+                            error=f"qec_corruption:{reason}",
+                            meta=old.meta,
+                            hamiltonian=old.hamiltonian,
+                            trotter_steps=old.trotter_steps,
+                        )
+                        results[idx] = new_res
+                        n = node_by_id.get(cid)
+                        if n is not None:
+                            n.result = new_res
     return results

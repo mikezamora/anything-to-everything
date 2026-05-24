@@ -219,6 +219,12 @@ def solve_goal_graph(
                     dispatch_siblings(
                         leaf_siblings, backend,
                         runner=runner, timeout_s=timeout_s,
+                        # §12.5 / §10.10: route children through the
+                        # holographic-code corruption detector against the
+                        # parent's bulk reconstruction. parent_state may be
+                        # None for non-MERA workspaces — dispatcher skips
+                        # the QEC pass in that case.
+                        parent_state=parent_state,
                     )
                     for child in leaf_siblings:
                         # integrate_child mutates child.status to SOLVED/FAILED.
@@ -263,6 +269,7 @@ def solve_goal_graph(
                 # Leaf goal: dispatch a single child run.
                 dispatch_siblings(
                     [node], backend, runner=runner, timeout_s=timeout_s,
+                    parent_state=parent_state,
                 )
                 # integrate_child mutates node.status to SOLVED/FAILED.
                 integrate_child(

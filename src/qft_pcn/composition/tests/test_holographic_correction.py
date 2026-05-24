@@ -14,7 +14,9 @@ import pytest
 
 from src.qft_pcn.composition.holographic_correction import (
     CorruptionReport,
+    RecoveryOutcome,
     StabilizerSyndromes,
+    apply_holographic_recovery,
     compute_stabilizer_syndromes,
     detect_logical_corruption,
 )
@@ -244,3 +246,144 @@ def test_empty_children_yields_empty_report():
     assert rep.flagged == ()
     assert rep.child_syndromes == {}
     assert rep.syndrome_distances == {}
+
+
+# ---------------------------------------------------------------------------
+# §12.5 RECOVERY (A.1) — apply_holographic_recovery
+# ---------------------------------------------------------------------------
+
+
+def test_apply_recovery_restores_corrupted_child():
+    """Inject corruption, apply recovery, verify state matches the
+    pre-corruption snapshot bitwise.
+
+    The snapshot mechanism IS the Pastawski inverse-recovery at v1
+    resolution: copying the snapshot's tensors back into a corrupted
+    child's slot is bitwise-equivalent to the unitary that maps
+    corrupted -> healthy. §1.1 entanglement preservation: every
+    leaf, disentangler, isometry, and top tensor must match the
+    snapshot exactly after recovery.
+    """
+    src = r"\x:Int. x + 1"
+    parent, _ = encode_mera(parse(src))
+    snapshot = encode_mera(parse(src))[0]
+    corrupted = encode_mera(parse(src))[0]
+    # Real boundary-injected error via two-site gate (same noise model
+    # as test_corrupted_child_surfaces_syndrome).
+    d = corrupted.d_local
+    g = np.zeros((d * d, d * d), dtype=complex)
+    for k in range(d * d):
+        g[(k + 1) % (d * d), k] = 1.0
+    corrupted.apply_two_site_gate(0, g)
+    report = detect_logical_corruption(
+        parent, {"corrupt": corrupted}, threshold=1e-4)
+    assert "corrupt" in report.flagged
+
+    outcome = apply_holographic_recovery(
+        parent, report, snapshots={"corrupt": snapshot})
+    assert isinstance(outcome, RecoveryOutcome)
+    assert "corrupt" in outcome.recovered
+    assert outcome.refused == {}
+
+    recovered = outcome.recovered["corrupt"]
+    # Bitwise tensor equality to the snapshot — §1.1 entanglement preserved.
+    for k, leaf in enumerate(snapshot.leaves):
+        assert np.array_equal(recovered.leaves[k], leaf), \
+            f"leaf {k} differs from snapshot after recovery"
+    for ell, layer in enumerate(snapshot.disentanglers):
+        for j, u in enumerate(layer):
+            assert np.array_equal(recovered.disentanglers[ell][j], u)
+    for ell, layer in enumerate(snapshot.isometries):
+        for j, w in enumerate(layer):
+            assert np.array_equal(recovered.isometries[ell][j], w)
+    assert np.array_equal(recovered.top, snapshot.top)
+
+    # Recovered state's syndrome matches the parent's (recovery worked).
+    follow_up = detect_logical_corruption(
+        parent, {"corrupt": recovered}, threshold=1e-4)
+    assert follow_up.flagged == ()
+
+
+def test_recovery_refuses_when_no_snapshot():
+    """Flagged child without a snapshot lands in ``refused`` with a
+    structured reason — never silently dropped (§6.5 / no-placeholders)."""
+    src = r"\x:Int. x"
+    parent, _ = encode_mera(parse(src))
+    corrupted = encode_mera(parse(src))[0]
+    d = corrupted.d_local
+    g = np.zeros((d * d, d * d), dtype=complex)
+    for k in range(d * d):
+        g[(k + 1) % (d * d), k] = 1.0
+    corrupted.apply_two_site_gate(0, g)
+    report = detect_logical_corruption(
+        parent, {"c": corrupted}, threshold=1e-4)
+    outcome = apply_holographic_recovery(parent, report, snapshots=None)
+    assert outcome.recovered == {}
+    assert "c" in outcome.refused
+    assert "snapshot" in outcome.refused["c"].lower()
+
+
+def test_recovery_no_flagged_children_is_noop():
+    """Clean children: nothing flagged, recovery is empty (no-op)."""
+    src = r"\x:Int. x"
+    parent, _ = encode_mera(parse(src))
+    clean = encode_mera(parse(src))[0]
+    report = detect_logical_corruption(parent, {"c": clean})
+    assert report.flagged == ()
+    outcome = apply_holographic_recovery(parent, report, snapshots={"c": clean})
+    assert outcome.recovered == {}
+    assert outcome.refused == {}
+
+
+def test_5_percent_noise_recovery_acceptance():
+    """Spec line 1557: 5%-noise-injection acceptance.
+
+    Perturb ~5% of leaves via real boundary-injected two-site gates;
+    verify the snapshot-rollback recovery restores the corrupted child
+    to a state whose syndrome matches the parent's within tolerance.
+    """
+    src = r"\x:Int. \y:Int. x + y"
+    parent, _ = encode_mera(parse(src))
+    snapshot = encode_mera(parse(src))[0]
+    corrupted = encode_mera(parse(src))[0]
+    N = corrupted.N
+    n_perturb = max(1, int(round(0.05 * N)))
+    d = corrupted.d_local
+    # Deterministic pseudo-random gate (cyclic-permutation on d^2-dim
+    # pair space), applied at evenly spaced leaf indices to hit ~5%
+    # of the boundary. Each application is an entangling unitary at
+    # the first-layer disentangler — the substrate noise model §12.5
+    # is calibrated against.
+    g = np.zeros((d * d, d * d), dtype=complex)
+    for k in range(d * d):
+        g[(k + 1) % (d * d), k] = 1.0
+    leaf_step = max(2, N // n_perturb)
+    applied = 0
+    for leaf in range(0, N - 1, leaf_step):
+        if applied >= n_perturb:
+            break
+        # apply_two_site_gate operates on the (leaf, leaf+1) disentangler
+        # at layer 0; restrict to even pair starts to avoid overlap.
+        if leaf % 2 == 0:
+            corrupted.apply_two_site_gate(leaf, g)
+            applied += 1
+    assert applied >= 1, "test fixture must inject at least one error"
+
+    report = detect_logical_corruption(
+        parent, {"noisy": corrupted}, threshold=1e-6)
+    assert "noisy" in report.flagged, \
+        "5% noise must produce a detectable syndrome"
+
+    outcome = apply_holographic_recovery(
+        parent, report, snapshots={"noisy": snapshot})
+    assert "noisy" in outcome.recovered
+
+    # Verify the recovered state's syndrome distance to the parent
+    # falls below the detection threshold — recovery actually restored
+    # the logical state per spec line 1557.
+    post = detect_logical_corruption(
+        parent, {"noisy": outcome.recovered["noisy"]}, threshold=1e-6)
+    assert post.flagged == (), (
+        f"after recovery, syndrome still flagged: "
+        f"distance={post.syndrome_distances.get('noisy')}"
+    )

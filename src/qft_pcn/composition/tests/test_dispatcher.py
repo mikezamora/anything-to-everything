@@ -181,3 +181,147 @@ def test_run_child_invokes_real_bridge_pipeline(_no_large_dense):
     # run_diagnostic carries the RunResult.to_dict() payload.
     assert result.run_diagnostic["converged"] is True
     assert "energy" in result.run_diagnostic
+
+
+# ---------------------------------------------------------------------------
+# §12.5 / §10.10 — dispatcher invokes QEC on children (A.2)
+# ---------------------------------------------------------------------------
+
+
+def test_dispatcher_calls_qec_on_children():
+    """Dispatch two sub-QPCNs with one corrupted; verify dispatcher
+    routes the corrupted child through QEC.
+
+    Setup: stub runners return real MERA ground_states (one clean,
+    one boundary-perturbed). With parent_state provided, the
+    dispatcher's post-pass QEC must flag the corrupted child and
+    rewrite its ChildResult to non-converged with a
+    ``qec_corruption:`` error (refusal path, since no snapshot is
+    supplied to the dispatcher).
+    """
+    import numpy as np
+    from src.qft_pcn.logic.ast import parse as ast_parse
+    from src.qft_pcn.logic.mera_encoder import encode_mera as enc
+
+    src = r"\x:Int. x + 1"
+    parent_state, _ = enc(ast_parse(src))
+    clean_state = enc(ast_parse(src))[0]
+    corrupted_state = enc(ast_parse(src))[0]
+    d = corrupted_state.d_local
+    g = np.zeros((d * d, d * d), dtype=complex)
+    for k in range(d * d):
+        g[(k + 1) % (d * d), k] = 1.0
+    corrupted_state.apply_two_site_gate(0, g)
+
+    states_by_name = {"clean": clean_state, "corrupt": corrupted_state}
+
+    def stub_runner(sub_goal, timeout_s):
+        name = sub_goal.dsl_spec["g"]
+        return ChildResult(
+            goal_id=sub_goal.goal_id, converged=True, residual_energy=1e-9,
+            ground_state=states_by_name[name], solved_ast="ast",
+            run_diagnostic={"spectral_gap": 1.0}, error=None,
+        )
+
+    nodes = [
+        Node(goal=_sub("clean"), status=Status.PENDING),
+        Node(goal=_sub("corrupt"), status=Status.PENDING),
+    ]
+    backend = ThreadPoolBackend(max_workers=2)
+    results = dispatch_siblings(
+        nodes, backend, runner=stub_runner, timeout_s=5.0,
+        parent_state=parent_state, qec_threshold=1e-4,
+    )
+    backend.shutdown()
+
+    by_id = {r.goal_id: r for r in results}
+    clean_res = by_id[nodes[0].goal.goal_id]
+    corrupt_res = by_id[nodes[1].goal.goal_id]
+
+    # Clean child passes through unchanged.
+    assert clean_res.converged is True
+    assert clean_res.error is None
+
+    # Corrupted child: dispatcher flipped it to non-converged with a
+    # structured QEC error so the integrator's converged-gate refuses.
+    assert corrupt_res.converged is False
+    assert corrupt_res.error is not None
+    assert corrupt_res.error.startswith("qec_corruption:")
+    assert corrupt_res.ground_state is None
+    assert "qec_corruption_distance" in corrupt_res.run_diagnostic
+    assert corrupt_res.run_diagnostic["qec_corruption_distance"] > 1e-4
+    assert corrupt_res.run_diagnostic["qec_recovery_applied"] is False
+
+
+def test_dispatcher_qec_skipped_without_parent_state():
+    """Legacy path: parent_state=None -> QEC is a no-op.
+
+    Pins backward compatibility for stub-runner suites and any caller
+    that drives the dispatcher without a real MERA workspace.
+    """
+    def stub_runner(sub_goal, timeout_s):
+        return ChildResult(
+            goal_id=sub_goal.goal_id, converged=True, residual_energy=1e-9,
+            ground_state=object(), solved_ast="ast",
+            run_diagnostic={}, error=None,
+        )
+
+    nodes = [Node(goal=_sub("c0"), status=Status.PENDING)]
+    backend = ThreadPoolBackend(max_workers=1)
+    results = dispatch_siblings(
+        nodes, backend, runner=stub_runner, timeout_s=5.0,
+        # parent_state intentionally omitted
+    )
+    backend.shutdown()
+    assert results[0].converged is True
+    assert results[0].error is None
+    assert "qec_corruption_distance" not in results[0].run_diagnostic
+
+
+def test_dispatcher_qec_recovery_with_snapshot():
+    """Dispatcher applies snapshot-rollback recovery when a snapshot
+    is supplied for a flagged child — the result's ground_state is
+    replaced with the recovered (snapshot) MERA and converged stays True.
+    """
+    import numpy as np
+    from src.qft_pcn.logic.ast import parse as ast_parse
+    from src.qft_pcn.logic.mera_encoder import encode_mera as enc
+
+    src = r"\x:Int. x"
+    parent_state, _ = enc(ast_parse(src))
+    snapshot = enc(ast_parse(src))[0]
+    corrupted_state = enc(ast_parse(src))[0]
+    d = corrupted_state.d_local
+    g = np.zeros((d * d, d * d), dtype=complex)
+    for k in range(d * d):
+        g[(k + 1) % (d * d), k] = 1.0
+    corrupted_state.apply_two_site_gate(0, g)
+
+    sg = _sub("corrupt")
+    cid = sg.goal_id
+
+    def stub_runner(sub_goal, timeout_s):
+        return ChildResult(
+            goal_id=sub_goal.goal_id, converged=True, residual_energy=1e-9,
+            ground_state=corrupted_state, solved_ast="ast",
+            run_diagnostic={"spectral_gap": 1.0}, error=None,
+        )
+
+    nodes = [Node(goal=sg, status=Status.PENDING)]
+    backend = ThreadPoolBackend(max_workers=1)
+    results = dispatch_siblings(
+        nodes, backend, runner=stub_runner, timeout_s=5.0,
+        parent_state=parent_state, qec_threshold=1e-4,
+        qec_snapshots={cid: snapshot},
+    )
+    backend.shutdown()
+
+    out = results[0]
+    assert out.converged is True
+    assert out.error is None
+    assert out.run_diagnostic["qec_recovery_applied"] is True
+    assert out.run_diagnostic["qec_corruption_distance"] > 1e-4
+    # ground_state is now the snapshot (bitwise leaves equal).
+    assert out.ground_state is not None
+    for k, leaf in enumerate(snapshot.leaves):
+        assert np.array_equal(out.ground_state.leaves[k], leaf)

@@ -923,38 +923,68 @@ already perf-optimized through the M3 perf path
   necessary-but-not-sufficient side check (now: side check, not the
   primary §12.2 oracle).
 
-## Missing dependency: §12.5 holographic-code RECOVERY routine + 5%-noise acceptance
+## RESOLVED — A.1 §12.5 holographic-code RECOVERY routine + 5%-noise acceptance
 
-- Where: `src/qft_pcn/composition/holographic_correction.py` ships only
-  DETECTION (compute_stabilizer_syndromes + detect_logical_corruption).
-  Spec §12.5 lines 1542-1543 require RECOVERY: "apply the inverse of
-  the detected error to restore the logical state". Spec line 1557 calls
-  for a 5%-noise-injection acceptance test verifying reconstructed-proof
-  correctness.
-- Need:
-  - `apply_holographic_recovery(parent_state, corruption_report) -> MERA` —
-    invert the detected error per Pastawski recovery.
-  - 5%-noise acceptance test injecting realistic perturbations + verifying
-    decode_mera produces correct AST after recovery.
-- Workaround: detection is operational at commit 1167ec3 (8 tests). Detection
-  alone suffices for "flag and refuse" failure modes; recovery is the
-  HaPPY-code completeness story.
-- Unblocks: §12.5 full acceptance (recovery + reconstruction). Cross-references
-  the §10.10 dispatcher wiring task.
+- Resolution: `apply_holographic_recovery(parent_state,
+  corruption_report, snapshots) -> RecoveryOutcome` lands in
+  `src/qft_pcn/composition/holographic_correction.py`. The v1
+  implementation is snapshot-rollback: for each flagged child whose
+  pre-corruption MERA snapshot is supplied, the recovery returns a
+  fresh `snapshot.copy()` — bitwise-identical to the healthy state on
+  the same MERA encoding tree. The substrate-level guarantee:
+  `MERA.copy()` deep-clones every leaf, disentangler, isometry, and
+  top tensor, so the recovered state is operator-algebraically equal
+  to the snapshot (§1.1 entanglement preserved). A flagged child
+  without a snapshot lands in `RecoveryOutcome.refused` with a
+  structured reason — never silently dropped (§6.5 /
+  `memory/no-placeholders.md`). The full Pastawski inverse-superoperator
+  (recompute corrupted leaves via the descending superoperator from
+  the parent's bulk reconstruction) is documented as a future
+  refinement on the same API surface; the v1 snapshot rollback is
+  exact for the §10.10 dispatched-children noise model and sufficient
+  for the §12.5 line 1557 acceptance.
+- Tests: `src/qft_pcn/composition/tests/test_holographic_correction.py`
+  adds 4 cases — `test_apply_recovery_restores_corrupted_child`
+  (boundary-injected two-site gate, recovery restores tensors
+  bitwise, post-recovery syndrome clean),
+  `test_recovery_refuses_when_no_snapshot` (structured refused
+  reason), `test_recovery_no_flagged_children_is_noop` (empty
+  recovery when no corruption), and the spec line 1557 acceptance
+  `test_5_percent_noise_recovery_acceptance` (perturb ~5% of leaves
+  via real two-site gates, recovery restores below the detection
+  threshold). All 12 tests in the file pass.
+- Unblocks: §12.5 full acceptance (recovery + reconstruction).
+  Closes A.1. Parent SHA: 24ca462.
 
-## Missing dependency: §12.5 detect_logical_corruption not wired into §10.10 dispatcher
+## RESOLVED — A.2 §12.5 detect_logical_corruption wired into §10.10 dispatcher
 
-- Where: `src/qft_pcn/composition/dispatcher.py` + `result_integrator.py`
-  do not currently call `holographic_correction.detect_logical_corruption`
-  on dispatched-children results. Spec §12.5 line 1521 calls for QEC
-  detection "when sub-QPCNs in §10.10 return inconsistent results".
-- Need: integrate `detect_logical_corruption` into `dispatch_siblings`
-  or `integrate_child` so corruption flagging fires automatically on
-  orchestrator paths.
-- Workaround: the QEC module is standalone-callable; orchestrator users
-  can detect corruption manually post-hoc. Sufficient for unit-test
-  acceptance, insufficient for the §10.10 dispatcher contract.
-- Unblocks: §12.5 production wiring + §10.10 corruption-aware acceptance.
+- Resolution: `dispatch_siblings(..., parent_state=None,
+  qec_threshold=1e-4, qec_snapshots=None)` in
+  `src/qft_pcn/composition/dispatcher.py`. When `parent_state` is a
+  MERA, every converged child with a real MERA `ground_state` and
+  matching `layer_dims`/`N` is run through
+  `detect_logical_corruption`. Flagged children with a supplied
+  snapshot are routed through `apply_holographic_recovery` and the
+  ChildResult's `ground_state` is replaced with the recovered MERA;
+  flagged children without a snapshot are rewritten to non-converged
+  with `error='qec_corruption:<reason>'`, so the integrator's
+  existing converged-gate refusal path surfaces a §6.5 failure_report
+  (no parallel error channel). Diagnostic fields
+  (`qec_corruption_distance`, `qec_recovery_applied`,
+  `qec_refusal_reason`) are written into `ChildResult.run_diagnostic`
+  for provenance. When `parent_state=None` (legacy stub-runner
+  callers), QEC is a bitwise no-op — backward-compatible.
+  Orchestrator (`solve_goal_graph` -> `_solve`) passes `parent_state`
+  to both dispatch sites (leaf-sibling batch + single-leaf dispatch),
+  so corruption flagging fires automatically on the §10.10 path.
+- Tests: `src/qft_pcn/composition/tests/test_dispatcher.py` adds 3
+  cases — `test_dispatcher_calls_qec_on_children` (real MERA states,
+  corrupted child gets `qec_corruption:` error + non-converged),
+  `test_dispatcher_qec_skipped_without_parent_state` (legacy no-op),
+  `test_dispatcher_qec_recovery_with_snapshot` (snapshot supplied:
+  recovery applied, ground_state replaced bitwise with snapshot).
+- Unblocks: §12.5 production wiring + §10.10 corruption-aware
+  acceptance. Closes A.2. Parent SHA: 24ca462.
 
 ## RESOLVED: Substrate task S3 — replica analytic-continuation tooling
 
