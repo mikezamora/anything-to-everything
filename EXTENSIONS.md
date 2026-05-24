@@ -1204,3 +1204,20 @@ already perf-optimized through the M3 perf path
   least one strategy choice; not every Hamiltonian ground-eigenvector
   corresponds to a binding-loop).
 - Unblocks: §12.3 spec acceptance test `a+b=b+a` → 2 distinct proofs.
+
+## Missing dependency: §12.10 holographic compilation optimization passes
+
+- Where: `src/qft_pcn/composition/holographic_compilation.py` ships
+  `record_mera_layer_sequence` (renamed per D15) + tautological
+  `verify_layer_state_identical` (renamed).
+- Need: real RG-flow optimization passes that truncate / rewrite MERA
+  layers while preserving program semantics (Wilson-loop equivalence).
+  Each pass = a §12.2-equivalence-preserving local rewrite (compress,
+  fuse, eliminate). Compilation = composition of passes converging via
+  §12.8 DPT detector.
+- Workaround: layer-sequence + Wilson-loop signature plumbing is API-
+  ready; only the OPTIMIZATION pass library is missing. The cross-
+  extension wiring (§12.2 + §12.8) is sound.
+- Unblocks: §12.10 acceptance — programs compile to shorter MERAs while
+  preserving Wilson signatures + converging in DPT-event-free
+  trajectories.

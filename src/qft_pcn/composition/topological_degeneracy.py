@@ -1,4 +1,18 @@
-"""§12.3 Topological order for a priori counting of proof strategies.
+"""§12.3 Binding-graph cycle-space invariant (honest scope per D12).
+
+HONEST SCOPE (D12 rename): this module computes a STRUCTURAL
+invariant of the encoded program's binding diagram — the first Betti
+number ``b_1`` of the use-to-binder graph, lifted to ``K = 2^{b_1}``
+and ``K^g`` via the Wen 1989 / Kitaev 2006 toric-code formula. This
+is NOT the spec §12.3 "essentially-different proof strategies" count.
+The genuine spec count requires enumerating the actual ground-subspace
+degeneracy of the constraint Hamiltonian (``eigvalsh`` near zero, count
+eigenvectors), which is substrate-wide work tracked in EXTENSIONS.
+
+The binding-graph cycle dimension is a NECESSARY-BUT-NOT-SUFFICIENT
+condition for the spec count: every independent constraint loop in the
+binding diagram introduces at least one strategy choice, but not every
+Hamiltonian ground-eigenvector corresponds to a binding-loop generator.
 
 Wen 1989 (topological order), Kitaev 2006 (toric code), Nayak et al.
 2008 (non-abelian anyons). A topologically ordered Hamiltonian has a
@@ -7,9 +21,8 @@ ground-state degeneracy on a genus-``g`` surface equal to ``K^g`` where
 For the toric code, ``K = 4`` on a torus (genus 1) — two independent
 Z_2 Wilson loops, algebra dimension ``2 * 2 = 4``.
 
-For a QPCN constraint Hamiltonian, inequivalent proof strategies are
-in one-to-one correspondence with inequivalent Wilson-loop operators
-on the *binding diagram* of the AST (spec §12.3):
+We apply the same Euler-formula machinery to the *binding diagram*
+of the AST (spec §12.3):
 
   * vertices = AST nodes (the ``meta.children_of_node`` keys);
   * tree edges = parent-to-child links of the AST;
@@ -230,34 +243,45 @@ def compute_wilson_loop_algebra(H: Any) -> dict:
     }
 
 
-def count_proof_strategies(H: Any, genus: int = 1) -> int:
-    """Number of essentially-different proof strategies for ``H`` on a
-    genus-``g`` surface (spec §12.3).
+def count_binding_graph_strategies(H: Any, genus: int = 1) -> int:
+    """Binding-graph cycle-space dimension ``K^genus`` for ``H`` (D12 honest scope).
+
+    HONEST SCOPE: this counts ``K^g`` where ``K = 2^{b_1}`` is read off
+    the use-to-binder binding diagram via Euler's formula. It is a
+    STRUCTURAL invariant of the encoded program's binding diagram, NOT
+    the spec §12.3 "essentially-different proof strategies" count
+    (which requires enumerating the actual ground-subspace degeneracy
+    of the constraint Hamiltonian — substrate-wide work tracked in
+    EXTENSIONS).
+
+    The binding-graph cycle dimension is a NECESSARY-BUT-NOT-SUFFICIENT
+    condition for the genuine spec count: every independent constraint
+    loop introduces at least one strategy choice, but not every
+    Hamiltonian ground-eigenvector corresponds to a binding-loop.
 
     Per the topological-order analogy (Wen 1989; toric code on a torus
-    has ``4 = 2^2`` ground states), the ground-state degeneracy of a
-    constraint Hamiltonian on a genus-``g`` surface is
+    has ``4 = 2^2`` ground states), the ``K^g`` formula
 
         N(g) = K ** g                                            (3)
 
-    where ``K`` is the dimension of the Wilson-loop algebra modulo
-    trivial loops (cf. ``compute_wilson_loop_algebra``). Inequivalent
-    ground states are inequivalent proof homotopy classes; their count
-    is the count of essentially-different proof strategies.
+    is the Wilson-loop count on a genus-``g`` surface where ``K`` is
+    the algebra dimension modulo trivial loops (cf.
+    ``compute_wilson_loop_algebra``).
 
     Parameters
     ----------
     H:
         Constraint Hamiltonian (see ``compute_wilson_loop_algebra``).
     genus:
-        Topological genus of the surface on which the degeneracy is
-        computed. ``g = 1`` (the torus) is the spec's canonical case.
-        ``g >= 0``; ``g = 0`` (sphere) gives a single ground state.
+        Topological genus parameter for the ``K^g`` scaling. ``g = 1``
+        is the canonical (torus) case. ``g >= 0``; ``g = 0`` (sphere)
+        gives a single representative.
 
     Returns
     -------
     int
-        ``K ** genus`` — the a-priori count of distinct proof strategies.
+        ``K ** genus`` — the binding-graph cycle-space dimension at
+        the given genus.
 
     Raises
     ------

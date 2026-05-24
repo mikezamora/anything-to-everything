@@ -1,13 +1,14 @@
-"""Tests for §12.3 Wilson-loop strategy counting.
+"""Tests for §12.3 binding-graph cycle-space invariant (D12 honest scope).
 
-The constraint Hamiltonian's binding diagram (AST tree edges plus
-variable-use-to-binder edges) carries a Wilson-loop algebra whose
-dimension ``K`` modulo trivial (contractible) loops counts inequivalent
-proof homotopy classes. Genus-``g`` ground-state degeneracy is ``K^g``
-(Wen 1989; toric-code analogy gives ``K = 4`` on a torus).
+Per D12: these tests pin the STRUCTURAL invariant of the encoded
+program's binding diagram (Betti number of the use-to-binder graph,
+lifted to ``K^g`` via Wen 1989 toric-code formula). This is NOT the
+spec §12.3 ground-subspace degeneracy ("essentially different proof
+strategies") — that genuine count requires eigvalsh enumeration on
+the constraint Hamiltonian and is tracked in EXTENSIONS.
 
-These tests exercise the operator-algebraic count on:
-  * a trivial (no-variable) AST -> K = 1, strategy count = 1;
+These tests exercise the operator-algebraic invariant on:
+  * a trivial (no-variable) AST -> K = 1, ``K^g = 1``;
   * a non-trivial AST with multiple variable uses -> K >= 2 (b_1 >= 1);
   * the K^g scaling pinned at two distinct genus values.
 
@@ -20,7 +21,7 @@ import pytest
 
 from src.qft_pcn.composition.topological_degeneracy import (
     compute_wilson_loop_algebra,
-    count_proof_strategies,
+    count_binding_graph_strategies,
 )
 from src.qft_pcn.logic.ast import (
     Bin,
@@ -111,8 +112,8 @@ def test_trivial_h_has_one_strategy():
     assert algebra["n_edges"] == algebra["n_vertices"] - algebra["n_components"]
 
     # K^g = 1 for any genus.
-    assert count_proof_strategies(H, genus=1) == 1
-    assert count_proof_strategies(H, genus=2) == 1
+    assert count_binding_graph_strategies(H, genus=1) == 1
+    assert count_binding_graph_strategies(H, genus=2) == 1
 
 
 def test_nontrivial_h_has_multiple_strategies():
@@ -134,13 +135,13 @@ def test_nontrivial_h_has_multiple_strategies():
     assert algebra["algebra_dimension"] >= 2
 
     # Genus-1 strategy count matches the Wilson-loop algebra dimension.
-    strategies_g1 = count_proof_strategies(H, genus=1)
+    strategies_g1 = count_binding_graph_strategies(H, genus=1)
     assert strategies_g1 == algebra["algebra_dimension"]
     assert strategies_g1 >= 2
 
 
 def test_strategy_count_scales_with_genus():
-    """``count_proof_strategies(H, g) == K ** g`` for at least two genera.
+    """``count_binding_graph_strategies(H, g) == K ** g`` for at least two genera.
 
     The topological-order signature is ``K^g`` scaling (Wen 1989;
     toric-code ``4^g`` on genus-g surfaces). We pin the exponential
@@ -152,9 +153,9 @@ def test_strategy_count_scales_with_genus():
     K = int(algebra["algebra_dimension"])
     assert K >= 2  # precondition for the scaling test to be meaningful.
 
-    n_g1 = count_proof_strategies(H, genus=1)
-    n_g2 = count_proof_strategies(H, genus=2)
-    n_g3 = count_proof_strategies(H, genus=3)
+    n_g1 = count_binding_graph_strategies(H, genus=1)
+    n_g2 = count_binding_graph_strategies(H, genus=2)
+    n_g3 = count_binding_graph_strategies(H, genus=3)
 
     assert n_g1 == K ** 1
     assert n_g2 == K ** 2
@@ -164,7 +165,7 @@ def test_strategy_count_scales_with_genus():
     assert n_g3 // n_g2 == K
 
     # Genus 0 (sphere): single ground state regardless of K.
-    assert count_proof_strategies(H, genus=0) == 1
+    assert count_binding_graph_strategies(H, genus=0) == 1
 
 
 def test_negative_genus_rejected():
@@ -175,4 +176,4 @@ def test_negative_genus_rejected():
     """
     H, _ = _build_trivial_h()
     with pytest.raises(ValueError):
-        count_proof_strategies(H, genus=-1)
+        count_binding_graph_strategies(H, genus=-1)

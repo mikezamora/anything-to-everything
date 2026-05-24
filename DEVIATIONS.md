@@ -210,15 +210,15 @@ already catalogued in `EXTENSIONS.md` are not re-listed here.
   bound capabilities"). Tests updated to the renamed symbol.
 - Audit source: §12
 
-### D14 — §12.7 replica_complexity Z is a leaf-marginal observable, not a proof-space partition function
+### D14 — §12.7 replica_complexity Z is a leaf-marginal observable, not a proof-space partition function — RESOLVED 2026-05-23
 - Location:
   `src/qft_pcn/composition/replica_complexity.py:204-301`
   (`_default_hamiltonian`, `instance_partition_function`)
 - Spec: §12.7
 - Issue: Spec Z is "count of valid proofs weighted by their
   complexity." Implementation computes
-  `Z = geometric_mean_k tr(ρ_k · expm(-β · h_k))` where `h_k` is a
-  generic bosonic number operator (bare_mass=1.0, kinetic=0.5)
+  `Z = geometric_mean_k tr(rho_k @ expm(-beta * h_k))` where `h_k` is
+  a generic bosonic number operator (bare_mass=1.0, kinetic=0.5)
   unrelated to proof search, constraint algebra, or theorem class.
   Replica continuation operates on a quantity disconnected from
   `<log Z>` semantics.
@@ -227,6 +227,14 @@ already catalogued in `EXTENSIONS.md` are not re-listed here.
   `MeraTypingHamiltonian` of the instance), or (b) scope-limit the
   docstring and rename.
 - Audit source: §12
+- Resolution: honest rename path (b). `compute_typical_complexity` ->
+  `compute_typical_field_marginal_complexity`; module + function
+  docstrings now state plainly that Z is the leaf-marginal field
+  free energy, NOT the §12.7 proof-space partition function. Legacy
+  name retained as `DeprecationWarning`-emitting alias for existing
+  call sites. Genuine proof-space Z
+  (`sum_{proofs} exp(-beta * worldline_pi_action)`) tracked in
+  `EXTENSIONS.md` "§12.7 proof-space partition function".
 
 ### D15 — §12.10 holographic_compilation ships no optimization pass; verify is tautological
 - Location:
