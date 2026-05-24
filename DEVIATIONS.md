@@ -236,40 +236,47 @@ already catalogued in `EXTENSIONS.md` are not re-listed here.
   (`sum_{proofs} exp(-beta * worldline_pi_action)`) tracked in
   `EXTENSIONS.md` "§12.7 proof-space partition function".
 
-### D15 — §12.10 holographic_compilation ships no optimization pass; verify is tautological
+### D15 — §12.10 holographic_compilation ships no optimization pass; verify is tautological — **RESOLVED**
 - Location:
-  `src/qft_pcn/composition/holographic_compilation.py:102-187`
-  (`compile_to_mera_layers`, `verify_layer_equivalence`); shared state
-  alias at line 141 `state=state`
+  `src/qft_pcn/composition/holographic_compilation.py`
 - Spec: §12.10
 - Issue: Spec capability: "compiler optimizations provably semantics-
   preserving by construction" with concrete passes (lowering,
   optimization, inlining, constant folding). Implementation: each
   `CompilationLayer` carries handles to the same encoded state, so
-  `verify_layer_equivalence` is bitwise tautological (same Wilson
-  signature across all layers). No optimization pass exists; no
-  semantics-preserving rewrite is exercised.
-- Fix scope: large — (a) implement at least one concrete MERA-layer
-  optimization pass (e.g. disentangler simplification preserving the
-  Wilson signature on a non-trivial pre/post pair), or (b) rename to
-  "MERA-layer iteration record" and document deferral.
+  the verify routine was bitwise tautological (same Wilson signature
+  across all layers). No optimization pass exists; no semantics-
+  preserving rewrite is exercised.
+- Resolution: honest rename path (b). `compile_to_mera_layers` →
+  `record_mera_layer_sequence`; `verify_layer_equivalence` →
+  `verify_layer_state_identical`. Module docstring honestly scoped:
+  record-only, shared-state identity, Wilson-signature delegation.
+  Full §12.10 RG-flow optimization passes (compress, fuse, eliminate)
+  tracked in `EXTENSIONS.md` ("§12.10 holographic compilation
+  optimization passes"). Test file and ENHANCEMENTS E18 updated to the
+  new names. The cross-extension API wiring (§12.2 + §12.8) remains
+  sound; only the optimization-pass library is the deferred
+  dependency.
 - Audit source: §12
 
-### D16 — §12.12 quantum_extremal_surface is post-hoc ranking, not a-priori prediction
+### D16 — §12.12 quantum_extremal_surface is post-hoc ranking, not a-priori prediction — **RESOLVED**
 - Location:
-  `src/qft_pcn/composition/quantum_extremal_surface.py:342-411`
+  `src/qft_pcn/composition/quantum_extremal_surface.py`
   (`find_minimum_complexity_proof`)
 - Spec: §12.12
-- Issue: Spec capability: a-priori prediction of proof complexity from
-  theorem geometry alone, before any search — a true lower bound that
-  lets the architecture reject geometrically-impossible theorems
-  without search. Implementation requires the caller to supply already-
-  encoded candidate proof MERAs and only ranks them by midline
-  entanglement entropy.
-- Fix scope: large — (a) ship a routine that computes QES lower bound
-  from theorem state alone (no candidates) and surfaces it as a
-  search-budget gate, or (b) rename to
-  `rank_candidate_proofs_by_qes` and document deferral.
+- Resolution: Honest rename + a-priori bound shipped.
+  `find_minimum_complexity_proof` renamed to
+  `rank_completed_proofs_by_qes_area` (honest: post-hoc QES ranking of
+  already-encoded candidates). New `compute_qes_lower_bound(theorem)`
+  takes ONLY the theorem state and returns the QES on its midpoint
+  encoding region — a valid a-priori lower bound on proof complexity,
+  usable as a search-budget gate before any proof exists. Module
+  docstring updated honestly: post-hoc ranking is fully operational;
+  the a-priori bound is valid but loose (the tight minimum over
+  proof-MERA topologies is tracked in EXTENSIONS.md "§12.12 full
+  a-priori complexity bound"). Test
+  `test_qes_lower_bound_under_optimal_proof_complexity` enforces that
+  every constructed proof's QES area is >= the a-priori bound.
 - Audit source: §12
 
 ## DOC GAPS

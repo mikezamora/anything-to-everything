@@ -1,15 +1,39 @@
-"""§12.7 Replica method for predictive typical-case complexity.
+"""§12.7 Replica method for typical-case leaf-marginal free energy.
 
 Spec reference: ``QFT_PCN_ARCHITECTURE.md`` §12.7 (Edwards-Anderson 1975,
-Parisi 1980; Nobel 2021). For a problem-class ensemble, the typical
-free energy
+Parisi 1980; Nobel 2021).
 
-    <log Z> = lim_{n -> 0} (<Z^n> - 1) / n
+HONESTY NOTE (D14, 2026-05-23)
+------------------------------
+The spec §12.7 partition function is
 
-predicts the average proof-search difficulty: large negative ``<log Z>``
-=> tightly clustered Boltzmann weight on few low-energy proofs (easy
-typical instance); ``<log Z>`` ~ 0 or positive => Z spread out across
-many configurations or vanishing on most => hard typical instance.
+    Z_proof = sum_{proofs} exp(-beta * proof_complexity)
+
+over the actual proof ensemble (solved corpus + conjecture-tier
+lemmas + revision near-misses), with ``proof_complexity`` given by
+the §12.16 worldline-PI action. That object is not implemented here.
+
+What THIS module computes instead is the typical free energy of
+the per-instance LEAF-MARGINAL distribution: for each encoded
+theorem we form
+
+    Z(T, beta) = geometric_mean_k tr( rho_k @ expm(-beta h_k) )
+
+where ``rho_k = diag(state.leaf_marginal(k))`` is the operator-
+algebraic single-leaf reduced density and ``h_k`` is the canonical
+``FieldSpecies`` number-operator Hamiltonian (bare_mass=1.0,
+kinetic=0.5; see :func:`_default_hamiltonian`). The replica trick
+``<log Z> = lim_{n -> 0} (<Z^n> - 1) / n`` then yields the typical
+free energy of *leaf-marginal field configurations* across the
+ensemble — a structural property of the substrate encoding, NOT
+the spec's proof-space partition function.
+
+This is a necessary-but-not-sufficient signature: ensembles whose
+leaf marginals concentrate consistently on low-energy basis states
+will have negative ``<log Z>``; ensembles with heterogeneous leaf
+marginals will have higher ``<log Z>``. See ``EXTENSIONS.md``
+"§12.7 proof-space partition function" for the genuine implementation
+roadmap.
 
 This module is the COMPOSITION-layer driver that wires real QPCN
 problem encodings (``encode_mera(parse(...))``) into the S3 substrate
@@ -57,7 +81,7 @@ on ``N`` leaves with local dimension ``d = state.d_local``:
 
 S3 wiring
 ---------
-:func:`compute_typical_complexity` then calls the substrate
+:func:`compute_typical_field_marginal_complexity` then calls the substrate
 :func:`~src.qft_pcn.qft.replica.compute_zn_for_ensemble` over the
 ensemble ``[Z(T_1, beta), ..., Z(T_M, beta)]`` to obtain the integer-
 ``n`` samples ``<Z^n>``, and feeds them to
@@ -94,12 +118,17 @@ scheduling decisions (§12.8 curriculum tie-in).
 Public API
 ----------
 - :class:`ComplexityPrediction`
-- :func:`compute_typical_complexity` — full ensemble -> prediction
+- :func:`compute_typical_field_marginal_complexity` — full ensemble ->
+  prediction over leaf-marginal field configurations (NOT proof-space;
+  see D14 / EXTENSIONS).
+- :func:`compute_typical_complexity` — deprecated alias kept for
+  backward compatibility; emits ``DeprecationWarning``.
 - :func:`predict_proof_difficulty` — theorem + solved corpus -> scalar
 """
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass, field
 from typing import Iterable, Sequence
 
@@ -124,6 +153,7 @@ __all__ = [
     "ComplexityPrediction",
     "DEFAULT_REPLICA_N_GRID",
     "DEFAULT_INVERSE_TEMP",
+    "compute_typical_field_marginal_complexity",
     "compute_typical_complexity",
     "predict_proof_difficulty",
     "instance_partition_function",
@@ -362,15 +392,23 @@ def _difficulty_score(typical_log_z: float, log_z_std: float) -> float:
     return float(max(0.0, -typical_log_z) + max(0.0, log_z_std))
 
 
-def compute_typical_complexity(
+def compute_typical_field_marginal_complexity(
     problem_ensemble: Iterable[Node | str],
     *,
     beta: float = DEFAULT_INVERSE_TEMP,
     n_grid: Sequence[int] = DEFAULT_REPLICA_N_GRID,
 ) -> ComplexityPrediction:
-    """Predict typical-case complexity over a QPCN problem ensemble.
+    """Typical free energy of the leaf-marginal field distribution.
 
-    Implements the §12.7 driver:
+    HONESTY NOTE (D14): this is NOT the spec §12.7 proof-space
+    partition function. The per-instance Z here is built from a
+    generic ``FieldSpecies`` number-operator Hamiltonian against
+    each leaf's reduced marginal — a structural property of the
+    substrate encoding. The genuine proof-space replica trick over
+    ``Z = sum_{proofs} exp(-beta * worldline_pi_action(proof))``
+    is tracked in ``EXTENSIONS.md``.
+
+    Implements the §12.7-shaped driver at the leaf-marginal level:
       1. Encode each theorem to a MERA via ``encode_mera(parse(...))``.
       2. Read the operator-algebraic per-instance ``Z`` via
          :func:`instance_partition_function`.
@@ -489,6 +527,34 @@ def compute_typical_complexity(
     )
 
 
+def compute_typical_complexity(
+    problem_ensemble: Iterable[Node | str],
+    *,
+    beta: float = DEFAULT_INVERSE_TEMP,
+    n_grid: Sequence[int] = DEFAULT_REPLICA_N_GRID,
+) -> ComplexityPrediction:
+    """Deprecated alias for :func:`compute_typical_field_marginal_complexity`.
+
+    Kept so the §12.7 review-polish rename (D14) does not break the
+    existing call sites. The honest name reflects what the routine
+    actually computes (typical free energy of the leaf-marginal field
+    distribution), NOT the spec's proof-space partition function.
+    """
+    warnings.warn(
+        "compute_typical_complexity is deprecated (D14): the routine "
+        "computes typical free energy of the leaf-marginal field "
+        "distribution, NOT the §12.7 proof-space partition function. "
+        "Use compute_typical_field_marginal_complexity for the honest "
+        "name; see EXTENSIONS.md for the genuine proof-space "
+        "implementation roadmap.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return compute_typical_field_marginal_complexity(
+        problem_ensemble, beta=beta, n_grid=n_grid
+    )
+
+
 def predict_proof_difficulty(
     theorem: Node | str,
     similar_solved_corpus: Iterable[Node | str],
@@ -522,7 +588,7 @@ def predict_proof_difficulty(
     """
     ensemble: list[Node | str] = [theorem]
     ensemble.extend(similar_solved_corpus)
-    prediction = compute_typical_complexity(
+    prediction = compute_typical_field_marginal_complexity(
         ensemble, beta=beta, n_grid=n_grid
     )
     return prediction.difficulty

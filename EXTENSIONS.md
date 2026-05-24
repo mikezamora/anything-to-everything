@@ -1221,3 +1221,35 @@ already perf-optimized through the M3 perf path
 - Unblocks: §12.10 acceptance — programs compile to shorter MERAs while
   preserving Wilson signatures + converging in DPT-event-free
   trajectories.
+
+## Missing dependency: §12.12 full a-priori complexity bound
+
+- Where: `src/qft_pcn/composition/quantum_extremal_surface.py` ships
+  `rank_completed_proofs_by_qes_area` (renamed from
+  `find_minimum_complexity_proof` per D16) — post-hoc QES ranking.
+  Plus `compute_qes_lower_bound` for a-priori bound on the theorem
+  encoding's QES.
+- Need: tight a-priori bound = exact minimum-complexity proof MERA's
+  QES area, computed from theorem state alone. Currently the lower
+  bound is loose (theorem's bulk QES); the exact minimum requires
+  variational optimization over all candidate proof MERA topologies.
+- Workaround: post-hoc ranking + loose lower bound; spec acceptance
+  ("rule out proofs before search") satisfied by the lower bound,
+  though it may be slack.
+- Unblocks: §12.12 tight bound — minimize over proof-MERA topologies
+  matching the theorem encoding.
+
+## Missing dependency: proper `tier` field on `Lemma` (deferred from D19)
+
+- Where: `src/qft_pcn/composition/lemma_library_adapter.py` (tier_of_callable
+  / `_tiers`); `src/qft_pcn/composition/wake_sleep.py:150-156` (TODO marker)
+- Need: a first-class `tier: Literal["core","dynamic"]` field on `Lemma`
+  so the adapter does not need a sidecar `_tiers` dict and so §3.3
+  core-immunity is enforceable from the persisted record itself.
+- Workaround: `LemmaLibraryAdapter._tiers` is populated explicitly by the
+  orchestrator on register/replace. `tier_of` consults that map (or the
+  optional `tier_of_callable` override) and defaults to `"dynamic"`.
+  `use_log` is deliberately NOT used as a tier signal — it carries
+  provenance plus `"replace:{old_id}"` markers and would misclassify
+  subsumed primitives as "core".
+- Unblocks: removing the sidecar tier map and the wake_sleep TODO.
