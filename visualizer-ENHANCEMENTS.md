@@ -1,100 +1,153 @@
-# Visualizer — Enhancements
+# Visualizer Enhancements
 
-Refreshed 2026-05-23 after the PCN + narrative + DSL plan landed. Existing
-entries E-1 … E-18 from the prior pass remain accurate; new entries E-19 …
-E-30 cover surface area that did not exist when the previous list was
-written.
+**Audit date**: 2026-05-23
+**Audit scope**: post Learn (19 articles) + Training route + tabbed
+`ExplainerPane` expansion. Refreshed; prior entries E-1 … E-30 remain accurate
+where the underlying code did not change. New entries E-31 … E-37 cover the
+Learn/Training/tabbed-explainer surface specifically.
 
-## E-1: Surface a true free-energy time series, not just `mean_abs_ricci`
-The manifold snapshot honestly notes "a true free energy needs an observation" and falls back to `mean(|R|)`. `snapshot_pcn_dynamics` now exposes `total_free_energy` and per-layer F — wire this scalar into the Manifold panel's MetricsStrip too so the geometric and dynamical views share one objective.
+---
 
-## E-2: Add a "stress-energy → metric" causal overlay on the Manifold panel
-§3.2 (`dh_μν/dt = κ T_μν[E] − γ h_μν`) makes the metric *causally driven* by error stress-energy. With `snapshot_pcn_coupling.mean_abs_stress_energy` already available, render a small `T_μν[E]` inset next to `h_μν` on the Manifold panel with an arrow hinting at the sourcing relationship.
+## E-31 — Strengths the post-expansion viz now nails
 
-## E-3: Render per-bond truncation error history on the MPS panel
-`evolution.trotter_step` returns the per-step truncation error (§3.3.5 / §4.7.4). Capturing and surfacing it on the MPS panel as a faded band overlaid on the entropy curve would make the panel a real "is χ_max too small?" diagnostic.
+- **Tabbed ExplainerPane is genuinely textbook-grade.** All 13 layers carry
+  five tabs (Overview / Math / Worked Example / Training Dynamics / Watch);
+  every worked example is hand-computable from the setup; pathology entries
+  read like a debugging FAQ rather than boilerplate.
+- **Worked-example arithmetic is honest.** §1.3 (F = 0.0134), §3.3
+  (g_ab → 0.4976), §4.3 (⟨H⟩ = −0.197 after one Trotter step) all check out
+  symbolically and numerically. This is what makes the Learn route trustable
+  as a teaching artefact rather than a decorative gloss.
+- **Mera-relax explainer carries the §10.10 invariant correctly.** The
+  binder-witness `forall_protected_leaves` is named, sourced
+  (`mera_encoder:forall_protected_leaves`), and tied to the failure mode that
+  matters ("AST text loses 'forall'" → frozen_leaves not threaded). This is
+  the model for how every invariant-bearing panel should explain itself.
+- **Interpreter heuristics are tiered.** `manifold` thresholds at 0.4 /
+  0.02 produce different sentences; `logic` thresholds at 0.05; `multifield`
+  at 0.5 / 0.02. The thresholds are not arbitrary — they match the regimes
+  the matching panels' tooltips talk about.
+- **EQUATIONS role palette is internally consistent.** A reader who learns
+  the six-colour key (input / param-learn / param-const / output / state /
+  observable) on the first equation can decode the rest without re-reading.
 
-## E-4: Add a real-time vs imaginary-time toggle indicator
-The QPCN does both inside one `observe` call (§4.7.5); the viz never tells the user which mode produced the current frame. A small chip ("τ-step 3 of 4, dt_imag = 0.05") would make the dynamics legible.
+---
 
-## E-5: Per-term residual breakdown for the Logic panel (delivered)
-Already shipped in D-4 / `snapshot_logic.residuals`; the LogicPanel colours each term by residual intensity. Promote the `lambda_*` legend into a real "constraint debugger" table that lists rule_id / site / residual sorted descending — same pattern the MeraRelaxPanel uses for its 360-term enumeration. Directly delivers §8.2 + §10.6.
+## E-32 — Article cross-references that would deepen the textbook
 
-## E-6: Live entanglement-entropy → log(χ) saturation badge
-The MPS panel draws the `log χ` ceiling but doesn't summarize how close the system is. A scalar `max(S(bond) / log χ_bond)` plus a coloured chip at > 0.9 would tell the user "bond dimension is your bottleneck now" — a tunable the architecture flags repeatedly (§2.3 / §3.3.3 / §10.7).
+- **foundations-variational-fe → fusion-qpcn.** §1.3 derives F for a Gaussian
+  PCN site; §4.3 derives ⟨H⟩ for a single qubit. Articulating that ⟨H⟩
+  *plays the role of* F on the quantum side (architecture §3.4 correspondence
+  table) would let a reader carry the "one objective, many substrates"
+  intuition from PCN → QPCN. Currently §1.3 only forward-refs §4.2.
+- **qft-mps → fusion-logic.** The "binder = bond entanglement" claim in
+  §4.4 is the load-bearing reason MPS is the right belief carrier for logic.
+  §2.1 (MPS) currently treats bond dim as a generic entanglement budget;
+  one paragraph saying "in §4.4 we will see that this same budget is what
+  realises variable binding" would land the architecture's central
+  programming–quantum correspondence earlier.
+- **foundations-riemannian → fusion-manifold + fusion-pcn-coupling.** §1.4
+  introduces R as "a coordinate-invariant heatmap"; §4.1/§4.2 use R as the
+  geometric response to T_μν. A forward reference and a back-reference would
+  let a reader scrub the texts without losing thread.
+- **pcn-multifield → qft-hamiltonian.** The Yukawa coupling in §3.3 has the
+  same algebraic shape as `lambda_ab phi_a phi_b` in the QFT Hamiltonian
+  (architecture §3.3.4 H_1). The PCN article notes this once at the end;
+  the QFT-side Hamiltonian article does not reciprocate, missing a chance
+  to ground the "same gradient drives both" claim.
 
-## E-7: Species-aware MPS chain
-Both the MPS and Logic panels render the site chain monochrome. The Hamiltonian snapshot carries `species_dims` and `species`. Colour-coding each site by dominant species (or splitting the glyph into a per-species stack) would make multi-species runs (§3.3.2) immediately visible.
+---
 
-## E-8: Connect the QPCN panel to the Hamiltonian panel via a shared parameter view
-Today, learnable params are shown only in the QPCN panel. The Hamiltonian *is* those parameters — they should also be visible next to the Hamiltonian's species/coupling readout. Hovering one should highlight the other.
+## E-33 — Equations that could enrich existing articles
 
-## E-9: Goal-graph / hierarchical composition view
-§10.10 / §11.2 describe a DAG of child QPCN runs. The viz currently shows only a single run. A new panel listing parent/child runs (read from the dispatcher's output) with edges and per-node residual energy would surface §10.8-§10.10 the moment the underlying machinery emits it. The bridge panel is the natural place to graft this on.
+- **`metric-source-rate` (new)**: `dh_μν/dt = κ_R T_μν[E] − γ h_μν` is the
+  rate equation the §4.1 / §4.2 worked examples use, but it is not in
+  `EQUATIONS`. Registering it would let `fusion-manifold` and
+  `fusion-pcn-coupling` link to a typed equation card instead of inlining
+  the formula in prose.
+- **`pcn-flow` (new)**: `dPhi/dt = (J_g)^T (Pi E) + D Δ_g Phi + top_down`
+  (architecture §3.1) is the master PCN flow rule. Currently
+  `pcn-dynamics.tsx` describes it in prose but cites only
+  `free-energy-functional`. A dedicated equation card with role-coloured
+  Φ / E / Π / D would tie the PCN article to the explainer palette.
+- **`stress-energy` (new)**: `T_μν[E] = ∂_μ E ∂_ν E − ½ g_μν |∂E|²`
+  (architecture §3.2) is invoked by `fusion-pcn-coupling.tsx` step 1 of
+  the worked example. Registering it would let the §1.4 (Riemannian)
+  article forward-reference the actual source term rather than describing
+  it abstractly.
+- **`mps-canonical-form` (new)**: an entry showing the mixed canonical
+  decomposition `|ψ⟩ = (left-iso) S (right-iso)` would underpin three
+  separate places that currently talk about canonical form informally
+  (`qft-mps`, `qft-mera`, `fusion-bridge`).
 
-## E-10: Lemma library browser
-§10.8 (lemma promotion) describes a persistent store of `(MPS tensors, proposition_type, derivation_metadata)`. A small panel listing registered lemmas with their type signatures and one-click "clamp into current run" would make compounding capability visible.
+---
 
-## E-11: Page-curve overlay enrichment
-The MPS explainer mentions the Page curve but the panel draws only `log χ`. Add the true `S_page(L) = log d · min(L, N−L) − ½ · 1[L=N/2]` so the user can see how close the state is to maximally entangled.
+## E-34 — Interpreter heuristics that could sharpen
 
-## E-12: KaTeX/explainer fact-check pass
-Each panel's `EXPLAINERS` entry should cite a *specific* anchor (e.g. `#33-quantum-field-theory-primitives`) instead of the generic top-of-document link.
+- **`mps` interpreter**: currently reports χ_max + total entropy. Adding a
+  "saturated bond count" (number of bonds at χ_max) would surface the
+  pathology the explainer already documents ("Every bond pinned at χ_max
+  with a heavy tail").
+- **`hamiltonian` interpreter**: ignores step. With access to a per-step
+  `frame.layer_state['top_term']`, it could call out which Hamiltonian
+  term carries the most ⟨H⟩ this frame — the missing "where is the
+  energy?" diagnostic.
+- **`pcn-dynamics` interpreter**: currently states only `total F`. The
+  explainer's per-layer F decomposition is the most informative diagnostic
+  (which layer is the bottleneck) and is shipped in the snapshot
+  (`per_layer_free_energy[l]`); the interpreter could surface the argmax-l.
+- **`vqc` interpreter**: static (n_qubits × n_layers + boilerplate). With
+  `theta_norm` or `theta_var` from the snapshot it could note when
+  training has visibly stalled (theta stationary).
+- **`bridge` interpreter**: reports only `trotter_steps`. Reporting
+  converged flag + final energy from `RunResult` would mirror the
+  `qpcn` interpreter and finally make the bridge panel diagnostic without
+  cross-referencing.
 
-## E-13: Curvature ξ control & coupling visible on the QPCN panel
-`H.curvature_xi` (§3.3.4 / §4.7.5) is the bidirectional manifold↔QFT switch — turning it off should noticeably change run dynamics. Expose it as a paused-mode slider with a spark line showing manifold→QPCN feedback strength (e.g., `corr(R, ⟨n⟩)`).
+---
 
-## E-14: Compare-mode for per-term residuals (logic + mera_relax)
-Compare-mode works for geometric panels but the LogicPanel and the new MeraRelaxPanel both ignore `baselineFrame`. A per-rule residual-delta column or stacked-bar (baseline vs current) view would make A/B comparison of e.g. different `λ_β` settings concretely useful.
+## E-35 — Citation hygiene that would prevent regression
 
-## E-15: Polish — accessible colour choices
-The diverging ramp on the manifold and the inferno scale on the Hamiltonian heatmap are not colourblind-safe. Adopt Viridis / Cividis (sequential) + ColorBrewer RdBu (diverging) and add legends with numeric extents.
+The deviations file lists three specific miscitations (D-13, D-14, D-16) and
+one systemic one (D-15). A lightweight enhancement to prevent regression:
 
-## E-16: Replay scrubbing across recorded runs
-`recorder.py` writes per-step frames; `runs.py` lists them. A scrubber + per-step diff between any two recorded runs (not just live vs single baseline) supports §14's iterate-and-compare workflow.
+- Introduce an `archAnchor` field in `ArticleSpec.citations` whose values
+  are validated at build time against a generated index of architecture-doc
+  section anchors. The current `label` strings are free-form, so drift
+  goes undetected until a human audit catches it.
+- Same idea for the explainer's `references` array.
 
-## E-17: Show the conservation-law signal
-§1.1 calls out conservation laws as the architecture's inductive-bias source. For any species with U(1)-like number conservation, plot `total ⟨N⟩ = Σ_k ⟨n_k⟩` over time — `occupations_n` is already in `snapshot_qpcn`, so the metric is one reduce away.
+---
 
-## E-18: Things the viz already does well (worth preserving)
-- Non-invasive snapshot extractors with defensive `_safe` semantics — recordings cannot perturb the simulation.
-- Compare-mode side-by-side for MERA (`mera-disk-active` / `mera-disk-baseline`) is a clean pattern other 3D panels should copy.
-- `MetricsStrip` cleanly factors scalar time series out of per-panel code.
-- The per-rule colour scheme in `LogicPanel.ruleColor` is consistent and worth extending across panels.
-- KaTeX-rendered formulas in the explainer (when correct) anchor each panel to a piece of math.
+## E-36 — Learn-route UX polish
 
-## E-19: Intro panels could embed live mini-readouts (new)
-`IntroQftPanel` / `IntroPcnPanel` / `IntroQpcnPanel` are static prose right now. Each section has at least one obvious "section health" scalar (mean bond χ, total F, mean |T|↔|R| ratio). Surfacing those next to the section tagline would make the narrative pages actually live during a run, not just a static intro screen.
+- **Contents tree**: currently linear. A two-pane "outline | reading list"
+  split (textbook order on the left, suggested per-panel sequence on the
+  right) would let users approach the Learn route either way without
+  re-reading the orientation prose.
+- **Prerequisite arrows**: `qft-mps` declares prereqs
+  `[foundations-hilbert-operators, foundations-vectors-tensors]`, but few
+  others do. Filling these in (and rendering them as breadcrumb chips at
+  the top of each article) would make the textbook ordering self-documenting.
+- **Training narrative**: the Training route walks the per-frame loop
+  step by step. One observation: it is currently a single long page; a
+  per-step expand/collapse with the matching snapshot field highlighted
+  in the panel ribbon below would make it usable as a live debugger
+  rather than only as a teaching artefact.
+- **Equation hover gloss**: clicking an equation card opens the symbol
+  glosses; hovering currently does nothing. A hover preview (the gloss
+  string + the role-colour swatch) would shorten the loop for readers
+  cross-referencing between articles.
 
-## E-20: Per-section MetricsStrip in the intro panels (new)
-Once E-19 is in, a 3-line strip (one trace per section) would let a user compare "is the QPCN converging faster than the PCN is settling?" from a single screen — exactly the cross-substrate observation the architecture's "bidirectional coupling" claim (§3.4) is trying to demonstrate.
+---
 
-## E-21: PcnFieldsPanel — render the full hierarchy as a stacked column (new)
-The current per-layer card row is good. An extra "stacked column" mode (all layers' Φ rendered as transparent contour planes stacked along z) would visually deliver §2.1's claim that the hierarchy *is* a vertical hierarchy of beliefs sharing one manifold.
+## E-37 — Things the architecture itself could clarify (out of viz scope but worth flagging)
 
-## E-22: PcnDynamicsPanel — surface free-energy *gradient* per layer (new)
-The current panel shows F, ‖E‖, mean Π per layer. Adding the per-layer step-to-step `ΔF / Δt` (one bar per layer) would isolate which layer is currently learning vs which has converged — §3.1's gradient-flow story made visible.
-
-## E-23: PcnCouplingPanel — animate the two arrows with a phase offset (new)
-The current static-width arrows are good. Adding a slow pulsation tied to `corr(T_μν, h_μν)` (with `T_μν` peaks leading by one frame) would make the *causal direction* of the bidirectional bridge visible — currently the user can tell magnitudes but not which side is leading.
-
-## E-24: DslEditor — schema-driven autocompletion (new)
-`@monaco-editor/react` + the served `/dsl/schema` are both wired. Hooking Monaco's JSON schema validation to the served schema (via `monaco.languages.json.jsonDefaults.setDiagnosticsOptions`) would give the LLM operator real autocomplete and inline error squiggles — turning the editor into a real DSL workbench (§9.2).
-
-## E-25: ChatPane — render the raw LLM text and DSL artifact side by side (new)
-Beyond fixing D-9 (showing `result.raw`), the artifact (parsed DSL) and the raw text should appear side by side in each assistant turn. The user can then compare the LLM's NL explanation against the structured DSL — the §9.1 division of labour made concrete.
-
-## E-26: SteppedFlowBar — show the "DSL → MPS → Hamiltonian → ⟨H⟩ → NL" pipeline as a 5-node diagram (new)
-The current three-button bar is functional but doesn't communicate the §9.3 operational flow. A 5-node mini-diagram with the active step highlighted and arrows lighting up as each step completes would teach the architecture as it runs.
-
-## E-27: RunOutputPane — frame-history scrubber (new)
-The pane shows only the last frame. A small slider letting the user scrub through the recorded `run.frames` array would let them watch the relaxation in the output pane without leaving the DSL route.
-
-## E-28: MeraRelaxPanel — render the ∀-protected leaves on a leaf-strip (new)
-The panel lists protected-leaf *indices* as a comma-separated string. A leaf-strip (one cell per leaf, protected ones outlined green) would make the §10.10 "binder stays bitwise stable" invariant immediately visible at a glance — directly satisfying the architectural-soul (§1.1) display requirement.
-
-## E-29: BridgePanel — surface per-observable measurements and residual energies (new)
-The bridge `RunResult` has `observables` and per-constraint residual energies (§9.2's last bullet). Today the panel only shows total energy + convergence flag. Add a small table of `{ observable name, target, measured, residual }` so the bridge panel actually shows the DSL's promised outputs.
-
-## E-30: Section reassignment after D-7 fix (new)
-After D-7 lands, `mera_relax` and `bridge` will join the QPCN section. Reorder the section's layer list so the narrative flows: `qpcn → mps/hamiltonian context → mera_relax (composition, §10.10) → bridge (LLM↔QPCN runtime, §10.5) → logic (the calculus this all encodes)`. This mirrors §11.2's bottom-up mechanism list and turns the rail into a teaching path.
+- The architecture's coupling-descent rule at §4.5 reads
+  `dg_ij/dt = -∂F/∂g_ij = -⟨Phi_i Phi_j⟩_M / Vol(M)`, which (with a
+  +g·Phi_i Phi_j convention in F) gives g shrinking on correlated fields
+  — opposite to the prose claim "Correlated fields grow their coupling."
+  The §3.3 article correctly resolves this by noting the sign convention
+  in `multifield.py` puts g into F with a minus sign, but the architecture
+  doc itself does not. A single-sentence fix at architecture §4.5 would
+  remove the apparent contradiction.
