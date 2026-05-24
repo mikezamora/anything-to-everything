@@ -72,8 +72,9 @@ def evolve_for_search(state, hamiltonian, *, runtime: str, steps: int,
     Raises
     ------
     ValueError  if runtime is not 'mps' or 'mera'.
-    NotImplementedError  if runtime='mera' but state is not a MERA instance
-        (the bridge does not coerce MPS to MERA; see EXTENSIONS.md).
+    NotImplementedError  if runtime='mera' and the provided state is neither
+        a MERA instance nor a *product* MPS coercible via MERA.from_mps
+        (entangled MPS coercion is out of scope; see EXTENSIONS.md W4.T1).
     """
     if runtime == "mps":
         from src.qft_pcn.qft.evolution import evolve
@@ -83,11 +84,19 @@ def evolve_for_search(state, hamiltonian, *, runtime: str, steps: int,
     if runtime == "mera":
         from src.qft_pcn.qft.mera import MERA
         if not isinstance(state, MERA):
-            raise NotImplementedError(
-                "MERA evolution requires a MERA state; received "
-                f"{type(state).__name__!r}. The bridge does not coerce MPS to "
-                "MERA automatically; see EXTENSIONS.md (bridge MERA routing)."
-            )
+            # W4.T1 routing: coerce a product MPS initial state to MERA via
+            # MERA.from_mps (raises NotImplementedError on entangled MPS).
+            # This re-enables MERA-routed presets (length-synthesis,
+            # peano_zero_axiom, list-reverse-length) without forcing every
+            # caller to build the MERA by hand.
+            if isinstance(state, MPS):
+                state = MERA.from_mps(state)
+            else:
+                raise NotImplementedError(
+                    "MERA evolution requires a MERA or product MPS state; "
+                    f"received {type(state).__name__!r}. See EXTENSIONS.md "
+                    "W4.T1 (bridge MERA routing)."
+                )
         from src.qft_pcn.qft.mera_evolution import evolve as mera_evolve
         mera_evolve(state, hamiltonian, dt=dt, steps=steps,
                     imaginary=imaginary, chi_max=chi_max)

@@ -1419,22 +1419,19 @@ already perf-optimized through the M3 perf path
 
 ## DSL constraint gaps
 
-### Bridge MERA evolution routing (W4.T1)
+### Bridge MERA evolution routing (W4.T1) — RESOLVED
 
-- **Status:** raises `NotImplementedError` when `search.runtime: "mera"` is
-  given an MPS state. The dispatch logic is wired in
-  `src/qft_pcn/bridge/runtime/evolution.py::evolve_for_search`; the
-  `qft.mera_evolution.evolve` substrate itself exists and is correct.
-- **Needed:** a coercion path (or explicit MERA-state construction) in the
-  bridge so that callers using flat-MPS representations can opt into MERA
-  evolution for recursive synthesis tasks (§10.4). Concretely:
-  construct a `MERA.from_mps(state)` initializer, or expose a
-  `build_mera_initial_state` factory in the bridge so `evolve_for_search`
-  receives a `MERA` instance when `runtime="mera"`.
-- **Affected presets:** `length-synthesis` (defaults to mera),
-  `peano_zero_axiom` (mera), `list-reverse-length`.
-- **Workaround (in tree):** `evolve_for_search(runtime="mera")` raises
-  `NotImplementedError` with a clear message rather than silently using MPS.
+- **Status:** RESOLVED. `MERA.from_mps(mps)` (qft/mera.py) coerces a product
+  MPS to a MERA on the same leaves; `evolve_for_search`
+  (bridge/runtime/evolution.py) auto-coerces MPS initial states when
+  `runtime="mera"` and hands the result to `qft.mera_evolution.evolve`.
+  Pinned by `src/qft_pcn/bridge/tests/test_evolve_for_search_mera.py`.
+- **Out-of-scope (loud-fail):** entangled MPS (any bond > 1) raises
+  `NotImplementedError` from `MERA.from_mps` rather than silently dropping
+  entanglement — non-product initial states must use `encode_mera` or
+  `MERA.from_product`/`from_term_superposition` directly.
+- **Affected presets (now unblocked):** `length-synthesis` (defaults to
+  mera), `peano_zero_axiom` (mera), `list-reverse-length`.
 
 ### §13.5 deeper volume-law refusal substrate (C2 follow-on)
 

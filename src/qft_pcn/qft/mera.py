@@ -515,6 +515,38 @@ class MERA:
         return out
 
     @classmethod
+    def from_mps(cls, mps, chi_layer: int = 16) -> "MERA":
+        """Coerce a *product* MPS to a MERA on the same N leaves.
+
+        Used by the bridge (`evolve_for_search` with `runtime="mera"`) to lift
+        flat-MPS initial states into the hierarchical substrate without
+        forcing every caller to build a MERA by hand. The coercion is exact
+        when each MPS tensor has trivial bond dimensions (left == right == 1)
+        -- i.e. the MPS factorizes as a product state. In that regime each
+        tensor's physical slice IS the per-leaf state vector and the result
+        is equivalent to ``MERA.from_product(...)`` on those vectors.
+
+        For an entangled MPS (any bond > 1) coercion to a binary MERA on the
+        same leaves is not unique and not free; we honest-fail with
+        NotImplementedError rather than silently lose entanglement.
+        """
+        tensors = mps.tensors
+        N = len(tensors)
+        if N <= 0 or (N & (N - 1)) != 0:
+            raise InvalidLayerCount(N=N)
+        for k, t in enumerate(tensors):
+            if t.shape[0] != 1 or t.shape[2] != 1:
+                raise NotImplementedError(
+                    f"MERA.from_mps: site {k} has bond dims "
+                    f"({t.shape[0]}, {t.shape[2]}); coercion of entangled "
+                    "MPS to MERA is not implemented. Build the MERA "
+                    "directly (e.g. encode_mera or MERA.from_product) for "
+                    "non-product initial states."
+                )
+        per_leaf = [t[0, :, 0].astype(complex) for t in tensors]
+        return cls.from_product(per_leaf, chi_layer=chi_layer)
+
+    @classmethod
     def number_states(cls, occupations: list[int], d: int,
                       chi_layer: int = 16) -> "MERA":
         """Product MERA in the Fock |n_0, n_1, ..., n_{N-1}> basis."""
