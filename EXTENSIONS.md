@@ -378,23 +378,32 @@ it unblocks.
   now has the canonical leaf tuple to consume.
   Commit: 00b1d82.
 
-## Missing dependency: non-contiguous decomposer demonstrator absent
+## RESOLVED: non-contiguous decomposer demonstrator absent
 
-- Where: `src/qft_pcn/composition/goal_graph.py:build_goal_graph` only
-  seeds the root with `parent_leaves=()`; the user-supplied `decomposer`
-  callable is the surface that would publish non-contiguous tuples
-  (e.g. species-permuted lemma footprints). `revision.py:97` LLM-path
-  hand-rolls `(i,)` per sibling -- a placeholder, not a real
-  non-contiguous decomposer.
-- Need: an in-tree non-contiguous decomposer demonstrator that publishes
-  e.g. `(2, 5, 9)` for a 3-site lemma footprint and proves the
-  integrator clamps without classical rewrite.
-- Workaround: `test_subgoal_parent_leaves.py::test_integrator_passes_non_contiguous_window_to_promoter`
-  exercises the integrator API end-to-end via a stub Promoter -- pins the
-  contract but not a real decomposer. Production decomposers will land
-  with J-Task follow-on (subtree miner + clustering).
-- Unblocks: §5.2/§5.6 surface exercised in production code (today only
-  exercised via tests).
+- Status: RESOLVED.
+  `src/qft_pcn/composition/demo_non_contiguous_decomposer.py` is the
+  in-tree non-contiguous decomposer demonstrator. ``NonContiguousDecomposer``
+  publishes a species-aware, block-reversed permutation of the §10.10
+  composite's 32-leaf footprint -- the tuple is NOT strictly increasing
+  (block 5 lands before block 0), so the "really non-contiguous" oracle
+  bites. ``run_demo`` drives the real ``solve_goal_graph`` end-to-end
+  through the §10.10 substrate path, and ``pretty_print_demo`` surfaces
+  the integrator's verdict plus the §1.3 locality oracle for a sentinel
+  leaf appended OUTSIDE the touched union.
+- Pinned by:
+  `src/qft_pcn/composition/tests/test_non_contiguous_decomposer.py`
+  -- `test_non_contiguous_decomposer_clamps_correctly` asserts
+  ``solved=True`` (the §6.3 gated path cleared on the non-isomorphic
+  decomposition), the published tuple equals the block-reversed
+  permutation verbatim AND is not strictly increasing, and the
+  sentinel-outside-the-union leaf is bitwise unchanged.
+- Anti-shortcut: the §5.2a binding is the host-leaf TUPLE, not a
+  classical `site->index` dict lookup -- the integrator passes the
+  tuple verbatim through `_resolve_host_leaves` into
+  `Promoter.compile_constraint(... leaves=[...])` (§1.1).
+- Unblocks: §5.2/§5.6 surface now exercised in production code; future
+  J-Task (subtree miner + clustering) decomposers have a working
+  reference shape to follow.
 
 ## RESOLVED: orchestrator does not own a parent MERA
 
