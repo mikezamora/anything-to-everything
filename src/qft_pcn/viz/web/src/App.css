@@ -300,3 +300,15 @@
 .frame-interpreter-cite { color: #6cd0ff; font-size: 11px;
                           text-decoration: none; }
 .frame-interpreter-cite:hover { text-decoration: underline; }
+
+.explainer-tabs { display: flex; gap: 2px; padding: 4px 8px;
+                  border-bottom: 1px solid #1c2233; flex-wrap: wrap; }
+.explainer-tab { background: #161b29; color: #c8d0e0;
+                 border: 1px solid #2a3450; border-radius: 4px;
+                 padding: 2px 8px; font-size: 11px; cursor: pointer; }
+.explainer-tab.active { background: #2b3a6b; }
+.explainer-empty { color: #7e8aa3; font-style: italic; }
+.explainer-worked-example ol { padding-left: 20px; }
+.explainer-worked-example li { margin-bottom: 8px; }
+.explainer-worked-result { color: #9aedc1; font-size: 12px; margin-top: 4px; }
+.explainer-worked-eq { margin: 4px 0; }
