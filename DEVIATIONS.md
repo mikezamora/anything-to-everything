@@ -54,17 +54,21 @@ already catalogued in `EXTENSIONS.md` are not re-listed here.
   `provisional_energy_fn=`. Tests cover the drop / promote / mid-band /
   non-provisional-untouched / resolver-returns-None branches.
 
-### D4 — Orchestrator does not plumb LLM reviser; principled path unreachable
-- Location: `src/qft_pcn/composition/orchestrator.py:325` (calls
-  `revise(node, reviser=reviser, cache=cache)`),
-  `src/qft_pcn/composition/revision.py:88-100` (LLM branch)
+### D4 — Orchestrator does not plumb LLM reviser; principled path unreachable — **RESOLVED**
+- Location: `src/qft_pcn/composition/orchestrator.py::solve_goal_graph`
+  (signature now carries `llm_reviser=None`; forwarded at the
+  `revise(...)` call site inside the revision loop),
+  `src/qft_pcn/composition/revision.py` (LLM branch unchanged)
 - Spec: §10, §6.5
-- Issue: `solve_goal_graph` never forwards an `llm=` keyword to
-  `revise`; the LLM branch in `revision.revise` is dead code from the
-  orchestrator's vantage. No `llm:` parameter exists on
-  `solve_goal_graph`.
-- Fix scope: small — add `llm: LLMReviser | None = None` parameter to
-  `solve_goal_graph` and forward to `revise`.
+- Resolution: `solve_goal_graph` now accepts an optional
+  `llm_reviser` kwarg conforming to the `revision.LLMReviser` Protocol
+  and passes it through as `revise(node, llm=llm_reviser, ...)`. When
+  `None` (default) the deterministic `HeuristicReviser` catalogue
+  drives revision exactly as before; when supplied, the LLM oracle is
+  consulted first per spec §10. Unit test in
+  `src/qft_pcn/composition/tests/test_revision.py`
+  (`test_llm_reviser_branch_fires_when_supplied_via_orchestrator`)
+  pins the orchestrator signature and the LLM-branch wiring.
 - Audit source: §6-§9
 
 ### D5 — §6.3 `_ascend_one_layer` silently drops non-identity inter-pair disentanglers
@@ -89,15 +93,22 @@ already catalogued in `EXTENSIONS.md` are not re-listed here.
 
 ## OPERATIONAL
 
-### D6 — §9.5 monotonicity observed but not enforced
+### D6 — §9.5 monotonicity observed but not enforced — **RESOLVED**
 - Location: `src/qft_pcn/composition/orchestrator.py::solve_goal_graph`
+  + helper `src/qft_pcn/composition/goal_graph.py::make_monotonicity_tracker`
 - Spec: §9.5, §13.5
 - Issue: Spec: "K asserts this monotone decrease... a non-monotone step
   is a bug in the integrator." Orchestrator emits `F_hierarchy` via
   optional `on_step` callback but has no in-line assertion or refusal
   when a step increases F. Premature-clamp inflations pass silently.
-- Fix scope: small — track previous F and raise (or refuse the
-  integration) when new value strictly exceeds it beyond tolerance.
+- Resolution: `make_monotonicity_tracker(strict=True)` raises
+  `MonotonicityViolation` (a `GoalGraphError` subclass) when
+  `F_new > F_prev + 1e-6`. `solve_goal_graph` wraps the caller's
+  `on_step` in this tracker by default; the new `enforce_monotonicity`
+  parameter (default `True`) lets production callers downgrade to
+  record-only for diagnostic replay while preserving the user callback.
+  Tests `test_free_energy_assertion_fires_on_violation` and
+  `test_free_energy_assertion_disabled_on_strict_false` pin both modes.
 - Audit source: §6-§9
 
 ### D7 — `_frontier_priority` is structural fan-out proxy, not §5.3 precision-weighted schedule — **RESOLVED**
@@ -113,34 +124,47 @@ already catalogued in `EXTENSIONS.md` are not re-listed here.
   and use it in `sorted(..., key=...)`.
 - Audit source: §6-§9, §10 (dual-flagged)
 
-### D8 — `revision.HeuristicReviser` emits content-identical sub-goals modulo metadata
-- Location: `src/qft_pcn/composition/revision.py` (catalogue entries
-  `swap_induction_variable`, `split_conjunction_other_way`,
-  `strengthen_induction_hypothesis`)
+### D8 — `revision.HeuristicReviser` emits content-identical sub-goals modulo metadata — **RESOLVED**
+- Location: `src/qft_pcn/composition/revision.py` (`HeuristicReviser._build`)
 - Spec: §6.5
-- Issue: Three catalogue entries produce decompositions differing only
-  by a `spec["revision_strategy"]` string. Downstream compiler is not
-  obliged to read that field. `FailedDecompositionCache.is_failed`
-  returns False because goal_id changed, but the child run will fail
-  identically. The cache cannot guard.
-- Fix scope: medium — catalogue must produce decompositions whose
-  `dsl_spec` content differs in compilable structure (sub-goal count,
-  boundary).
+- Resolution: Each catalogue entry now produces a SUBSTRATE-distinct
+  decomposition rather than a metadata tag swap:
+  * `swap_induction_variable` — single child, same footprint, with an
+    explicit `induction_axis=flipped` flag mirrored into the
+    `boundary` so the downstream compiler reads a different problem.
+  * `split_conjunction_other_way` — TWO children covering disjoint
+    halves of `node.goal.parent_leaves` (sub-goal count is a
+    structural, compiler-visible difference). Skipped when the
+    parent footprint has fewer than 2 leaves.
+  * `strengthen_induction_hypothesis` — single child whose
+    `parent_leaves` is widened by one fresh leaf (footprint extension
+    is substrate-level). Skipped on empty footprints.
+  When none of the remaining catalogue entries are substrate-feasible
+  for the failing node, `HeuristicReviser.decompose` returns `[]` and
+  `revise(...)` lifts that empty result so the orchestrator surfaces
+  `RevisionExhausted` — no looping on identical work. Unit tests
+  (`test_heuristic_reviser_returns_substrate_different_decompositions`,
+  `test_heuristic_reviser_signals_exhausted_when_no_variation_possible`)
+  pin the new behaviour.
 - Audit source: §6-§9
 
-### D9 — Quarantine flag respected at `ready` filter but not `all_solved` check
+### D9 — Quarantine flag respected at `ready` filter but not `all_solved` check — **RESOLVED**
 - Location: `src/qft_pcn/composition/orchestrator.py` (sets
-  `c.quarantined = True`; `all_solved` walks `node.children` at
-  `orchestrator.py:270-272`)
+  `c.quarantined = True`) + helper
+  `src/qft_pcn/composition/goal_graph.py::all_solved`
 - Spec: §6.6
-- Issue: Quarantined siblings are filtered from `ready` but counted in
-  `all_solved`, so parent immediately enters `PENDING_REVISION` and
-  revises away from partial progress. The §6.6 "quarantine + continue
-  exploring alternatives in parallel" behavior is not realized; no
-  parallel-alternative path exists.
-- Fix scope: medium — (a) treat quarantined siblings as out-of-band
-  failures that do not block parent completion when live siblings
-  cover the proof, or (b) document the simplification in EXTENSIONS.md.
+- Issue: Quarantined siblings were filtered from `ready` but counted in
+  the inline `all_solved` check, so parent immediately entered
+  `PENDING_REVISION` and revised away from partial progress.
+- Resolution: New `goal_graph.all_solved(node)` helper applies the same
+  `not c.quarantined` predicate used by `ready`. The orchestrator now
+  routes through this helper, and the `_JointResult` joint sums only
+  live (non-quarantined) children. An all-quarantined parent returns
+  `False` (no covering proof) so PENDING_REVISION still fires when no
+  live alternative exists. Tests `test_all_solved_skips_quarantined`,
+  `test_all_solved_false_when_live_child_unsolved`, and
+  `test_all_solved_false_when_all_children_quarantined` pin the
+  three cases.
 - Audit source: §6-§9
 
 ### D10 — `_bond_entanglement_of` silently degrades on any substrate exception
@@ -155,19 +179,26 @@ already catalogued in `EXTENSIONS.md` are not re-listed here.
   ValueError)` shape and re-raise everything else.
 - Audit source: §6-§9
 
-### D11 — §10.9 CONSOLIDATE step is incomplete: subsumes cached lemma instead of re-deriving
-- Location: `src/qft_pcn/composition/wake_sleep.py::_consolidate` (lines
-  120-165)
+### D11 — §10.9 CONSOLIDATE step is incomplete: subsumes cached lemma instead of re-deriving — RESOLVED
+- Location: `src/qft_pcn/composition/wake_sleep.py::_consolidate`
 - Spec: §10.9 (architecture lines 877-882)
 - Issue: Spec pseudocode: "FOR each |Ψ_i⟩ in library: IF
   can_be_expressed_using_new_primitives: replace with shorter
-  solution." Current code adds the entire cached lemma `sid` to
-  `stale_dynamic` and prunes via `library.prune` whenever one cluster
-  member matches a newly-promoted primitive's canonical density. No
+  solution." Prior code added the entire cached lemma `sid` to
+  `stale_dynamic` and pruned via `library.prune` whenever one cluster
+  member matched a newly-promoted primitive's canonical density. No
   `library.replace(...)` call; no replacement synthesized. Silently
-  destroys lemmas whose larger structure has not been replaced.
-- Fix scope: medium — synthesize a replacement MPS that uses the new
-  primitive, then `prune_redundant_lemmas`.
+  destroyed lemmas whose larger structure had not been replaced.
+- Resolution: `_consolidate` now synthesises a replacement
+  :class:`CanonicalPrimitive` ``L'`` from the matched sub-piece's RDM
+  (via `compute_canonical_form` on a single-member cluster), tags its
+  provenance with `derived_from:{sid}` and `uses_primitive:{prim_source}`
+  markers, and calls `library.replace(sid, L')` — which atomically
+  persists ``L'`` BEFORE pruning ``sid``. If `library.replace` raises,
+  ``sid`` is left in place (no orphan empty-library transition). New
+  test `test_consolidate_re_derives_before_pruning` asserts every
+  pruned sid has a recorded replacement carrying both provenance
+  markers.
 - Audit source: §10
 
 ### D12 — §12.3 topological_degeneracy: Betti number of binding graph is not the proof-homotopy count — RESOLVED

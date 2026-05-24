@@ -98,6 +98,70 @@ def test_loop_stops_after_quiescent_cycles():
     assert len(reports) <= 3
 
 
+def test_consolidate_re_derives_before_pruning():
+    """D11 (§10.9): when a cached parent lemma's sub-piece matches a
+    newly-promoted primitive, CONSOLIDATE must SAVE a replacement lemma
+    L' (using the new primitive as a sub-lemma) BEFORE pruning the
+    parent. The library must never pass through an orphan empty-on-the-
+    parent's-replacement state.
+    """
+    corpus = build_induction_corpus()
+    lib = FakeLemmaLibrary()
+
+    # Cycle 0: discover the induction primitive. The corpus is pre-loaded
+    # into the library's cached store so the subsequent cycle has cached
+    # parent lemmas to consolidate against the promoted primitive.
+    report = wake_sleep_cycle(lib, _problems(corpus),
+                              make_stub_solver({}), cycle_index=0)
+    assert len(report.promoted) == 1, "induction primitive should promote"
+
+    # The consolidation phase ran inside the cycle above: each cached
+    # induction lemma's sub-piece matches the promoted primitive, so all
+    # five sids should have been replaced -- never bare-pruned.
+    assert report.n_consolidated == report.n_pruned == 5, (
+        f"consolidate must replace every subsumed parent; got "
+        f"consolidated={report.n_consolidated} pruned={report.n_pruned}")
+
+    # (1) Library now holds a replacement lemma for each pruned sid.
+    #     FakeLemmaLibrary records replacements as (sid, L') tuples.
+    pruned_sids = {f"ind{i}" for i in range(5)}
+    replaced_sids = {sid for sid, _new in lib.replacements}
+    assert replaced_sids == pruned_sids, (
+        f"every pruned sid must have a recorded replacement; "
+        f"missing={pruned_sids - replaced_sids}")
+
+    # (2) Every replacement L' is a CanonicalPrimitive whose provenance
+    #     carries both the parent-derivation marker and the sub-lemma
+    #     uses-primitive marker -- the proof L' is shorter because it
+    #     delegates the bulk to the promoted primitive.
+    for sid, replacement in lib.replacements:
+        derived = [u for u in replacement.provenance.use_log
+                   if u.startswith("derived_from:")]
+        uses = [u for u in replacement.provenance.use_log
+                if u.startswith("uses_primitive:")]
+        assert derived == [f"derived_from:{sid}"], (
+            f"replacement for {sid} missing derived_from marker: "
+            f"{replacement.provenance.use_log}")
+        assert uses, (
+            f"replacement for {sid} missing uses_primitive marker: "
+            f"{replacement.provenance.use_log}")
+
+    # (3) No orphan empty-library transition: the parent sids are
+    #     pruned, but the registered_primitives list grew to include the
+    #     promoted primitive + one replacement per pruned sid (6 total).
+    assert len(lib.registered_primitives) == 1 + 5, (
+        f"expected promoted + 5 replacements in registered_primitives; "
+        f"got {len(lib.registered_primitives)}")
+
+    # (4) The parent sids are pruned from cached_solutions (post-replace
+    #     the orchestrator should see an empty cached-lemma view for
+    #     them on a subsequent cycle).
+    remaining_sids = {sid for _s, _m, sid in lib.cached_solutions()}
+    assert remaining_sids.isdisjoint(pruned_sids), (
+        f"pruned sids still surface in cached_solutions: "
+        f"{remaining_sids & pruned_sids}")
+
+
 def test_end_to_end_loop_against_real_library_adapter(tmp_path):
     """J-7 acceptance: the full wake-sleep loop runs against the REAL
     file-backed :class:`LemmaLibrary` (via :class:`LemmaLibraryAdapter`),
