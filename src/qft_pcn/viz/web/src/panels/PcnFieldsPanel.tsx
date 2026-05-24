@@ -11,12 +11,15 @@ import type { Frame } from '../lib/types';
 import { PanelShell } from './PanelShell';
 import { PanelToolbar } from './PanelToolbar';
 import { PanelReadouts } from './PanelReadouts';
-import { diverging, normGrid } from './common';
+import { diverging, normGrid, as2DGrid, type PhiLike } from './common';
 import { FrameInterpreter } from '../components/FrameInterpreter';
 
 type Grid = number[][];
 
-interface LayerState { phi?: Grid; E?: Grid; Pi?: Grid; channels?: number; }
+// `snapshot_pcn_fields` emits phi/E/Pi as 3D `(channels, Nx, Ny)` (Field.values
+// is shape (C, Nx, Ny) and `_grid` .tolist()s it). The heatmap needs 2D, so
+// the layer loop calls `as2DGrid` before handing it to <Heatmap>.
+interface LayerState { phi?: PhiLike; E?: PhiLike; Pi?: PhiLike; channels?: number; }
 interface PcnFieldsState { layers?: LayerState[]; step?: number; }
 
 function Heatmap({ grid, w = 90, h = 90 }: { grid: Grid; w?: number; h?: number }) {
@@ -37,10 +40,11 @@ function Heatmap({ grid, w = 90, h = 90 }: { grid: Grid; w?: number; h?: number 
   return <svg width={w} height={h}>{cells}</svg>;
 }
 
-function norm2(g?: Grid | null) {
-  if (!g) return 0;
+function norm2(g?: PhiLike) {
+  const grid = as2DGrid(g);
+  if (!grid) return 0;
   let s = 0;
-  for (const row of g) for (const v of row)
+  for (const row of grid) for (const v of row)
     if (Number.isFinite(v)) s += v * v;
   return Math.sqrt(s);
 }
@@ -58,7 +62,7 @@ export function PcnFieldsPanel({ frame, baselineFrame: _baselineFrame }: {
   const totalE = layers.reduce((a, l) => a + norm2(l.E), 0);
   const meanPi = layers.length
     ? layers.reduce((a, l) => {
-        const g = l.Pi ?? [];
+        const g = as2DGrid(l.Pi) ?? [];
         const flat = g.flat();
         return a + (flat.length ? flat.reduce((p, q) => p + q, 0) / flat.length : 0);
       }, 0) / layers.length
@@ -85,8 +89,9 @@ export function PcnFieldsPanel({ frame, baselineFrame: _baselineFrame }: {
       <FrameInterpreter layer="pcn-fields" />
       <div style={{ padding: 8, overflowY: 'auto' }}>
         {layers.map((layer, i) => {
-          const g = field === 'phi' ? layer.phi
-                  : field === 'E' ? layer.E : layer.Pi;
+          const raw = field === 'phi' ? layer.phi
+                    : field === 'E' ? layer.E : layer.Pi;
+          const g = as2DGrid(raw);
           const isExpanded = expanded === i;
           return (
             <div
