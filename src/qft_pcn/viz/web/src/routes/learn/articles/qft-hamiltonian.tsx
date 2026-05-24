@@ -55,6 +55,20 @@ export const article: ArticleSpec = {
     {
       kind: 'prose',
       body: [
+        '**Fock-space truncation** is the silent assumption underneath every "cutoff = K" parameter in the substrate. A bosonic field at one site has, in principle, an infinite-dimensional Hilbert space — the Fock space spanned by `{|0⟩, |1⟩, |2⟩, ...}` with arbitrarily many quanta. Numerically we cannot store an infinite-dim vector, so we *truncate*: keep only `{|0⟩, ..., |K-1⟩}` and treat creation past `|K-1⟩` as if it left the space. The default `cutoff = 2` in the substrate is the most aggressive choice: each site is a qubit, holding zero or one quanta. This makes every on-site operator a 2×2 matrix and every bond operator a 4×4 matrix, which is precisely the regime where MPS / TEBD costs are tiny.',
+        'The price is that any physics that genuinely populates `|2⟩` or higher is lost. For a dilute / low-density field this is harmless — a vacuum or one-particle sector is exactly representable. For a dense or driven field (large `⟨n⟩` per site) the truncation introduces a hard ceiling on representable states: an attempted application of `a^†` to `|K-1⟩` is dropped silently, biasing the dynamics. The substrate exposes the cutoff as a configurable parameter (and the viz reports per-site `⟨n⟩`) precisely so this assumption can be audited. A useful diagnostic: if `⟨n⟩` on any site approaches `K - 1` during a run, bump `K` and re-run; if the trajectory changes meaningfully, the truncation was biting.',
+      ],
+    },
+    {
+      kind: 'prose',
+      body: [
+        '**Locality and the Lieb–Robinson bound** justify the substrate\'s "one-site + nearest-neighbour two-site" structural cap. The Lieb–Robinson theorem states that for any Hamiltonian built from bounded local terms, the effective propagation speed of information / correlations is bounded by a constant `v_LR` set by the operator norms of those local terms: outside the light-cone `|x - y| > v_LR · t`, the commutator `[O_x(t), O_y(0)]` is exponentially suppressed. Crucially, this is true *without* relativity — it is purely a statement about how local couplings cap the rate at which entanglement can spread along the chain.',
+        'For MPS-evolvable physics this is exactly the property we need. An imaginary-time sweep of duration `tau` can only entangle sites within `v_LR · tau` of each other; the bond entropy at any cut grows at most linearly in `tau` with slope set by `v_LR`. That is what makes a bounded `chi_max` sufficient for short evolutions — the entanglement budget needed scales with how far light has had time to travel, not with system size. Adding three-site or longer-range terms to the Hamiltonian raises `v_LR` and accelerates entanglement growth, eating the `chi` budget faster. The two-site cap in `bond_op` is therefore not a casual convenience but an explicit commitment to a regime in which MPS evolution remains controlled.',
+      ],
+    },
+    {
+      kind: 'prose',
+      body: [
         'A non-obvious consequence of this design is that the QPCN\'s Hamiltonian acts as a **bias-and-prior** simultaneously. Adding a term to `H` is a hard prior: states whose energy under that term is large will be exponentially suppressed in the ground state. Tuning a coefficient is a soft prior: lowering `V` weakens an interaction without removing it. The space of representable generative models is constrained by what local Hermitian operators you allow in `local_op` and `bond_op`, and that is a design choice — adding a new field species or a new bond operator is the substrate\'s analogue of adding a new architectural block in a deep network.',
         'A second consequence: because the model is the Hamiltonian, the loss surface inherits the structure of an energy landscape. Convexity is not guaranteed; the same `H` can have several near-degenerate ground states differing by a symmetry. Symmetry-broken minima are real features of the model, not training artefacts — the viz\'s `<H>` trace plateauing at slightly different levels across reruns can reflect genuinely distinct ground sectors rather than optimiser noise.',
       ],

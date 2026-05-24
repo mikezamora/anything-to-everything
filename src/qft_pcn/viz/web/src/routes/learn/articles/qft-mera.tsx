@@ -56,6 +56,18 @@ export const article: ArticleSpec = {
     {
       kind: 'prose',
       body: [
+        'The **causal-cone property** is the single algebraic fact that makes MERA computationally tractable, and it deserves a dedicated stare. Pick any single-site operator `O_i` at the bottom (physical) layer. To compute `⟨psi| O_i |psi⟩` you in principle have to contract the entire tree against itself. Because every disentangler is unitary (`U^† U = I`) and every isometry preserves inner products on its domain (`W W^† = I`), most of the tree contracts trivially to identity: tensors that lie outside the past light-cone of `O_i` collapse pairwise with their conjugates and vanish from the computation entirely. What survives is a narrow "causal cone" — a constant-width strip of tensors that flares upward from the support of `O_i` and that has width bounded by a small constant (typically 2 or 3 sites per layer) regardless of `N`. Counting layers gives `O(log N)` tensors that actually enter the contraction.',
+        'This is exponentially better than naïve dense evaluation, but the prefactor matters. A two-site observable\'s causal cone has width 4 to 6 sites per layer, and each surviving tensor must be contracted against its conjugate, which scales as some high power of `chi` (`chi^9` is the textbook figure for a two-site observable on a 1D binary MERA). So MERA is asymptotically cheap (poly-log in `N`) but absolutely expensive (a large constant in `chi`). The substrate respects this by keeping per-layer `chi` modest and by caching causal-cone contractions: a single observable\'s cone changes by only a few tensors when a neighbouring observable is evaluated, and the substrate reuses the rest. The viz panel for a per-site expectation highlights exactly the cone of tensors that contributed to it.',
+      ],
+    },
+    {
+      kind: 'equation',
+      equationId: 'entanglement-entropy',
+      caption: 'Why we are willing to pay the causal-cone cost: critical systems exhibit `S ~ (c/3) log L` (the Cardy–Calabrese formula), which a flat-bond MPS structurally cannot reach. MERA realises this log-scaling exactly because each layer contributes an equal entropy chunk and there are log_2 L layers spanning a block of length L.',
+    },
+    {
+      kind: 'prose',
+      body: [
         'Optimising a MERA is harder than optimising an MPS for two reasons. First, the isometric constraints must be maintained: an unconstrained gradient step will throw a disentangler off the unitary manifold, and naive renormalisation does not recover it. Standard practice (and the substrate\'s approach) is the **environment / SVD update**: compute the tensor\'s linear environment, SVD it, and replace the tensor by `U V^H` (the polar factor). This is the analytic minimum of the linearised objective subject to the unitary constraint and converges very fast for well-behaved problems. Second, the causal-cone property gives `O(log N)` cost per observable — exponentially better than dense — but the prefactor is large (`chi^9` or worse for two-site observables), so MERA is most useful when you genuinely need scale-invariant representation.',
       ],
     },

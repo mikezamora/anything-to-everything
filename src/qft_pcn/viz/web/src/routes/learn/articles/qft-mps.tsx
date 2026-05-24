@@ -56,6 +56,18 @@ export const article: ArticleSpec = {
     {
       kind: 'prose',
       body: [
+        'Moving the **orthogonality centre** is the workhorse operation of every practical MPS routine. Given a chain in mixed canonical form with its singular-value matrix `S` on bond `k`, "sweeping right" means: contract `S` into the right neighbour to make site `k+1` non-canonical, factor the result via QR (or SVD) into an isometric left-tensor and a residual `S\'`, leave the isometric piece on site `k+1`, and place `S\'` on bond `k+1`. The centre has moved one site to the right at cost `O(d chi^3)`, with no truncation involved — purely a basis change. Sweeping the centre across the whole chain costs `O(N d chi^3)` and gives you, as a free by-product, every bond\'s up-to-date Schmidt spectrum (and therefore every bond\'s entropy).',
+        'Why bother? Because every operation that is cheap *only* when applied at the orthogonality centre — local observable expectation, two-site SVD truncation, single-site DMRG eigenproblem — becomes expensive (and numerically dirty) anywhere else. The standard pattern in `src/qft_pcn/qft/mps.py` is therefore: park the centre on the bond you are about to touch, do the work, then sweep the centre to the next bond before the next touch. A full TEBD step is just this pattern repeated across a Trotterised bond schedule. Recognising this pattern in the substrate code (look for the alternating `right_sweep` / `left_sweep` calls bracketing every gate application) is the difference between reading MPS code as a black box and understanding why each line is in the order it is.',
+      ],
+    },
+    {
+      kind: 'equation',
+      equationId: 'imag-time-evolution',
+      caption: 'Imaginary-time evolution is the dominant consumer of canonical-form sweeps in the QPCN: each Trotter step is a two-site gate application sandwiched between sweeps that park the orthogonality centre on the active bond.',
+    },
+    {
+      kind: 'prose',
+      body: [
         'In the QPCN specifically the MPS is the quantum side of the Fusion bridge. Its bonds carry the entanglement structure of the belief; its site tensors are mutated indirectly through Hamiltonian-parameter updates that drive a short imaginary-time projection. The fact that the bond dimension caps representable entanglement is itself a piece of inductive bias: the QPCN cannot encode arbitrarily long-range quantum correlations between distant sites because the bond budget would forbid it. For the kinds of locally-coupled generative models the architecture document targets, this is a feature: it sharply restricts the hypothesis class to physically plausible states, and the resulting variational problem is well-posed instead of being a search over an exponentially big space of nonsense.',
       ],
     },
