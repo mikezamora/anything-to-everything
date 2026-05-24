@@ -1501,6 +1501,14 @@ already perf-optimized through the M3 perf path
   adapter routes through the new builder and does NOT short-circuit
   with the historical "no builder_name" no-attempt).
 
+## OPEN: Polymorphic TList candidates in TypeHole
+
+TypeHole currently rejects TList(*) candidates because all `TList(*)` Ty values would collapse to the same TYPE_LIST=9 flat tag, defeating the candidate superposition. Supporting polymorphic TList in free-form signature ingestion requires per-candidate `nested_type_index` side-table handling, mirroring the `TYPE_ARR_NESTED` treatment in `src/qft_pcn/logic/_types.py:65`.
+
+**Why:** HumanEval contains many `List a` / `List Int -> List Int` typed positions; without this lift, those types collapse to `TInt`/`TBool`/`TNat` ground candidates and lose container semantics.
+
+**How to apply:** widen `TypeHole.__post_init__` to accept `TList(TInt())`/`TList(TBool())`/`TList(TNat())` as candidates, AND add per-candidate `nested_type_index` slot in `mera_encoder.py` so the substrate retains the elem-type bond amplitude. Add a unit test in `test_signature_builder.py` pinning `map : (a -> b) -> List a -> List b` to produce a real container-types superposition.
+
 ## A4 ablation: disable abstraction-discovery substrate path -- RESOLVED (E26)
 - Spec: `QFT_PCN_ARCHITECTURE.md` §10.9 + §14.4 row A4 ("No
   abstraction discovery -- fixed library").

@@ -28,6 +28,17 @@ under the HumanEval container-types EXTENSIONS entry.
 The module does NOT call into the heavy substrate at import time; the
 caller (``experiments/baselines/qpcn.py``) is responsible for wiring the
 result into ``SynthesisProblem`` + ``synthesize``.
+
+Note on ``chi_layer`` for polymorphic sketches: signatures with many
+polymorphic type variables blow up the per-hole candidate basis
+multiplicatively. The encoder's ``chi_layer`` (capped at
+``max(chi_layer, 4) = 16`` by default in ``mera_encoder.py:679``) will
+raise ``EncodingTooLarge`` once ``total_k = candidates ** hole_count``
+exceeds that cap. The auto-sized ``chi_max`` heuristic in
+``experiments/baselines/qpcn.py::_solve_synthesis_from_signature`` does
+**not** lift ``chi_layer`` -- callers needing deep polymorphic synthesis
+must pass both knobs explicitly via
+``problem.payload["synth_knobs"] = {"chi_max": ..., "chi_layer": ...}``.
 """
 from __future__ import annotations
 
