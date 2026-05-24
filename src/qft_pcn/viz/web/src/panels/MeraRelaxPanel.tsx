@@ -17,6 +17,8 @@ import { PanelShell } from './PanelShell';
 import { PanelReadouts } from './PanelReadouts';
 import { MetricsStrip } from './MetricsStrip';
 import { FrameInterpreter } from '../components/FrameInterpreter';
+import { useVizStore } from '../store';
+import { annotate, type StepLabel } from '../lib/mera-step-annotator';
 
 interface MeraRelaxResidual {
   rule_id: string;
@@ -140,6 +142,25 @@ export function MeraRelaxPanel({
     .sort((a, b) => Math.abs(b.value) - Math.abs(a.value))
     .slice(0, 32);
 
+  // Recent firings: walk the active run's last 3 frames and pick the
+  // most-recent step-label per frame. Resolves the `step-replay-mera-relax`
+  // deferred extension — see src/qft_pcn/viz/EXTENSIONS.md.
+  const activeRunId = useVizStore((s) => s.activeRunId);
+  const runs = useVizStore((s) => s.runs);
+  const recentFirings: Array<{ step: number; label: StepLabel }> = [];
+  if (activeRunId) {
+    const run = runs.get(activeRunId);
+    if (run && run.frames.length >= 2) {
+      const tail = run.frames.slice(-3);
+      const labels = annotate(tail);
+      // Map's iteration order is insertion order — frame indices ascend.
+      for (const [idx, lbls] of labels) {
+        if (lbls.length === 0) continue;
+        recentFirings.push({ step: tail[idx].step, label: lbls[0] });
+      }
+    }
+  }
+
   const readouts = (
     <PanelReadouts
       cells={[
@@ -233,6 +254,28 @@ export function MeraRelaxPanel({
         <div style={{ minHeight: 0, overflow: 'auto' }}>
           <ResidualTable rows={sortedResiduals} />
         </div>
+        {recentFirings.length > 0 && (
+          <div
+            data-testid="mera-relax-recent-firings"
+            style={{ fontSize: 11, color: '#9aa6c8', borderTop: '1px solid #2f3a55', paddingTop: 6 }}
+          >
+            <div style={{ color: '#7f8bb0', marginBottom: 4 }}>Recent firings</div>
+            <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
+              {recentFirings.map((rf, i) => (
+                <li
+                  key={`${rf.step}-${rf.label.term.rule_id}-${rf.label.term.site}-${i}`}
+                  style={{ fontFamily: 'monospace', color: '#c8d0e0' }}
+                >
+                  <span style={{ color: '#7f8bb0' }}>step {rf.step}:</span>{' '}
+                  {rf.label.description}{' '}
+                  <span style={{ color: '#7f8bb0' }}>
+                    (Δ {rf.label.magnitude.toExponential(2)})
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
       </div>
     </PanelShell>
   );
