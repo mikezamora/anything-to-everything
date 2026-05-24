@@ -36,6 +36,22 @@
   position: relative;
   flex: 1 1 auto;
   min-height: 0;
+  /* Stack body children vertically: an optional <FrameInterpreter> overlay
+   * sits above the main content, which expands to fill the remaining height.
+   * Without `display: flex`, a child using `height: 100%` (e.g. the
+   * `viz-panel__split` row) resolves against the natural content height —
+   * which collapses to zero once a sibling is added above it, hiding the
+   * Three.js canvas + D3 graph. */
+  display: flex;
+  flex-direction: column;
+}
+
+/* Direct content children of the body (the per-panel main view) take all the
+ * remaining vertical space; this is what gives the split layout its height
+ * after the FrameInterpreter has consumed its natural row. */
+.viz-panel__body > *:not(.frame-interpreter) {
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .viz-panel__split {
