@@ -65,6 +65,55 @@ it('renders the real per-bond entropy chart when bond_entropies is supplied (D-4
   ).toBeTruthy();
 });
 
+it('renders the fully-relaxed badge when all residuals are ~0 (Phase-1 H_eval eigenstate)', () => {
+  // Default-preset behaviour: logic.beta-reduce starts in an H_eval
+  // eigenstate so residuals are emitted as all-zero. Without the badge,
+  // every term renders at min colour intensity and the panel reads as
+  // frozen even though the substrate is correct.
+  const frame = {
+    step: 3,
+    layer_states: {
+      logic: {
+        n_sites: 4,
+        term_count: 2,
+        terms: [
+          { rule_id: 'R-Beta', site: 0, arity: 2 },
+          { rule_id: 'R-Arith-Pre', site: 1, arity: 2 },
+        ],
+        residuals: [0, 0],
+        total_energy: 0.0,
+      },
+    },
+  } as any;
+  render(<LogicPanel frame={frame} />);
+  const badge = screen.getByTestId('logic-relaxed-badge');
+  expect(badge).toBeInTheDocument();
+  expect(badge).toHaveTextContent(/fully relaxed/i);
+  expect(badge).toHaveTextContent(/H_eval is diagonal/);
+});
+
+it('does NOT render the fully-relaxed badge when at least one residual is driving', () => {
+  // If any residual is meaningfully > 1e-6, the existing colour-by-
+  // residual encoding is the honest signal; no badge should appear.
+  const frame = {
+    step: 3,
+    layer_states: {
+      logic: {
+        n_sites: 4,
+        term_count: 2,
+        terms: [
+          { rule_id: 'R-Beta', site: 0, arity: 2 },
+          { rule_id: 'R-Arith-Pre', site: 1, arity: 2 },
+        ],
+        residuals: [0, 0.05],
+        total_energy: 0.05,
+      },
+    },
+  } as any;
+  render(<LogicPanel frame={frame} />);
+  expect(screen.queryByTestId('logic-relaxed-badge')).toBeNull();
+});
+
 it('does NOT render the bond-entropy chart when bond_entropies is absent (no state attached)', () => {
   // The chart only makes sense when a real MPS state is available; in
   // recordings without a state, the snapshot emits bond_entropies = null

@@ -295,6 +295,20 @@ export function LogicPanel({
   const nTerms = st.terms?.length ?? 0;
   const energy = st.total_energy;
   const bondEntropies = st.bond_entropies ?? null;
+  // Honest "fully relaxed" badge — when the logic snapshot's residuals are
+  // all numerically zero (the encoded MPS is an H_eval eigenstate), the
+  // per-term colour intensity collapses to its floor and the bond-entropy
+  // curve goes flat. This is *correct* Phase-1 behaviour, not a frozen UI:
+  // H_eval is diagonal so imag-time evolution rescales-then-normalizes and
+  // the energy is invariant. Surface that explicitly so viewers don't read
+  // it as a broken panel.
+  const residualsArr = st.residuals ?? null;
+  const isRelaxed =
+    energy != null &&
+    Number.isFinite(energy) &&
+    residualsArr != null &&
+    residualsArr.length > 0 &&
+    residualsArr.every((r) => r != null && Math.abs(r) < 1e-6);
 
   return (
     <PanelShell
@@ -323,6 +337,24 @@ export function LogicPanel({
             height: '100%',
           }}
         >
+          {isRelaxed && (
+            <div
+              className="logic-relaxed-badge"
+              data-testid="logic-relaxed-badge"
+              role="status"
+            >
+              <span className="logic-relaxed-badge-icon" aria-hidden="true">
+                i
+              </span>
+              <span>
+                Fully relaxed. Phase-1 H_eval is diagonal; the encoded MPS is
+                a basis-state eigenstate, so imag-time evolution
+                rescales-then-normalizes (energy invariant). Live reduction
+                lands on the <code>mera_relax</code> panel (
+                <code>mera_relax.forall-add-zero</code> preset).
+              </span>
+            </div>
+          )}
           <div style={{ flex: '1 1 auto', minHeight: 0 }}>
             <LogicDiagram st={st} />
           </div>
