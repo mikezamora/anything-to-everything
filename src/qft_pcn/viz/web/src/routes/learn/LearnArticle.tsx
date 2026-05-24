@@ -3,14 +3,16 @@
  * Render an ArticleSpec section list. Dispatch per kind:
  *   prose, equation, workedExample, trainingDynamics, miniViz, callout.
  *
- * Heavy panels (R3F / Three.js) are NOT embedded — miniViz sections for
- * those layers are deferred per EXTENSIONS.md (`learn-heavy-miniviz`).
- * Cheap-panel miniViz sections render a static SVG placeholder for v1.
+ * miniViz sections dispatch to {@link MiniPanel}: cheap panels render a
+ * live mini-render at scale(0.5); heavy panels render a static SVG
+ * placeholder pointing readers at the Viz route (see the resolved
+ * `learn-heavy-miniviz` entry in EXTENSIONS.md).
  */
 
 import { ARTICLES } from './articles';
 import type { ArticleSpec, ArticleSection } from '../../lib/article-types';
 import { AnnotatedEquation } from '../../components/AnnotatedEquation';
+import { MiniPanel } from '../../components/MiniPanel';
 
 interface Props {
   articleId?: string;
@@ -106,9 +108,7 @@ function renderSection(sec: ArticleSection, key: number) {
     case 'miniViz':
       return (
         <section key={key} className="learn-section-miniviz">
-          <p className="learn-miniviz-placeholder">
-            <em>Mini-viz for layer "{sec.layer}" using fixture "{sec.fixtureFrameId}" — see EXTENSIONS.md anchor #learn-heavy-miniviz for status.</em>
-          </p>
+          <MiniPanel layer={sec.layer} fixtureFrameId={sec.fixtureFrameId} />
         </section>
       );
     case 'callout':

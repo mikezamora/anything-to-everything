@@ -355,3 +355,11 @@
                    overflow-y: auto; background: #0d111a; }
 .training-route-body { padding: 24px 32px; color: #e0e6f3;
                        max-width: 800px; margin: 0 auto; }
+
+/* MiniPanel — Learn-article embedded mini-viz */
+.mini-panel { display: block; margin: 8px 0; border: 1px solid #2f3a55;
+              background: #0b0e14; border-radius: 4px; overflow: hidden; }
+.mini-panel-live { height: 200px; position: relative; }
+.mini-panel-scale { width: 200%; height: 200%; pointer-events: none; }
+.mini-panel-placeholder { padding: 4px; color: #7f8bb0; font-size: 11px;
+                          text-align: center; }
