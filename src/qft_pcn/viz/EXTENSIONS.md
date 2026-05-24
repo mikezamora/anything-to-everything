@@ -106,3 +106,24 @@ Each entry: **What's needed**, **Why deferred**, **Wire-up when ready**.
 - **Wire-up when ready:** Add `max_retries: int = 0` param; on validation
   failure, append a "this DSL failed validation: <errors>; fix and re-emit"
   message and retry up to `max_retries` times.
+
+<a id="step-replay-mera-relax"></a>
+## mera_relax — step-replay annotation for the §10.10 induction-theorem demo
+
+- **What's needed:** Frame-by-frame "this leaf moved because of rule R-AddZero at site 4" overlays on `MeraRelaxPanel`. Snapshot already emits per-term residuals; the annotation logic is its own design problem.
+- **Why deferred:** v1 ships the relaxation panel; the annotation system is out of scope.
+- **Wire-up when ready:** A new `lib/mera-step-annotator.ts` that diffs adjacent frames' residuals and emits per-frame "what fired" labels for an overlay.
+
+<a id="learn-heavy-miniviz"></a>
+## learn — live mini-viz embedded in heavy-panel articles
+
+- **What's needed:** A lightweight "shrunken-render" mode for R3F (manifold, multifield, MERA) and Three.js (manifold) panels so they can mount multiple times in a scrolling Learn article without tanking page perf.
+- **Why deferred:** v1 embeds them as `miniViz` placeholder sections; cheap panels (PcnDynamicsPanel, PcnCouplingPanel) could already embed but the panel itself must opt in to a smaller default size.
+- **Wire-up when ready:** Add a `<MiniPanel layer="…" fixtureFrameId="…" />` component; cheap-panel paths render live; heavy panels render an SVG snapshot.
+
+<a id="cross-panel-concept-search"></a>
+## viz — cross-panel concept search
+
+- **What's needed:** Full-text search across Learn articles + ExplainerPane tab content + EQUATIONS glosses.
+- **Why deferred:** Bundle the index at build time; v1 doesn't have the ergonomic bar to host the search UI.
+- **Wire-up when ready:** A `lib/search-index.ts` plus a header-mounted command palette (`Cmd+K`).

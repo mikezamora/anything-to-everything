@@ -167,3 +167,12 @@ Or set it permanently in your shell rc:
 When the DSL route's model picker shows `(no models — is Ollama running?)`,
 the most likely cause is that `OLLAMA_HOST` is not set and the server defaulted
 to `http://localhost:11434` which never reaches the Windows host.
+
+
+## Learn / Training routes smoke
+
+- Click Learn — confirm the contents tree shows §0 Orientation, §1 Foundations (1.1-1.4), §2 QFT side (2.1-2.4), §3 PCN side (3.1-3.3), §4 Fusion (4.1-4.6), §5 DSL.
+- Click each article — confirm it renders without crashing, headings appear, equations render KaTeX, role-coloured glosses appear under each equation, citations link out.
+- Click Training — confirm the end-to-end article renders.
+- On the Viz route, start a `manifold.hot-spot` run; confirm the small "🔬 Step N" callout appears near the panel centerpiece and updates each frame.
+- Click the callout's "→ open article" link; confirm it navigates to the Learn route (URL fragment).
