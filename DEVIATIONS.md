@@ -610,3 +610,27 @@ already catalogued in `EXTENSIONS.md` are not re-listed here.
   longer leak), and `test_cheapest_for_type_skips_pruned_parents`
   (combined D38+D39: L' wins the cache ranking).
 - Audit source: pass 4 §10 D39.
+
+### A4 — §13.8 capability-growth-law empirical validation — RESOLVED
+- Spec location: `QFT_PCN_ARCHITECTURE.md` §13.8 (lines 2521-2533);
+  spec-gap-analysis A4.
+- Issue: conjecture `dC/dt = α(1-C) - βC` had no longitudinal
+  measurement; §12.7 was wired only as a free-energy estimator, never
+  fed into a capability sweep across wake-sleep cycles.
+- Resolution (HEAD 4444045): new module
+  `src/qft_pcn/analysis/capability_growth.py` lands
+  `measure_capability` (operator-algebraic cache-hit + §10.9
+  subsume-match on the trace-distance metric — never a classical
+  fingerprint), `record_growth_trajectory` (drives real
+  `wake_sleep_cycle`s on a corpus and snapshots C(t) at every step),
+  and `fit_growth_law` (scipy `least_squares` on the closed-form
+  solution `C(t) = α/(α+β)(1-exp(-(α+β)t)) + C₀ exp(-(α+β)t)`,
+  bounded non-negative). Tests in
+  `src/qft_pcn/analysis/tests/test_capability_growth.py` pin <5%
+  recovery on three synthetic (α, β) parameter sets plus a real
+  5-cycle smoke against the §10.10 induction corpus. End-to-end
+  report at `reports/capability_growth_4444045.md` carries the real
+  (t, C) trajectory + fitted α, β, ssr. The induction-corpus
+  trajectory saturates in one cycle (an honesty note in the report
+  flags this as a corpus-saturation pathology, not a fitter bug);
+  full §14 benchmark-driven trajectories are the natural next driver.
