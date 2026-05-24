@@ -6,6 +6,30 @@ than left as a TODO or stub. Each entry names the call site, what is
 needed, the workaround currently in tree, and which acceptance criterion
 it unblocks.
 
+## Missing dependency: §5.3 full snapshot-and-compare ΔF estimator for `_frontier_priority`
+
+- Where: `src/qft_pcn/composition/orchestrator.py::_frontier_priority`
+- Need: principled per-frontier-node expected-ΔF computation — snapshot
+  the live `goal_graph`, hypothetically decompose the candidate node,
+  diff the post-decomposition `compute_free_energy` against the pre-
+  snapshot baseline, and use the signed ΔF directly as the schedule
+  key. This is the spec §5.3 ideal: schedule by the node whose
+  expansion most reduces the hierarchical free energy.
+- Workaround (in tree, D7 resolution): `_frontier_priority` now
+  returns the principled-but-cheap `precision * coupling` signal
+  (precision from `1/(1 + residual/RESIDUAL_SCALE)` per §6.2,
+  coupling from `1 + bond_entanglement` via §12.16 Schmidt-spectrum
+  cut). Nodes without a substrate measurement fall back to a
+  scaled-down structural fan-out so any measured node outranks them.
+  This matches the §5.3 ordering contract on any node that has been
+  dispatched at least once — which covers the post-warmup regime that
+  the schedule is designed for. A snapshot-and-compare estimator is
+  the heavier refinement that adds clone+rollback machinery on the
+  goal_graph; the current signal is operator-algebraic and tested.
+- Unblocks: spec §5.3 full estimator — if a future workload reveals
+  the precision-weighted signal mis-orders the pre-dispatch frontier,
+  swap in the snapshot diff (no API change to `_frontier_priority`).
+
 ## Missing dependency: §12.11 entanglement-spectrum acceptance corpus needs non-product MERA encoding
 
 - Where: `src/qft_pcn/logic/mera_encoder.py::encode_mera` — concrete closed

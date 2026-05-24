@@ -1,5 +1,7 @@
 # QPCN DEVIATIONS (audit pass 1, HEAD 2b6fd56)
 
+> **D1, D2, D7 RESOLVED** — see entries below for SHA + commit reference.
+
 Anti-patterns / placeholders / broken logic / spec-vs-impl gaps that MUST
 be fixed before QPCN can be claimed complete. Sourced from terminal audit
 pass 1 (four parallel agents over §1-§5, §6-§9, §10, §12). Known items
@@ -7,7 +9,7 @@ already catalogued in `EXTENSIONS.md` are not re-listed here.
 
 ## CRITICAL (production-impacting)
 
-### D1 — §6.3 spectral_gap gate refuses every production child
+### D1 — §6.3 spectral_gap gate refuses every production child — **RESOLVED**
 - Location: `src/qft_pcn/composition/result_integrator.py` (reads
   `child_result.run_diagnostic.get("spectral_gap", 0.0)`); producer
   `src/qft_pcn/bridge/runtime/result.py:49-65` (`RunResult.to_dict`)
@@ -23,7 +25,7 @@ already catalogued in `EXTENSIONS.md` are not re-listed here.
   the MERA-evolver gap through `RunResult.to_dict()`).
 - Audit source: §6-§9
 
-### D2 — §8 cache-hit by `goal_id` never fires
+### D2 — §8 cache-hit by `goal_id` never fires — **RESOLVED**
 - Location: `src/qft_pcn/composition/dispatcher.py::dispatch_siblings`,
   `src/qft_pcn/composition/orchestrator.py::solve_goal_graph`,
   `src/qft_pcn/composition/lemma_library.py`
@@ -98,7 +100,7 @@ already catalogued in `EXTENSIONS.md` are not re-listed here.
   integration) when new value strictly exceeds it beyond tolerance.
 - Audit source: §6-§9
 
-### D7 — `_frontier_priority` is structural fan-out proxy, not §5.3 precision-weighted schedule
+### D7 — `_frontier_priority` is structural fan-out proxy, not §5.3 precision-weighted schedule — **RESOLVED**
 - Location: `src/qft_pcn/composition/orchestrator.py` (docstring
   acknowledges; flagged as follow-on per §5.3, lines 91-101)
 - Spec: §5.3

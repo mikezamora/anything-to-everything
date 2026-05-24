@@ -325,3 +325,108 @@ def test_dispatcher_qec_recovery_with_snapshot():
     assert out.ground_state is not None
     for k, leaf in enumerate(snapshot.leaves):
         assert np.array_equal(out.ground_state.leaves[k], leaf)
+
+
+# ---------------------------------------------------------------------------
+# D1 / D2 (DEVIATIONS.md): real spectral_gap surfaced + cache-hit skip
+# ---------------------------------------------------------------------------
+
+
+def test_dispatcher_emits_spectral_gap_for_real_run(_no_large_dense):
+    """D1 (DEVIATIONS.md): RunResult.to_dict must carry a real spectral_gap.
+
+    The previous integrator default was 0.0 so every production child
+    was refused by the §6.3 gate. After D1, a real bridge run surfaces
+    ``spectral_gap`` from the composed Hamiltonian's eigenvalue spread,
+    and the value must be strictly positive for the boundary-pinned
+    test problem (the pin produces a clear lowest-eigenstate gap).
+    """
+    # Pin BOTH sites so the Hamiltonian has a non-degenerate ground state
+    # (|0,0>). A single-site pin leaves the other site's eigenstates
+    # degenerate (4-fold) and yields a gap of exactly 0.
+    dsl_spec = {
+        "fields": [{"name": "x", "cutoff": 4}],
+        "sites": 2,
+        "constraints": [
+            {"kind": "local", "site": 0, "term": "x == 0", "weight": 5.0},
+            {"kind": "local", "site": 1, "term": "x == 0", "weight": 5.0},
+        ],
+        "observables": [{"site": 0, "field": "x", "op": "n"}],
+        "search": {"method": "imag_time", "steps": 50, "chi_max": 4,
+                   "dt": 0.05},
+    }
+    sub_goal = make_sub_goal(dsl_spec, goal_prop="X_pinned",
+                              boundary={}, parent_leaves=(0,))
+
+    result = run_child(sub_goal, timeout_s=60.0)
+
+    assert "spectral_gap" in result.run_diagnostic
+    gap = float(result.run_diagnostic["spectral_gap"])
+    assert gap > 0.0, (
+        f"D1 contract broken: expected positive spectral_gap from the "
+        f"boundary-pinned Hamiltonian; got {gap}"
+    )
+    # Smallest excitation = flipping one pinned site to a non-zero level
+    # costs weight 5.0; the gap equals that.
+    assert gap == pytest.approx(5.0, rel=1e-6)
+
+
+def test_dispatcher_cache_hit_skips_redispatch():
+    """D2 (§8): a sibling whose goal_id matches a cached lemma's
+    source_run_id must short-circuit to a synthesized SOLVED ChildResult
+    WITHOUT invoking the runner.
+    """
+    from src.qft_pcn.composition.dispatcher import _cached_child_from_lemma  # noqa: F401
+    sg = _sub("cached-sibling", prop="P")
+
+    # Build a fake library that returns a lemma for this goal_id.
+    class _FakeLemma:
+        lemma_id = "lem_cached"
+        class encoding_meta: pass  # noqa: E701
+        class derivation:
+            residual_energy = 1e-10
+            energy_gap = 1.0
+            trotter_steps = 7
+            source_run_id = sg.goal_id
+        # Minimal mera_tensors stand-in; the synth path calls
+        # mera_from_bundle which needs a bundle. We bypass by patching
+        # _cached_child_from_lemma's dependency via a stub library that
+        # the dispatcher routes through.
+        mera_tensors = None
+
+    class _StubLibWithGoalId:
+        def __init__(self, lemma):
+            self.lemma = lemma
+        def find_by_goal_id(self, goal_id):
+            return self.lemma if goal_id == sg.goal_id else None
+
+    # Patch mera_from_bundle for the synth so we don't need a real bundle.
+    import src.qft_pcn.composition.lemma_library as L
+    real_mfb = L.mera_from_bundle
+    L.mera_from_bundle = lambda b: "stub_state"  # sentinel ground_state
+
+    called = {"n": 0}
+    def never_run(sub_goal, timeout_s):
+        called["n"] += 1
+        raise AssertionError(
+            "runner must NOT be invoked when goal_id hits the cache")
+
+    try:
+        lib = _StubLibWithGoalId(_FakeLemma())
+        nodes = [Node(goal=sg, status=Status.PENDING)]
+        backend = ThreadPoolBackend(max_workers=1)
+        results = dispatch_siblings(
+            nodes, backend, runner=never_run, timeout_s=5.0,
+            lemma_library=lib,
+        )
+        backend.shutdown()
+    finally:
+        L.mera_from_bundle = real_mfb
+
+    assert called["n"] == 0, "D2 cache-hit failed: runner was invoked"
+    assert len(results) == 1
+    assert results[0].converged is True
+    assert results[0].run_diagnostic.get("cache_hit") is True
+    assert results[0].run_diagnostic.get("cached_lemma_id") == "lem_cached"
+    # Gap propagates from the cached derivation for the integrator gate.
+    assert results[0].run_diagnostic["spectral_gap"] == 1.0

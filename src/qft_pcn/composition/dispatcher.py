@@ -114,11 +114,49 @@ def _timeout_result(sub_goal: SubGoal) -> ChildResult:
     )
 
 
+def _cached_child_from_lemma(node: Node, lemma) -> ChildResult:
+    """Synthesize a SOLVED ChildResult from a cached lemma (D2 / §8).
+
+    The §8 cache-hit semantic: a sibling whose ``goal_id`` matches a
+    previously-registered lemma's ``derivation.source_run_id`` does NOT
+    re-run the QPCN. We rebuild the lemma's MERA from its tensor bundle
+    and stamp a ChildResult whose ``residual_energy`` / ``spectral_gap``
+    /``meta`` come from the recorded derivation so the integrator's
+    §6.3 gate fires on the cached values bit-for-bit.
+
+    The synthesized ``run_diagnostic`` is the minimum the integrator
+    reads -- ``spectral_gap`` and the structural cache markers. A
+    consumer that needs richer telemetry (energy history, etc.) should
+    call the runner; the spec §8 cache-hit explicitly trades telemetry
+    for the avoided re-run cost.
+    """
+    from .lemma_library import mera_from_bundle
+    state = mera_from_bundle(lemma.mera_tensors)
+    return ChildResult(
+        goal_id=node.goal.goal_id,
+        converged=True,
+        residual_energy=float(lemma.derivation.residual_energy),
+        ground_state=state,
+        solved_ast=None,
+        run_diagnostic={
+            "spectral_gap": float(lemma.derivation.energy_gap),
+            "cache_hit": True,
+            "cached_lemma_id": lemma.lemma_id,
+            "trotter_steps": int(lemma.derivation.trotter_steps),
+        },
+        error=None,
+        meta=lemma.encoding_meta,
+        hamiltonian=None,
+        trotter_steps=int(lemma.derivation.trotter_steps),
+    )
+
+
 def dispatch_siblings(nodes: list[Node], backend: DispatchBackend, *,
                       runner=run_child, timeout_s: float,
                       parent_state: typing.Any = None,
                       qec_threshold: float = 1e-4,
                       qec_snapshots: typing.Mapping[str, typing.Any] | None = None,
+                      lemma_library: typing.Any = None,
                       ) -> list[ChildResult]:
     """Submit all sibling nodes at once; collect results as they complete.
 
@@ -136,13 +174,33 @@ def dispatch_siblings(nodes: list[Node], backend: DispatchBackend, *,
     (legacy and stub-runner tests), QEC is skipped — the call is a
     bitwise no-op on the result list and node statuses.
     """
+    # --- D2 (§8): pre-dispatch cache lookup ----------------------------
+    # A sibling whose goal_id matches a previously-registered lemma's
+    # source_run_id resolves to a synthesized SOLVED ChildResult and is
+    # NEVER submitted to the runner. The §8 spec mandates this: siblings
+    # re-proving the same sub-goal must hit the cache, not re-derive.
+    cached_results: list[ChildResult] = []
+    to_dispatch: list[Node] = []
+    if lemma_library is not None and hasattr(lemma_library, "find_by_goal_id"):
+        for node in nodes:
+            cached = lemma_library.find_by_goal_id(node.goal.goal_id)
+            if cached is not None:
+                node.status = Status.ACTIVE
+                res = _cached_child_from_lemma(node, cached)
+                node.result = res
+                cached_results.append(res)
+            else:
+                to_dispatch.append(node)
+    else:
+        to_dispatch = list(nodes)
+
     futures: dict = {}
-    for node in nodes:
+    for node in to_dispatch:
         node.status = Status.ACTIVE
         fut = backend.submit(runner, node.goal, timeout_s)
         futures[fut] = node
 
-    results: list[ChildResult] = []
+    results: list[ChildResult] = list(cached_results)
     pending = set(futures)
     # Spec §5.4: the batch deadline is *absolute*, not per-iteration. If we
     # passed ``timeout_s + 1.0`` to each ``wait`` call, every completed child

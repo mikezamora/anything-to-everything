@@ -283,12 +283,21 @@ def _bond_entanglement_of(result: Any) -> float:
     # Canonical mid-network cut: cut after leaf (N//2 - 1) splits the chain
     # roughly in half. entanglement_entropy requires 0 <= cut < N - 1.
     cut = max(0, min(N - 2, N // 2 - 1))
+    # D10 fix (memory/no-placeholders loud-fail): narrow the except to
+    # the documented `entanglement_entropy` contract failures (out-of-range
+    # cut → IndexError, ill-shaped state → ValueError). A genuine substrate
+    # fault (e.g. NotImplementedError, NumericalInstability,
+    # broken-invariant AssertionError) is a §1.1 anti-shortcut violation
+    # when silently swallowed: surface it so the proof-extraction caller
+    # sees the substrate fault instead of an invisible zero in the §12.16
+    # path-fitness signal.
     try:
         return float(fn(cut))
-    except Exception:
-        # A substrate that refuses to evaluate at this cut is not a proof
-        # bug — the action term degrades to zero rather than crashing the
-        # whole proof extraction.
+    except (IndexError, ValueError):
+        # Documented contract failure for an out-of-range / ill-shaped
+        # cut — the action term legitimately degrades to zero (no
+        # Schmidt-spectrum data available at this slice). All other
+        # exceptions propagate.
         return 0.0
 
 

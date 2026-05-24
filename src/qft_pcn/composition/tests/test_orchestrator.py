@@ -414,3 +414,86 @@ def test_orchestrator_rejects_n_top_k_below_one(
             parent_state=pstate, parent_meta=pmeta,
             n_top_k=0,
         )
+
+
+# ---------------------------------------------------------------------------
+# D7 (DEVIATIONS.md): _frontier_priority uses precision-weighted signal
+# ---------------------------------------------------------------------------
+
+
+def test_frontier_priority_uses_precision_weighted_dF():
+    """D7: _frontier_priority must order nodes by precision-weighted ΔF,
+    not by structural fan-out alone.
+
+    Setup: two nodes with IDENTICAL structural fan-out (same boundary
+    size and child count), but different attached results -- one
+    low-residual (high precision), one high-residual (low precision).
+    The low-residual node MUST sort higher than the high-residual
+    node under the precision-weighted ordering. Under the old structural
+    proxy the two would tie.
+    """
+    from src.qft_pcn.composition.orchestrator import _frontier_priority
+    from src.qft_pcn.composition.dispatcher import ChildResult
+    from src.qft_pcn.composition.goal_graph import make_sub_goal, Node, Status
+
+    sg_a = make_sub_goal({"g": "A"}, goal_prop="P", boundary={"b": 0},
+                         parent_leaves=(0,))
+    sg_b = make_sub_goal({"g": "B"}, goal_prop="P", boundary={"b": 0},
+                         parent_leaves=(0,))
+    node_low_res = Node(goal=sg_a, status=Status.ACTIVE)
+    node_high_res = Node(goal=sg_b, status=Status.ACTIVE)
+
+    # Attach matching-shape results with very different residuals. The
+    # synthesized run_diagnostic is irrelevant -- _frontier_priority
+    # reads residual_energy directly.
+    node_low_res.result = ChildResult(
+        goal_id=sg_a.goal_id, converged=True, residual_energy=1e-10,
+        ground_state=None, solved_ast=None,
+        run_diagnostic={"spectral_gap": 1.0}, error=None,
+    )
+    node_high_res.result = ChildResult(
+        goal_id=sg_b.goal_id, converged=True, residual_energy=1e-2,
+        ground_state=None, solved_ast=None,
+        run_diagnostic={"spectral_gap": 1.0}, error=None,
+    )
+
+    p_low = _frontier_priority(node_low_res)
+    p_high = _frontier_priority(node_high_res)
+    assert p_low > p_high, (
+        f"D7 contract broken: precision-weighted priority should rank "
+        f"the low-residual node higher; got p_low={p_low}, p_high={p_high}"
+    )
+
+
+def test_frontier_priority_measured_outranks_unmeasured():
+    """D7: a node WITH a substrate measurement must outrank a node
+    without one (no-measurement fallback is scaled down by 1e-3 so it
+    cannot dominate any precision-weighted signal).
+    """
+    from src.qft_pcn.composition.orchestrator import _frontier_priority
+    from src.qft_pcn.composition.dispatcher import ChildResult
+    from src.qft_pcn.composition.goal_graph import make_sub_goal, Node, Status
+
+    sg_m = make_sub_goal({"g": "M"}, goal_prop="P", boundary={"b": 0},
+                         parent_leaves=(0,))
+    # Unmeasured node with a very large structural fan-out (huge
+    # boundary). Even so, the measured node must outrank it.
+    sg_u = make_sub_goal(
+        {"g": "U"}, goal_prop="P",
+        boundary={f"b{i}": 0 for i in range(100)}, parent_leaves=(0,),
+    )
+    node_measured = Node(goal=sg_m, status=Status.ACTIVE)
+    node_unmeasured = Node(goal=sg_u, status=Status.ACTIVE)
+
+    # Modest residual: precision is small but nonzero.
+    node_measured.result = ChildResult(
+        goal_id=sg_m.goal_id, converged=True, residual_energy=1e-4,
+        ground_state=None, solved_ast=None,
+        run_diagnostic={"spectral_gap": 1.0}, error=None,
+    )
+    p_m = _frontier_priority(node_measured)
+    p_u = _frontier_priority(node_unmeasured)
+    assert p_m > p_u, (
+        f"D7 contract broken: measured node must outrank unmeasured; "
+        f"got p_measured={p_m}, p_unmeasured={p_u}"
+    )

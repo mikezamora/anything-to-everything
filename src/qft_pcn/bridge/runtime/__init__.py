@@ -67,6 +67,77 @@ def _converged(history: list[float], *, tol: float = 1e-6,
     return monotonic and settled
 
 
+def _spectral_gap_from_hamiltonian(H, *, dim_ceiling: int = 4096) -> float:
+    """Compute the spectral gap ``E1 - E0`` of the full Hamiltonian.
+
+    D1 (DEVIATIONS.md): the composition §6.3 gate refuses every child
+    whose runner does not surface a real spectral_gap. For the bridge
+    runtime, the load-bearing Hamiltonian is a sparse sum of local +
+    bond operators on a small chain (``H.sites`` typically O(2-6)
+    sites at ``d_local`` 2-8). We assemble the full matrix and
+    diagonalize via ``np.linalg.eigvalsh`` -- there is no Lanczos
+    dependency to drag in and the matrix is small.
+
+    Falls back to ``0.0`` (strict refuse) when:
+      - the total Hilbert dim ``d_local ** N`` exceeds ``dim_ceiling``
+        (full diagonalization would be too costly; a future Lanczos
+        path is the principled upgrade, recorded as an EXTENSIONS
+        entry),
+      - the matrix yields a non-finite spectrum (numerical fault).
+
+    ANTI-SHORTCUT (§1.1 / memory:anti-shortcut-directive): this is NOT
+    a placeholder constant. The Hamiltonian is the same object that
+    measured ``energy`` -- the gap is a real eigenvalue measurement of
+    the substrate. A bigger workload should add a Lanczos branch, NOT
+    swap in a heuristic guess.
+    """
+    N = int(H.N)
+    d = int(H.d_local)
+    total = d ** N
+    if total > dim_ceiling or total < 2:
+        return 0.0
+    # Assemble full dense matrix: H = sum_k I^{otimes k} (x) local_k (x) I^{...}
+    # + sum_k I^{...} (x) bond_k (x) I^{...}.
+    M = np.zeros((total, total), dtype=complex)
+    eye = np.eye(d, dtype=complex)
+
+    def _kron_at(op: np.ndarray, k: int, op_sites: int) -> np.ndarray:
+        # op acts on sites [k, k+op_sites). Build the full N-site operator.
+        out = None
+        i = 0
+        while i < N:
+            if i == k:
+                term = op
+                i += op_sites
+            else:
+                term = eye
+                i += 1
+            out = term if out is None else np.kron(out, term)
+        return out
+
+    for k in range(N):
+        local = H.local_op(k)
+        if np.any(local):
+            M = M + _kron_at(local, k, 1)
+    for k in range(N - 1):
+        bond = H.bond_op(k)
+        if np.any(bond):
+            M = M + _kron_at(bond, k, 2)
+    # Hermitize defensively (constructed terms should be Hermitian; tiny
+    # asymmetry from floating-point rounding is the only expected gap).
+    M = 0.5 * (M + M.conj().T)
+    try:
+        eigs = np.linalg.eigvalsh(M)
+    except np.linalg.LinAlgError:
+        return 0.0
+    if not np.all(np.isfinite(eigs)):
+        return 0.0
+    eigs = np.sort(np.real(eigs))
+    if len(eigs) < 2:
+        return 0.0
+    return float(eigs[1] - eigs[0])
+
+
 def _bond_dimensions(state) -> list[int]:
     if hasattr(state, "bond_dimensions"):
         try:
@@ -131,6 +202,10 @@ def run_problem(dsl: Any) -> RunResult:
         ground_state=state,
         hamiltonian=H,
         trotter_steps=int(cd.search["steps"]),
+        # D1 (DEVIATIONS.md): real spectral_gap surfaced from the same
+        # composed Hamiltonian under which ``energy`` was measured. The
+        # composition §6.3 gate consumes this via RunResult.to_dict().
+        spectral_gap=_spectral_gap_from_hamiltonian(H),
     )
 
 

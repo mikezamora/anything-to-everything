@@ -45,6 +45,14 @@ class RunResult:
     solved_ast: Any = None
     hamiltonian: Any = None
     trotter_steps: int = 0
+    # D1 (DEVIATIONS.md): real spectral gap to the first excited state of
+    # the composed Hamiltonian under which ``energy`` was measured. The
+    # composition §6.3 gate (``result_integrator._spectral_gap``) reads
+    # this off ``to_dict()`` and refuses any near-degenerate child. A
+    # missing value falls back to ``0.0`` on the consumer side (strict
+    # refuse) — runners that fail to surface the gap are treated as
+    # near-degenerate by design.
+    spectral_gap: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -62,6 +70,10 @@ class RunResult:
                 "energy_per_step": self.convergence_history.energy_per_step
             },
             "trotter_steps": self.trotter_steps,
+            # D1: surface the real spectral gap so the composition
+            # integrator's §6.3 gate fires on production children, not
+            # just stubs that fake the field.
+            "spectral_gap": float(self.spectral_gap),
         }
 
 
