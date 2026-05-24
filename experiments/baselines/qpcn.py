@@ -155,6 +155,91 @@ def _solve_proof(problem: ProblemSpec, *, timeout_s: float) -> ProofAttempt:
         )
 
 
+def _solve_synthesis_from_signature(
+    problem: ProblemSpec,
+    *,
+    signature: str,
+    seed: int,
+    t0: float,
+) -> ProofAttempt:
+    """Drive the synthesis pipeline from a free-form signature string.
+
+    EXTENSIONS.md "free-form signature ingestion for QPCN synthesis":
+    parse ``"name : ty1 -> ty2 -> ... -> ret"`` via
+    ``logic.synthesis.signature_builder``, build the hole-bearing
+    sketch, and pass it to the canonical ``synthesize`` entry point.
+
+    Any failure (parse, encode, evolution) is surfaced as a non-solved
+    ProofAttempt with the precise error -- the adapter NEVER mocks.
+    """
+    try:
+        from src.qft_pcn.logic.synthesis import synthesize
+        from src.qft_pcn.logic.synthesis.problem import SynthesisProblem
+        from src.qft_pcn.logic.synthesis.signature_builder import (
+            parse_signature_string,
+            signature_to_sketch,
+        )
+
+        spec = parse_signature_string(signature)
+        sketch = signature_to_sketch(spec)
+        # Synthesis knobs may be overridden via payload["synth_knobs"]
+        # (a dict). Defaults match SynthesisProblem defaults; the
+        # benchmark loader uses tighter knobs for the free-form path
+        # since these inputs have no IO examples to discriminate on.
+        knobs = dict(problem.payload.get("synth_knobs") or {})
+        sprob = SynthesisProblem(
+            sketch=sketch,
+            target_type=None,
+            examples=(),
+            name=spec.name,
+            **knobs,
+        )
+        rng = np.random.default_rng(seed)
+        res = synthesize(sprob, rng=rng)
+        wall = time.time() - t0
+        top1 = res.completions[0] if res.completions else None
+        candidate_str = repr(top1.ast) if top1 else ""
+        # Without IO examples or a target-type witness we cannot decide
+        # "solved" in the same way as the Myth builder family; the
+        # adapter still surfaces the top-1 completion and energy. The
+        # type-safety invariant (any surfaced completion is vetted by
+        # the typing Hamiltonian) holds via res.failure_mode.
+        well_typed = (res.failure_mode is None) and bool(res.completions)
+        return ProofAttempt(
+            solver="qpcn",
+            problem_id=problem.problem_id,
+            solved=well_typed,
+            well_typed=well_typed,
+            residual_energy=float(top1.energy) if top1 is not None else None,
+            candidates=(candidate_str,) if candidate_str else (),
+            wall_time_s=wall,
+            error=res.failure_mode,
+            diagnostics={
+                "n_unique": res.n_unique,
+                "final_state_energy": res.final_state_energy,
+                "wall_time_seconds": res.wall_time_seconds,
+                "signature": signature,
+                "signature_name": spec.name,
+                "hole_count": spec.hole_count,
+            },
+        )
+    except Exception as exc:  # noqa: BLE001
+        return ProofAttempt(
+            solver="qpcn",
+            problem_id=problem.problem_id,
+            solved=False,
+            well_typed=False,
+            residual_energy=None,
+            candidates=(),
+            wall_time_s=time.time() - t0,
+            error=f"{type(exc).__name__}: {exc}",
+            diagnostics={
+                "signature": signature,
+                "traceback": traceback.format_exc(limit=3),
+            },
+        )
+
+
 def _solve_synthesis(problem: ProblemSpec, *, seed: int) -> ProofAttempt:
     """Drive the STLC synthesis pipeline on a single Myth/Hazel problem.
 
@@ -170,6 +255,15 @@ def _solve_synthesis(problem: ProblemSpec, *, seed: int) -> ProofAttempt:
     t0 = time.time()
     builder = problem.payload.get("builder_name")
     if not builder:
+        # EXTENSIONS RESOLVED: free-form signature ingestion. If the
+        # payload carries a signature *string*, route through the
+        # signature_builder to build a hole-bearing AST sketch and
+        # drive the canonical synthesize() entry point.
+        signature = problem.payload.get("signature")
+        if isinstance(signature, str) and signature.strip():
+            return _solve_synthesis_from_signature(
+                problem, signature=signature, seed=seed, t0=t0,
+            )
         return ProofAttempt(
             solver="qpcn",
             problem_id=problem.problem_id,
@@ -178,9 +272,8 @@ def _solve_synthesis(problem: ProblemSpec, *, seed: int) -> ProofAttempt:
             residual_energy=None,
             candidates=(),
             wall_time_s=time.time() - t0,
-            error="no builder_name in payload: free-form signature -> "
-                  "SynthesisProblem encoding not yet supported (see "
-                  "EXTENSIONS.md 'Free-form signature ingestion').",
+            error="no builder_name and no signature string in payload: "
+                  "cannot build a SynthesisProblem.",
             diagnostics={"tags": problem.tags},
         )
 

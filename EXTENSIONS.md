@@ -1408,17 +1408,31 @@ already perf-optimized through the M3 perf path
   `diagnostics["not_yet_wired"]=True` so the report shows the gap
   rather than silently dropping the row (§1.6 honest reporting).
 
-## Missing dependency: free-form signature ingestion for QPCN synthesis
+## Free-form signature ingestion for QPCN synthesis -- RESOLVED
 - Spec: `QFT_PCN_ARCHITECTURE.md` §14.1 + §15. The QPCN synthesis
   pipeline (logic/synthesis) consumes a typed sketch
   (HoleVar/TypeHole AST); ingesting an arbitrary HumanEval /
-  Hazel signature requires a signature->sketch builder that is not
-  yet implemented.
-- Workaround: `experiments/baselines/qpcn.py` reports an honest
-  no-attempt with the precise error
-  ("no builder_name in payload: ...") for free-form-signature
-  problems; the Myth P1..P8 family uses the builder map directly
-  and IS wired end-to-end (test_baselines.py covers this).
+  Hazel signature requires a signature->sketch builder.
+- Resolution: new module
+  `src/qft_pcn/logic/synthesis/signature_builder.py` exposes
+  `parse_signature_string(sig: str) -> SignatureSpec` and
+  `signature_to_sketch(spec) -> Node`. The type sub-grammar mirrors
+  `logic.ast` (Int / Bool / Nat / List / parens / `->`) and ADDS
+  lowercase identifiers as polymorphic type variables, encoded as
+  `TypeHole(candidates=(TInt(), TBool()))`. The sketch is a chain
+  of lambdas (one per top-level arrow argument) with a structural
+  `HoleVar()` body. `experiments/baselines/qpcn.py` honours
+  `problem.payload["signature"]: str` via the new builder, driving
+  the canonical `synthesize` entry point; optional
+  `payload["synth_knobs"]` overrides the `SynthesisProblem` knobs.
+- Tests:
+  `src/qft_pcn/logic/synthesis/tests/test_signature_builder.py`
+  -- `test_parse_simple_signature`,
+  `test_signature_to_sketch_lambda_with_hole_body`,
+  `test_signature_to_sketch_handles_polymorphic`,
+  `test_qpcn_baseline_accepts_string_signature` (asserts the
+  adapter routes through the new builder and does NOT short-circuit
+  with the historical "no builder_name" no-attempt).
 
 ## A4 ablation: disable abstraction-discovery substrate path -- RESOLVED (E26)
 - Spec: `QFT_PCN_ARCHITECTURE.md` §10.9 + §14.4 row A4 ("No
