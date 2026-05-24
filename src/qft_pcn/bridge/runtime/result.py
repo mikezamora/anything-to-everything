@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -48,11 +49,19 @@ class RunResult:
     # D1 (DEVIATIONS.md): real spectral gap to the first excited state of
     # the composed Hamiltonian under which ``energy`` was measured. The
     # composition §6.3 gate (``result_integrator._spectral_gap``) reads
-    # this off ``to_dict()`` and refuses any near-degenerate child. A
-    # missing value falls back to ``0.0`` on the consumer side (strict
-    # refuse) — runners that fail to surface the gap are treated as
-    # near-degenerate by design.
-    spectral_gap: float = 0.0
+    # this off ``to_dict()`` and refuses any near-degenerate child.
+    # D31 (DEVIATIONS.md): the default is ``math.nan`` — the D23
+    # "unavailable" sentinel. The §6.3 gate's ``math.isnan(...)`` branch
+    # fires BEFORE the numeric ``gap < threshold`` compare, so any
+    # caller that constructs a RunResult without populating
+    # ``spectral_gap`` (every test fixture, every non-bridge runner)
+    # is refused with the truthful "spectral_gap unavailable" reason
+    # instead of the misleading "near-degenerate" message a finite
+    # ``0.0`` would have produced. A real-zero gap (a genuinely
+    # gapless substrate) is still finite and routes through the
+    # principled near-degenerate path; ONLY "no value was set" lands
+    # on NaN.
+    spectral_gap: float = field(default_factory=lambda: math.nan)
 
     def to_dict(self) -> dict[str, Any]:
         return {

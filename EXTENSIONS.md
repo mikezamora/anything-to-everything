@@ -1253,3 +1253,39 @@ already perf-optimized through the M3 perf path
   provenance plus `"replace:{old_id}"` markers and would misclassify
   subsumed primitives as "core".
 - Unblocks: removing the sidecar tier map and the wake_sleep TODO.
+
+## Missing dependency: cache-hit Hamiltonian persistence (D34)
+
+- Where: `src/qft_pcn/composition/dispatcher.py::_cached_child_from_lemma`,
+  `src/qft_pcn/composition/lemma_library.py::LemmaLibrary.save`,
+  `src/qft_pcn/composition/result_integrator.py::integrate_child`.
+- Need: the original composed Hamiltonian under which a cached lemma's
+  `energy_gap` / `residual_energy` were measured, so that on a §8
+  cache-hit the synthesized `ChildResult` can carry it through to
+  `register_lemma`'s `compress_bundle` branch (which needs an
+  `energy_fn` closure to validate the per-bond chi reduction).
+  Today `LemmaLibrary.save` persists only the tensor bundle + the
+  `MeraEncodingMeta` + the `DerivationMetadata` — the Hamiltonian
+  itself is not serialized. Reconstructing it would require either
+  (a) re-evolving the cached lemma against the original DSL spec, or
+  (b) serializing the Hamiltonian alongside the lemma (a new file
+  format + a typed (un)serializer for `BridgeHamiltonian` /
+  `MeraTypingHamiltonian`).
+- Workaround (in tree, D34 resolution): on a cache-hit
+  `_cached_child_from_lemma` stamps `compress_skipped=True` on the
+  `ChildResult` and surfaces the same flag in `run_diagnostic`. The
+  result integrator reads this flag and deliberately passes
+  `hamiltonian=None` into `register_lemma`, with an explicit reason
+  rather than the previous silent `None` feed that defeated the
+  compress branch invisibly. The §6.3 numeric gates (residual + gap)
+  still fire on the cached diagnostics bit-for-bit, preserving the
+  §8 cache-hit semantic (avoided re-run cost) but documenting the
+  compress-step trade in the diagnostic for audit.
+- Unblocks: cache-hit children participating in `compress_bundle`'s
+  chi-reduction step. The current path keeps the bundle uncompressed
+  on re-registration, which is identity for an already-saved lemma
+  (the manifest is content-addressed so `save` is a no-op on an
+  existing entry); the compress-branch reactivation matters only if
+  a future workload re-registers cache-hit lemmas under different
+  Hamiltonians and wants the chi-reduction to run on them.
+

@@ -39,6 +39,20 @@ class ChildResult:
     meta: typing.Any = None
     hamiltonian: typing.Any = None
     trotter_steps: int = 0
+    # D34 (DEVIATIONS.md): explicit cache-hit marker for the integrator.
+    # The §8 cache-hit path (``_cached_child_from_lemma``) cannot
+    # reconstruct the original composed Hamiltonian under which the
+    # cached lemma's ``energy_gap`` / ``residual_energy`` were measured
+    # without re-evolving (LemmaLibrary persists only the bundle +
+    # meta + derivation — see EXTENSIONS.md). The integrator MUST
+    # deliberately skip ``register_lemma``'s compress branch on a cache
+    # hit (a silent ``hamiltonian=None`` feed would defeat compression
+    # silently). When True, the integrator reads this flag and
+    # bypasses the compress step with an explicit reason rather than
+    # via the ``hamiltonian is None`` short-circuit. Defaults to False
+    # so a fresh-run child (with a real Hamiltonian surfaced) keeps
+    # its compress-branch eligibility unchanged.
+    compress_skipped: bool = False
 
 
 def run_child(sub_goal: SubGoal, *, chi_max: int = DEFAULT_CHI_MAX,
@@ -107,11 +121,43 @@ class ThreadPoolBackend:
 
 
 def _timeout_result(sub_goal: SubGoal) -> ChildResult:
+    # D31 (DEVIATIONS.md): a timeout has no measured spectral_gap. An
+    # empty ``run_diagnostic={}`` causes ``_spectral_gap.get(..., 0.0)``
+    # to return ``0.0`` -- the integrator then refuses with the
+    # misleading "near-degenerate" reason instead of the truthful
+    # "spectral_gap unavailable". Surface the D23 NaN sentinel
+    # explicitly so the §6.3 gate's ``math.isnan(...)`` branch fires
+    # and the refusal reason names the structural cause (child timed
+    # out → no gap available).
     return ChildResult(
         goal_id=sub_goal.goal_id, converged=False,
         residual_energy=math.inf, ground_state=None, solved_ast=None,
-        run_diagnostic={}, error="timeout",
+        run_diagnostic={"spectral_gap": math.nan, "timeout": True},
+        error="timeout",
     )
+
+
+class CacheDecodeError(Exception):
+    """D36 / §10.11: cached lemma MERA+meta MUST decode_mera cleanly.
+
+    A cached ``Lemma`` carries the same ``encoding_meta`` +
+    ``mera_tensors`` that ``register_lemma`` validated at write time,
+    so ``decode_mera(state, meta)`` is recoverable by construction on
+    every entry that the manifest will surface. If it raises, the
+    persisted bundle and the manifest disagree about what was stored
+    -- a cache-integrity bug. ``_cached_child_from_lemma`` re-raises
+    this typed error rather than silently re-stamping
+    ``solved_ast=None`` per the §1.1 anti-shortcut directive.
+    """
+
+    def __init__(self, lemma_id: str, goal_id: str, cause: BaseException):
+        super().__init__(
+            f"cache-hit decode failed for lemma {lemma_id!r} "
+            f"(goal_id={goal_id!r}): {cause!r}"
+        )
+        self.lemma_id = lemma_id
+        self.goal_id = goal_id
+        self.cause = cause
 
 
 def _cached_child_from_lemma(node: Node, lemma) -> ChildResult:
@@ -132,22 +178,62 @@ def _cached_child_from_lemma(node: Node, lemma) -> ChildResult:
     """
     from .lemma_library import mera_from_bundle
     state = mera_from_bundle(lemma.mera_tensors)
+    # D36 (DEVIATIONS.md): recover the AST from the cached MERA+meta so
+    # the §10.11 ProofTreeNode leaf is fully populated. ``decode_mera``
+    # is the same decoder the runtime uses post-evolve; on a valid
+    # cache entry it MUST succeed -- ``encoding_meta`` +
+    # ``mera_tensors`` were persisted together by ``register_lemma``.
+    # Any exception here is a cache-integrity bug and surfaces loudly
+    # as ``CacheDecodeError`` per the §1.1 anti-shortcut directive --
+    # never silently re-stamp ``solved_ast=None``.
+    from src.qft_pcn.logic.mera_decoder import decode_mera
+    try:
+        decoded = decode_mera(state, lemma.encoding_meta)
+    except Exception as exc:  # noqa: BLE001
+        raise CacheDecodeError(
+            getattr(lemma, "lemma_id", "?"),
+            node.goal.goal_id,
+            exc,
+        ) from exc
+    # D34 (DEVIATIONS.md): the cache-hit ``ChildResult`` cannot carry the
+    # original composed Hamiltonian under which the cached lemma's
+    # ``energy_gap`` / ``residual_energy`` were measured -- the
+    # ``LemmaLibrary`` only persists bundle + meta + derivation
+    # (see EXTENSIONS.md "cache-hit hamiltonian trade-off"). Rather
+    # than silently feed ``hamiltonian=None`` into ``register_lemma``
+    # and have its compress branch short-circuit invisibly, stamp
+    # ``compress_skipped=True`` so the integrator's compress gate
+    # bypasses the step with an explicit, audit-visible reason. The
+    # §6.3 numeric gates (residual, gap) still fire on the cached
+    # diagnostics bit-for-bit, preserving the spec §8 cache-hit
+    # semantic (avoided re-run cost) without papering over the
+    # compress-branch trade.
     return ChildResult(
         goal_id=node.goal.goal_id,
         converged=True,
         residual_energy=float(lemma.derivation.residual_energy),
         ground_state=state,
-        solved_ast=None,
+        solved_ast=decoded.ast,
         run_diagnostic={
             "spectral_gap": float(lemma.derivation.energy_gap),
             "cache_hit": True,
             "cached_lemma_id": lemma.lemma_id,
             "trotter_steps": int(lemma.derivation.trotter_steps),
+            # Surface the explicit marker in the diagnostic as well so
+            # provenance reports and DerivationMetadata downstream can
+            # see "this child's compress step was skipped because the
+            # Hamiltonian was not reconstructible from the cache".
+            "compress_skipped": True,
+            "compress_skipped_reason": (
+                "cache-hit: original Hamiltonian not persisted in "
+                "LemmaLibrary; compress requires re-evolution (§8 trade)"
+            ),
         },
         error=None,
         meta=lemma.encoding_meta,
         hamiltonian=None,
         trotter_steps=int(lemma.derivation.trotter_steps),
+        compress_skipped=True,
     )
 
 

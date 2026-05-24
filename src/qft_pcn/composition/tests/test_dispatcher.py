@@ -402,8 +402,19 @@ def test_dispatcher_cache_hit_skips_redispatch():
 
     # Patch mera_from_bundle for the synth so we don't need a real bundle.
     import src.qft_pcn.composition.lemma_library as L
+    import src.qft_pcn.logic.mera_decoder as MD
     real_mfb = L.mera_from_bundle
     L.mera_from_bundle = lambda b: "stub_state"  # sentinel ground_state
+    # D36: dispatcher now decodes the cached MERA to populate solved_ast.
+    # This test uses a sentinel state, so patch decode_mera through to a
+    # sentinel DecodeResult (the runner-invocation invariant is what is
+    # under test here; a full decode_mera round-trip is exercised by
+    # test_cached_child_decodes_ast below).
+    real_decode = MD.decode_mera
+    class _SentinelDecode:
+        ast = "sentinel-ast"
+        residual_norm = 0.0
+    MD.decode_mera = lambda state, meta: _SentinelDecode()
 
     called = {"n": 0}
     def never_run(sub_goal, timeout_s):
@@ -422,6 +433,7 @@ def test_dispatcher_cache_hit_skips_redispatch():
         backend.shutdown()
     finally:
         L.mera_from_bundle = real_mfb
+        MD.decode_mera = real_decode
 
     assert called["n"] == 0, "D2 cache-hit failed: runner was invoked"
     assert len(results) == 1
@@ -430,6 +442,62 @@ def test_dispatcher_cache_hit_skips_redispatch():
     assert results[0].run_diagnostic.get("cached_lemma_id") == "lem_cached"
     # Gap propagates from the cached derivation for the integrator gate.
     assert results[0].run_diagnostic["spectral_gap"] == 1.0
+    # D36: cache-hit MUST decode and populate solved_ast (no None pollution
+    # of §10.11 ProofTreeNode leaves).
+    assert results[0].solved_ast == "sentinel-ast"
+
+
+def test_cached_child_records_compress_skipped_or_hamiltonian():
+    """D34 (DEVIATIONS.md): the cache-hit ChildResult must EITHER carry a
+    real Hamiltonian (so register_lemma's compress branch can run) OR
+    stamp ``compress_skipped=True`` so the integrator deliberately skips
+    the compress step instead of silently feeding ``hamiltonian=None``.
+
+    Today the LemmaLibrary persists only bundle + meta + derivation
+    (EXTENSIONS.md "cache-hit hamiltonian trade-off"), so the implemented
+    branch is the explicit compress-skipped marker. The flag must
+    appear on BOTH the dataclass field and inside ``run_diagnostic`` so
+    downstream provenance reports see it.
+    """
+    from src.qft_pcn.composition.dispatcher import _cached_child_from_lemma
+    sg = _sub("d34-cached-sibling", prop="P")
+
+    class _FakeLemma:
+        lemma_id = "lem_d34"
+        class encoding_meta: pass  # noqa: E701
+        class derivation:
+            residual_energy = 1e-12
+            energy_gap = 0.7
+            trotter_steps = 11
+            source_run_id = sg.goal_id
+        mera_tensors = None
+
+    import src.qft_pcn.composition.lemma_library as L
+    import src.qft_pcn.logic.mera_decoder as MD
+    real_mfb = L.mera_from_bundle
+    real_decode = MD.decode_mera
+    L.mera_from_bundle = lambda b: "stub_state"
+    MD.decode_mera = lambda state, meta: type("D", (), {"ast": None})()
+    try:
+        node = Node(goal=sg, status=Status.PENDING)
+        cr = _cached_child_from_lemma(node, _FakeLemma())
+    finally:
+        L.mera_from_bundle = real_mfb
+        MD.decode_mera = real_decode
+
+    # D34 acceptance: explicit marker + reason on both surfaces.
+    has_ham = cr.hamiltonian is not None
+    has_flag = getattr(cr, "compress_skipped", False) is True
+    assert has_ham or has_flag, (
+        "D34: cache-hit ChildResult must surface either a Hamiltonian "
+        "or compress_skipped=True; got hamiltonian=None and no flag")
+    if not has_ham:
+        assert has_flag, "compress_skipped flag missing"
+        assert cr.run_diagnostic.get("compress_skipped") is True, (
+            "D34: compress_skipped must also appear in run_diagnostic "
+            "for downstream provenance")
+        assert "compress_skipped_reason" in cr.run_diagnostic, (
+            "D34: compress_skipped_reason must name the §8 trade")
 
 
 # ---------------------------------------------------------------------------
@@ -518,3 +586,175 @@ def test_spectral_gap_above_ceiling_routes_to_lanczos_or_explicit_refuse():
         f"D23 contract: refusal reason should name the substrate dim "
         f"(16384 for cutoff=4 N=7); got: {outcome.reason!r}")
     assert node.status == Status.FAILED
+
+
+# ---------------------------------------------------------------------------
+# D36 (DEVIATIONS.md): cache-hit MUST decode solved_ast from the persisted
+# MERA + encoding_meta, not pollute §10.11 ProofTreeNode leaves with None.
+# ---------------------------------------------------------------------------
+
+
+def test_cached_child_decodes_ast(tmp_path, _no_large_dense):
+    """D36: ``_cached_child_from_lemma`` must invoke ``decode_mera`` on
+    the restored MERA so the synthesised ``ChildResult.solved_ast`` is
+    populated, and so ``extract_proof_tree`` carries the decoded AST
+    into the §10.11 ``ProofTreeNode`` for cache-hit leaves.
+
+    End-to-end real-substrate test: encode a Forall AST, save it as a
+    lemma keyed on a specific ``source_run_id``, dispatch a sibling
+    whose ``goal_id`` matches that source_run_id (cache hit fires), and
+    verify both the direct synth result, the dispatch_siblings result,
+    AND the extracted proof tree leaf carry the decoded AST.
+    """
+    from src.qft_pcn.composition.dispatcher import (
+        _cached_child_from_lemma,
+        dispatch_siblings as _dispatch,
+    )
+    from src.qft_pcn.composition.lemma_library import (
+        DerivationMetadata,
+        Lemma,
+        LemmaLibrary,
+        bundle_from_mera,
+        structural_fingerprint,
+    )
+    from src.qft_pcn.composition.goal_graph import (
+        extract_proof_tree,
+        ProofTree,
+    )
+    from src.qft_pcn.logic.ast import (
+        Bin,
+        Eq,
+        Forall,
+        TNat,
+        Var,
+        Zero,
+    )
+    from src.qft_pcn.logic.mera_encoder import encode_mera
+
+    # 1. Real AST -> real MERA + meta through the production encoder.
+    body = Eq(
+        lhs=Bin(op="add", a=Var(name="x"), b=Zero()),
+        rhs=Var(name="x"),
+    )
+    ast = Forall(var="x", param_ty=TNat(), body=body)
+    state, meta = encode_mera(ast)
+
+    # 2. Save a Lemma keyed by source_run_id == the sibling's goal_id.
+    sg = make_sub_goal(
+        {"g": "d36-cache-hit"},
+        goal_prop="forall x:Nat. Eq (add x Zero) x",
+        boundary={}, parent_leaves=(0,),
+    )
+    cached_goal_id = sg.goal_id
+    bundle = bundle_from_mera(state)
+    fp = structural_fingerprint(state)
+    deriv = DerivationMetadata(
+        hamiltonian_id="d36-test",
+        residual_energy=1e-12,
+        energy_gap=1.0,
+        trotter_steps=0,
+        assumptions=(),
+        lemma_deps=(),
+        conditional=False,
+        source_run_id=cached_goal_id,
+    )
+    lemma = Lemma(
+        lemma_id="d36:forall_eq_addzero",
+        proposition_type="forall x:Nat. Eq (add x Zero) x",
+        mera_tensors=bundle,
+        encoding_meta=meta,
+        derivation=deriv,
+        fingerprint=fp,
+    )
+    lib = LemmaLibrary(tmp_path)
+    lib.save(lemma)
+
+    # 3. Direct synth check: cache-hit path under test in isolation.
+    node_direct = Node(goal=sg, status=Status.PENDING)
+    res_direct = _cached_child_from_lemma(
+        node_direct, lib.find_by_goal_id(cached_goal_id),
+    )
+    assert res_direct.converged is True
+    assert res_direct.run_diagnostic.get("cache_hit") is True
+    assert res_direct.solved_ast is not None, (
+        "D36: _cached_child_from_lemma must decode the cached MERA and "
+        "stamp solved_ast -- got None, which pollutes §10.11 proof "
+        "tree leaves on every cache hit."
+    )
+
+    # 4. End-to-end via dispatch_siblings: cache hit short-circuits the
+    # runner AND the synthesised ChildResult carries solved_ast.
+    nodes = [Node(goal=sg, status=Status.PENDING)]
+
+    def never_run(sub_goal, timeout_s):
+        raise AssertionError("runner must NOT fire on D36 cache hit")
+
+    backend = ThreadPoolBackend(max_workers=1)
+    try:
+        results = _dispatch(
+            nodes, backend, runner=never_run, timeout_s=5.0,
+            lemma_library=lib,
+        )
+    finally:
+        backend.shutdown()
+    assert len(results) == 1
+    assert results[0].converged is True
+    assert results[0].solved_ast is not None, (
+        "D36: dispatch_siblings cache-hit path lost solved_ast"
+    )
+
+    # 5. extract_proof_tree: the §10.11 ProofTreeNode leaf must carry
+    # the decoded AST (not None). The cache-hit path leaves the node
+    # in ACTIVE state with a populated result; promote to SOLVED so
+    # the extractor walks it as a real leaf (mirrors what the
+    # orchestrator does post-integrate_child for a converged hit).
+    root = nodes[0]
+    root.status = Status.SOLVED
+    tree = extract_proof_tree(root)
+    assert isinstance(tree, ProofTree)
+    assert tree.root.solved_ast is not None, (
+        "D36: extract_proof_tree carried solved_ast=None into the "
+        "§10.11 ProofTreeNode for a cache-hit leaf"
+    )
+
+
+def test_cached_child_raises_on_decode_failure():
+    """D36: a cached entry whose ``encoding_meta`` cannot be decoded is
+    a cache-integrity fault -- surface ``CacheDecodeError`` loudly per
+    §1.1, never silently keep ``solved_ast=None``.
+    """
+    from src.qft_pcn.composition.dispatcher import (
+        CacheDecodeError,
+        _cached_child_from_lemma,
+    )
+    import src.qft_pcn.composition.lemma_library as L
+    import src.qft_pcn.logic.mera_decoder as MD
+
+    sg = _sub("d36-decode-fail", prop="P")
+
+    class _FakeLemma:
+        lemma_id = "lem_corrupt"
+        class encoding_meta: pass  # noqa: E701
+        class derivation:
+            residual_energy = 1e-10
+            energy_gap = 1.0
+            trotter_steps = 0
+        mera_tensors = None
+
+    real_mfb = L.mera_from_bundle
+    real_decode = MD.decode_mera
+    L.mera_from_bundle = lambda b: "stub_state"
+
+    def _boom(state, meta):
+        raise RuntimeError("bundle/meta disagree about n_nodes")
+    MD.decode_mera = _boom
+    try:
+        node = Node(goal=sg, status=Status.PENDING)
+        with pytest.raises(CacheDecodeError) as excinfo:
+            _cached_child_from_lemma(node, _FakeLemma())
+        assert excinfo.value.lemma_id == "lem_corrupt"
+        assert excinfo.value.goal_id == sg.goal_id
+        assert isinstance(excinfo.value.cause, RuntimeError)
+    finally:
+        L.mera_from_bundle = real_mfb
+        MD.decode_mera = real_decode

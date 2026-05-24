@@ -65,8 +65,17 @@ def _spectral_gap(child_result) -> float:
     with a CLEAR "spectral_gap unavailable" reason naming the
     substrate, instead of the misleading "near-degenerate" message
     that a real zero gap would (correctly) trigger.
+
+    D31 (DEVIATIONS.md): the missing-diagnostic fallback is now
+    ``math.nan`` (D23 unavailability sentinel), not ``0.0``. A
+    ``run_diagnostic`` that does not carry ``spectral_gap`` -- e.g.
+    ``_timeout_result``'s empty dict pre-D31 -- is the
+    "unavailable" case, not a real zero; routing it through the NaN
+    branch surfaces the truthful refusal reason ("spectral_gap
+    unavailable") rather than the misleading "near-degenerate".
     """
-    return float(child_result.run_diagnostic.get("spectral_gap", 0.0))
+    return float(
+        child_result.run_diagnostic.get("spectral_gap", math.nan))
 
 
 def _resolve_host_leaves(node: Node, child_meta) -> tuple[int, ...]:
@@ -174,11 +183,24 @@ def integrate_child(parent_state: Any, parent_meta: Any, node: Node,
         conditional=provisional,  # above-gate residual: a conjecture
         source_run_id=str(node.goal.goal_id),
     )
+    # D34 (DEVIATIONS.md): honor the cache-hit ``compress_skipped`` flag
+    # by passing ``hamiltonian=None`` deliberately. ``register_lemma``'s
+    # compress branch short-circuits on ``hamiltonian is None``; with
+    # the flag set we are documenting that the cache-hit path made an
+    # explicit, audit-visible trade (no Hamiltonian persisted in the
+    # LemmaLibrary, so re-compression is impossible without re-evolving
+    # -- see EXTENSIONS.md). For a fresh-run child the flag is False
+    # and the original hamiltonian flows through unchanged, preserving
+    # the compress branch.
+    if getattr(child_result, "compress_skipped", False):
+        ham_for_register = None
+    else:
+        ham_for_register = getattr(child_result, "hamiltonian", None)
     reg = register_lemma(
         lemma_library,
         child_result.ground_state,
         child_meta,
-        hamiltonian=getattr(child_result, "hamiltonian", None),
+        hamiltonian=ham_for_register,
         derivation=deriv,
         eps_register=CONJECTURE_CEILING,
     )
