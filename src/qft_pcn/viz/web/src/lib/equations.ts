@@ -47,3 +47,16 @@ export interface EquationSpec {
 }
 
 export const EQUATIONS: Record<string, EquationSpec> = {};
+
+// Fixture equation for AnnotatedEquation tests; will be displaced by real T8 entries.
+EQUATIONS['__test_free_energy_functional__'] = {
+  id: '__test_free_energy_functional__',
+  tex: 'F = \\tfrac{1}{2} \\Pi E^2 - \\tfrac{1}{2} \\log \\Pi',
+  gloss: 'Free energy is half the precision-weighted squared error minus half the log precision.',
+  symbolGlosses: [
+    { symbol: 'F',       gloss: 'free energy',       role: 'output' },
+    { symbol: '\\Pi',    gloss: 'precision',         role: 'param-learn' },
+    { symbol: 'E',       gloss: 'prediction error',  role: 'state' },
+  ],
+  sourceCitation: 'Arch §3.1',
+};
