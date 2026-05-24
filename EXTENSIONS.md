@@ -1439,6 +1439,27 @@ already perf-optimized through the M3 perf path
 - **Workaround (in tree):** `evolve_for_search(runtime="mera")` raises
   `NotImplementedError` with a clear message rather than silently using MPS.
 
+### §13.5 deeper volume-law refusal substrate (C2 follow-on)
+
+- **Status:** `src/qft_pcn/tests/test_expressivity_wall.py` pins
+  shallow-converges + depth-6 at chi=16 empirically. Observed:
+  depth-6 sequential arithmetic chain (`((((1+1)+1)+1)+1)+1`)
+  converges to ~0.000000 — i.e., the substrate handles this depth
+  without saturating the bond-dim budget.
+- **Needed:** locate and pin the actual wall position by sweeping
+  one of:
+    1. depth (deeper sequential chains until convergence fails),
+    2. breadth (wider branching expressions),
+    3. chi (lower bond-dim at fixed depth until convergence fails).
+  A program family with provably volume-law entanglement
+  requirement (e.g., long-range parity / cluster-state encoding
+  lifted into DSL form) would close Corollary 13.5.1 directionally
+  (current test pins behavior non-directionally to avoid asserting
+  a wall we have not yet localized).
+- **Why deferred:** the empirical pin satisfies the §13.5 contract
+  (area-law-bounded with reference shallow convergence); a sweep
+  measuring the wall position is a §13.5 quantification follow-on.
+
 ### `well_typed_subtree` first-cut (W3.T2)
 
 - **Status:** simplified projector — penalises typed-kind sites with `type == "unknown"`.

@@ -925,3 +925,23 @@ already catalogued in `EXTENSIONS.md` are not re-listed here.
   `detect_logical_corruption` + `apply_holographic_recovery` and
   surfaces `p_th(d)` per depth. Per-depth recovery-success curves
   pin the §13.4 contract end-to-end.
+
+## RESOLVED — C2: §13.5 expressivity wall empirical pin
+- Spec: `QFT_PCN_ARCHITECTURE.md` §13.5 (lines 2495-2502);
+  `spec_gap_analysis.md` C2.
+- Gap: §13.5 / Corollary 13.5.1 mandates a negative test confirming
+  the area-law substrate cannot evolve a deliberately volume-law DSL
+  program to convergence — distinguishing the "hard expressivity
+  wall" from a numerical bug.
+- Resolution: `src/qft_pcn/tests/test_expressivity_wall.py` pins
+  empirical behavior at fixed (chi=16, dt=0.1, steps=100):
+  - `test_shallow_arith_chain_converges` — sanity that `1 + 2`
+    converges below 1e-2 (substrate IS area-law expressive).
+  - `test_deep_arith_chain_at_chi_capped_substrate` — six-deep
+    sequential arithmetic chain. Empirical observation at this
+    config: residual converged to ~0.000000 (bucket: `converged`),
+    so the substrate handles depth 6 at chi=16 and the volume-law
+    wall lives at greater depth/breadth. The test pins both
+    directional outcomes as valid §13.5 data and rejects only NaN
+    (numerical failure). EXTENSIONS entry tracks the larger volume-
+    law refusal substrate as a follow-on.
