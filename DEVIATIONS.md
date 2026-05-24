@@ -667,3 +667,66 @@ already catalogued in `EXTENSIONS.md` are not re-listed here.
   structures) are logged to EXTENSIONS.md as separate non-PL
   extensions per the QPCN-completion protocol (one domain per
   audit cycle).
+
+## RESOLVED — A1: §14 Evaluation Methodology + Benchmarks (entire section)
+- Spec: `QFT_PCN_ARCHITECTURE.md` §14 (lines 2547-2660).
+- Gap (from `spec_gap_analysis.md` A1): no `experiments/`, no
+  metric implementations, no baselines wired, no statistical
+  protocol, no pre-registration scaffolding. The headline
+  publication-prerequisite of §14 was entirely absent.
+- Resolution: `experiments/` package created with:
+  * `experiments/benchmarks/` — corpus ingestion for miniF2F,
+    HumanEval (typed-subset filter), Myth (via the P1..P8
+    builder map), DreamCoder list domain, QM9 small-molecule
+    subset, Hazel (built-in transcription; upstream FFI
+    deferred per EXTENSIONS).
+  * `experiments/metrics/` — `pass@k` (simple + unbiased
+    HumanEval-paper estimator), `type@k`, `residual_energy@1`
+    (mean/std/median/min/max), `capability_curve` (per-cycle)
+    + `capability_vs_difficulty` (per-bucket).
+  * `experiments/baselines/` — AlphaProof / ReProver / Synquid
+    adapters that invoke `$*_CMD` when present and raise
+    `BaselineUnavailable` otherwise (the runner converts the
+    raise into a structured no-attempt row, never fabricates).
+    `QPCNBaseline` is the real K-8/L acceptance substrate
+    (`encode_mera + MeraEvalHamiltonian +
+    mera_imaginary_evolve_state` for proofs, `run_problem`
+    from `demo_stlc_synthesis` for STLC synthesis,
+    out-of-substrate honest no-attempts for chemistry).
+  * `experiments/ablations/` — full A1..A8 matrix + BASELINE,
+    wired vs not-yet-wired flagged in diagnostics per row.
+  * `experiments/stats/` — bootstrap CI (percentile
+    n_resamples-controlled), Cohen's d, Cliff's delta,
+    Holm-Bonferroni + plain Bonferroni, paired-t pipeline.
+  * `experiments/runner.py` — load + run + collect + stat +
+    markdown report. Small-subset default; `--full` for whole
+    corpora; `--no-baselines` / `--no-ablations` for fast smoke.
+- Tests: `experiments/tests/test_benchmarks.py`,
+  `test_metrics.py`, `test_stats.py`, `test_baselines.py`,
+  `test_ablations.py`, `test_runner_smoke.py` -- 35 tests; the
+  baselines test runs the REAL K-8 proof substrate and asserts
+  `forall x:Nat. x+0=x` solves end-to-end.
+- Initial report: `experiments/reports/initial_run_<SHA>.md`
+  written by the runner; the §1.6 honest-reporting invariant is
+  preserved (out_of_substrate / unavailable / not_yet_wired
+  surfaced explicitly).
+
+## RESOLVED — B3: §14.1 HumanEval negative-comparison typed subset
+- Spec: `QFT_PCN_ARCHITECTURE.md` §14.1 (line 2564). HumanEval is
+  the spec's named "negative comparison": LLMs win pass@k, but
+  the QPCN must achieve `type@1 = 1.0` on a typed subset.
+- Gap (from `spec_gap_analysis.md` B3): no HumanEval ingestion,
+  no typed-subset filter, no type@1 measurement.
+- Resolution: `experiments/benchmarks/humaneval.py` ingests
+  HumanEval (JSONL on disk when `$HUMANEVAL_PATH` set; built-in
+  transcription otherwise) and exposes a precise
+  `is_typed_subset(prompt)` filter: a problem is in scope iff
+  its annotations live inside STLC + Nat + List<int|bool> with
+  NO mention of `str`/`float`/`dict`/`tuple`/`complex`/`bytes`/
+  `set`/`Optional[str]` AND has at least one int/bool/list
+  annotation (fully-untyped prompts are also out). The
+  `experiments/metrics/type_at_k.py` module computes the
+  distinctive metric; `test_metrics.test_type_at_k_*` pins the
+  contract. The runner exposes `humaneval_typed` and
+  `humaneval_full` benchmarks so the negative-comparison delta
+  is reportable.

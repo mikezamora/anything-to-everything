@@ -1331,3 +1331,62 @@ already perf-optimized through the M3 perf path
   still work bit-for-bit on this layout. The alpha-then-beta block
   ordering is a future optimization layer, not a correctness gap.
 
+## Missing dependency: AlphaProof binary not bundled
+- Spec: `QFT_PCN_ARCHITECTURE.md` §14.3 (line 2595). AlphaProof
+  (DeepMind 2024 silver-medal at IMO) is not open-source; no public
+  binary or API exists.
+- Workaround: `experiments/baselines/alphaproof.py` reads
+  `$ALPHAPROOF_CMD` for an organisation-internal wrapper, parses
+  `alphaproof_result.json`, otherwise raises `BaselineUnavailable`.
+  The runner surfaces an honest no-attempt row so the comparison
+  cell in the report is not fabricated (memory/no-placeholders).
+
+## Missing dependency: ReProver / LeanDojo binary not bundled
+- Spec: `QFT_PCN_ARCHITECTURE.md` §14.3 (line 2596). ReProver is
+  open-source but requires a Lean toolchain + checkpoint that is
+  not in this repo.
+- Workaround: `experiments/baselines/reprover.py` invokes
+  `$REPROVER_CMD` when set; otherwise raises `BaselineUnavailable`
+  and the runner records a structured no-attempt.
+
+## Missing dependency: Synquid binary not bundled
+- Spec: `QFT_PCN_ARCHITECTURE.md` §14.3 (line 2599). Synquid
+  requires a Haskell toolchain.
+- Workaround: `experiments/baselines/synquid.py` reads
+  `$SYNQUID_CMD` for the installed binary; otherwise raises
+  `BaselineUnavailable`.
+
+## Missing dependency: Hazel kernel adapter
+- Spec: `QFT_PCN_ARCHITECTURE.md` §14.1 (line 2559). Hazel's
+  upstream synthesis kernel is OCaml; parsing the kernel's
+  internal serialisation without a Hazel install is out of scope.
+- Workaround: `experiments/benchmarks/hazel.py` ingests a verbatim
+  built-in subset transcribed from the Hazel paper (Omar et al.
+  2017 Figure 3); `$HAZEL_PATH` is honoured for path existence but
+  the upstream parse-via-FFI is filed here for follow-on work.
+
+## Missing dependency: A1/A2/A3/A5/A6/A8 ablation substrate paths
+- Spec: `QFT_PCN_ARCHITECTURE.md` §14.4 (lines 2604-2618). The §14.4
+  ablation matrix needs SIX additional substrate paths
+  (no-MERA / flat-manifold / single-field / classical-PCN /
+  no-PCN / classical-genmap). The in-repo QPCN is the full
+  MERA + multi-field + quantum + PCN configuration; A4
+  (fixed library) and A7 (no §12 extensions) ARE wired (existing
+  fixed-library + section-10-only paths).
+- Workaround: `experiments/ablations/ablation_runner.py` enumerates
+  ALL eight ablation rows + BASELINE; not-yet-wired rows surface
+  `diagnostics["not_yet_wired"]=True` so the report shows the gap
+  rather than silently dropping the row (§1.6 honest reporting).
+
+## Missing dependency: free-form signature ingestion for QPCN synthesis
+- Spec: `QFT_PCN_ARCHITECTURE.md` §14.1 + §15. The QPCN synthesis
+  pipeline (logic/synthesis) consumes a typed sketch
+  (HoleVar/TypeHole AST); ingesting an arbitrary HumanEval /
+  Hazel signature requires a signature->sketch builder that is not
+  yet implemented.
+- Workaround: `experiments/baselines/qpcn.py` reports an honest
+  no-attempt with the precise error
+  ("no builder_name in payload: ...") for free-form-signature
+  problems; the Myth P1..P8 family uses the builder map directly
+  and IS wired end-to-end (test_baselines.py covers this).
+
