@@ -113,6 +113,24 @@ export function as2DGrid(phi: PhiLike, channel: number = 0): Grid2D | null {
   return phi as Grid2D;
 }
 
+/**
+ * Format a possibly-small numeric readout without collapsing to `"0.000"`.
+ *
+ * - Non-finite / null / undefined values render as the em-dash placeholder.
+ * - Exactly zero renders as `"0"`.
+ * - `|v| >= 1e-3` uses fixed-point with 3 fractional digits (the historical
+ *   default).
+ * - `|v| < 1e-3` falls back to two-digit scientific notation so sub-millisecond
+ *   physical quantities (Ricci ~1e-5, coupling ~1e-7) remain visible.
+ */
+export function smallNumberFormat(v: number | null | undefined): string {
+  if (v == null || !Number.isFinite(v)) return '—';
+  if (v === 0) return '0';
+  const a = Math.abs(v);
+  if (a >= 1e-3) return v.toFixed(3);
+  return v.toExponential(2);
+}
+
 /** Normalize a numeric grid (2-D array) to [-1, 1] by its peak abs value. */
 export function normGrid(grid: number[][]): {
   norm: number[][];

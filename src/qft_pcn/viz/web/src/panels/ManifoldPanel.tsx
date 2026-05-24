@@ -16,7 +16,13 @@ import { PanelShell } from './PanelShell';
 import { PanelToolbar, type ToolbarItem } from './PanelToolbar';
 import { PanelReadouts } from './PanelReadouts';
 import { MetricsStrip } from './MetricsStrip';
-import { diverging, normGrid, as2DGrid, type PhiLike } from './common';
+import {
+  diverging,
+  normGrid,
+  as2DGrid,
+  smallNumberFormat,
+  type PhiLike,
+} from './common';
 import { FrameInterpreter } from '../components/FrameInterpreter';
 
 type Grid = number[][];
@@ -216,8 +222,7 @@ export function ManifoldPanel({
       cells={[
         {
           label: 'mean |R|',
-          value:
-            st.mean_abs_ricci != null ? st.mean_abs_ricci.toFixed(3) : null,
+          value: smallNumberFormat(st.mean_abs_ricci),
           baselineValue: bst.mean_abs_ricci ?? null,
           highlightId: 'mean_abs_ricci',
         },

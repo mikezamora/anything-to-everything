@@ -11,6 +11,7 @@ import { PanelShell } from './PanelShell';
 import { PanelReadouts } from './PanelReadouts';
 import { MetricsStrip } from './MetricsStrip';
 import { FrameInterpreter } from '../components/FrameInterpreter';
+import { smallNumberFormat } from './common';
 
 interface PcnDynamicsState {
   total_free_energy?: number | null;
@@ -58,12 +59,10 @@ export function PcnDynamicsPanel({ frame, baselineFrame: _baselineFrame }: {
           {perF.map((f, i) => (
             <tr key={i}>
               <td>{i}</td>
-              <td>{f != null ? f.toFixed(3) : '—'}</td>
-              {hasKL && (
-                <td>{perKL[i] != null ? perKL[i]!.toFixed(3) : '—'}</td>
-              )}
-              <td>{perE[i] != null ? perE[i]!.toFixed(3) : '—'}</td>
-              <td>{perPi[i] != null ? perPi[i]!.toFixed(3) : '—'}</td>
+              <td>{smallNumberFormat(f)}</td>
+              {hasKL && <td>{smallNumberFormat(perKL[i])}</td>}
+              <td>{smallNumberFormat(perE[i])}</td>
+              <td>{smallNumberFormat(perPi[i])}</td>
             </tr>
           ))}
         </tbody>

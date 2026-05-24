@@ -14,6 +14,7 @@ import { PanelShell } from './PanelShell';
 import { PanelReadouts } from './PanelReadouts';
 import { MetricsStrip } from './MetricsStrip';
 import { FrameInterpreter } from '../components/FrameInterpreter';
+import { smallNumberFormat } from './common';
 
 interface PcnCouplingState {
   kappa_R?: number | null;
@@ -47,8 +48,7 @@ export function PcnCouplingPanel({ frame, baselineFrame: _baselineFrame }: {
         { label: 'mean |T|', value: st.mean_abs_stress_energy != null
             ? st.mean_abs_stress_energy.toExponential(2) : '—',
           highlightId: 'mean_abs_stress_energy' },
-        { label: 'mean |R|', value: st.mean_abs_ricci != null
-            ? st.mean_abs_ricci.toFixed(3) : '—' },
+        { label: 'mean |R|', value: smallNumberFormat(st.mean_abs_ricci) },
         { label: '⟨H⟩', value: st.qpcn_observable_energy != null
             ? st.qpcn_observable_energy.toFixed(3) : '—' },
       ]} />}

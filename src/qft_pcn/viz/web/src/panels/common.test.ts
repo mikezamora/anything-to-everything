@@ -5,7 +5,13 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { normGrid, diverging, sequential, speciesColor } from './common';
+import {
+  normGrid,
+  diverging,
+  sequential,
+  speciesColor,
+  smallNumberFormat,
+} from './common';
 
 describe('normGrid', () => {
   it('scales values into [-1, 1] by peak abs value', () => {
@@ -121,5 +127,33 @@ describe('speciesColor', () => {
     expect(speciesColor('missing', ['a', 'b'])).toBe(
       speciesColor('a', ['a', 'b']),
     );
+  });
+});
+
+describe('smallNumberFormat', () => {
+  it('returns the em-dash placeholder for null, undefined, NaN, and Infinity', () => {
+    expect(smallNumberFormat(null)).toBe('—');
+    expect(smallNumberFormat(undefined)).toBe('—');
+    expect(smallNumberFormat(Number.NaN)).toBe('—');
+    expect(smallNumberFormat(Infinity)).toBe('—');
+    expect(smallNumberFormat(-Infinity)).toBe('—');
+  });
+
+  it('renders exact zero as "0" (no decimals, no exponent)', () => {
+    expect(smallNumberFormat(0)).toBe('0');
+  });
+
+  it('uses fixed-point with 3 decimals when |v| >= 1e-3', () => {
+    expect(smallNumberFormat(1)).toBe('1.000');
+    expect(smallNumberFormat(0.5)).toBe('0.500');
+    expect(smallNumberFormat(0.001)).toBe('0.001');
+    expect(smallNumberFormat(-0.25)).toBe('-0.250');
+  });
+
+  it('falls back to two-digit exponential for sub-millisecond magnitudes', () => {
+    expect(smallNumberFormat(2.9e-5)).toBe('2.90e-5');
+    expect(smallNumberFormat(1.7e-7)).toBe('1.70e-7');
+    expect(smallNumberFormat(-3.14e-4)).toBe('-3.14e-4');
+    expect(smallNumberFormat(9.99e-4)).toBe('9.99e-4');
   });
 });
