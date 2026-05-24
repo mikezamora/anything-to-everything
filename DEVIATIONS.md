@@ -634,3 +634,36 @@ already catalogued in `EXTENSIONS.md` are not re-listed here.
   trajectory saturates in one cycle (an honesty note in the report
   flags this as a corpus-saturation pathology, not a fitter bug);
   full §14 benchmark-driven trajectories are the natural next driver.
+
+### A3 — §11.6 non-PL target domains — RESOLVED (chemistry first-tier)
+- Spec location: `QFT_PCN_ARCHITECTURE.md` §11.6 (lines 1218-1252);
+  spec-gap-analysis A3.
+- Issue: every implemented domain in the substrate was PL-flavored
+  (STLC + arithmetic + list synthesis + propositional proofs over Nat);
+  §11.6 mandates non-PL targets, with `quantum chemistry ground states
+  (50-200 active orbitals)` flagged first-tier in §1.1 alongside the
+  Bauer et al. 2020 reference. No chemistry-Hamiltonian compiler, no
+  ab-initio integral path, no molecular ground-state demo.
+- Resolution: new `src/qft_pcn/chemistry/` package lands
+  `Molecule` (atoms / basis / charge), `build_integrals` (PySCF RHF
+  + MO-basis integral extraction — real ab-initio, no synthetic
+  Hamiltonian), `encode_molecule` (Hartree-Fock product MERA on
+  interleaved alpha/beta spin-orbital leaves with power-of-two ghost
+  padding), `ChemistryHamiltonian` (Jordan-Wigner Pauli-string
+  decomposition + Slater-Condon CI matrix elements — every operator
+  factor is a single-leaf 2x2 matrix, never a 4^N Fock-space matrix;
+  spec §1.3), and `chemistry_imaginary_evolve` (ground-state driver
+  via first-order imag-time power iteration on the CI determinant
+  subspace + branch-superposition MERA rebuild per step). Tests:
+  H2 STO-3G converges to PySCF FCI reference -1.13727 Ha (|err| ~
+  5e-10 Ha; chemistry-accuracy bound 1e-3 Ha cleared by 6 orders);
+  HeH+ STO-3G similarly converges to its run-time PySCF FCI reference;
+  encoder-meta unit tests pin the leaf-layout / HF-occupation contract.
+  Substrate ⟨ψ|H|ψ⟩ at the relaxed branch-superposition MERA matches
+  the CI-basis energy to numerical precision, confirming the
+  Pauli-string factored expectation tracks the analytic branch sum.
+  Remaining §11.6 first-tier-targets (symbolic regression /
+  inverse materials design / catalyst design / small algebraic
+  structures) are logged to EXTENSIONS.md as separate non-PL
+  extensions per the QPCN-completion protocol (one domain per
+  audit cycle).

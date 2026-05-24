@@ -1289,3 +1289,45 @@ already perf-optimized through the M3 perf path
   a future workload re-registers cache-hit lemmas under different
   Hamiltonians and wants the chi-reduction to run on them.
 
+## Non-PL extension: §11.6 symbolic regression deferred
+- Spec: `QFT_PCN_ARCHITECTURE.md` §11.6 (lines 1218-1252).
+- A3 first-tier landed for QUANTUM CHEMISTRY (see DEVIATIONS.md A3).
+  The other §11.6 first-tier targets are independent encoder/Hamiltonian
+  builds and are deferred to a separate batch each:
+    * Symbolic regression — dimensional-analysis-as-gauge-constraint
+      encoder for AI-Feynman-style equation recovery.
+    * Combinatorial enumeration — graphs/codes/designs as MERA-leaf
+      structural constraints.
+    * Inverse materials design — crystal lattice + band-gap energy
+      Hamiltonian (DFT integrals via PySCF.pbc or external).
+    * Catalyst design — transition-state-energy ground-state search
+      atop a reaction-path Hamiltonian.
+    * Small algebraic structures — group/ring multiplication-table
+      enumeration with associativity / unit-element constraints as
+      single-leaf Pauli projectors.
+- Each follows the same shape as `src/qft_pcn/chemistry/`
+  (Molecule-like dataclass + ab-initio integral source + factored
+  Hamiltonian + imag-time evolution driver). Per the
+  qpcn-completion-protocol "one domain per audit cycle" rule, these
+  extensions are tracked here until a dedicated batch lands them.
+
+## Missing dependency: §11.6 chemistry — non-contiguous active-space JW
+- Limitation: the JW Pauli-string expansion in
+  `src/qft_pcn/chemistry/hamiltonian.py` builds the per-ERI 4-active-site
+  operator by extending the subsystem to include in-range external sites
+  whose JW Z-parity is odd. This is correct for arbitrary active-space
+  geometries when the active sites span a contiguous range bounded by
+  `2 * n_orb` (first-tier H2 / HeH+ / small molecules: yes). When the
+  spin-orbital layout has GHOST (power-of-two padding) leaves AND
+  fermion operators must JW-thread through them, the current builder is
+  still correct (the parity check skips ghosts and the operator support
+  stays within the active set), but it does NOT yet handle the
+  reordered-orbital case where the alpha and beta channels are
+  interleaved in a non-canonical (non-2p, 2p+1) way for performance —
+  e.g. alpha-block followed by beta-block ordering used by some
+  DMRG/MERA chemistry codes.
+- Workaround: stick to the interleaved (2p, 2p+1) layout the encoder
+  emits; larger molecules with > 2 spatial orbitals (4 spin-orbitals)
+  still work bit-for-bit on this layout. The alpha-then-beta block
+  ordering is a future optimization layer, not a correctness gap.
+

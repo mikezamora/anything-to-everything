@@ -21,6 +21,7 @@ dependencies = [
     "cuquantum-python-cu12<25",
     "cvxpy>=1.4",
     "sympy>=1.12",
+    "pyscf>=2.13.0",
 ]
 
 [project.optional-dependencies]
