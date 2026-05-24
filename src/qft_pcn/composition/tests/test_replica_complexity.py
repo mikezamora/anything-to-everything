@@ -19,7 +19,7 @@ from src.qft_pcn.composition.replica_complexity import (
     ComplexityPrediction,
     DEFAULT_INVERSE_TEMP,
     DEFAULT_REPLICA_N_GRID,
-    compute_typical_complexity,
+    compute_typical_field_marginal_complexity,
     instance_partition_function,
     predict_proof_difficulty,
 )
@@ -69,7 +69,7 @@ def test_homogeneous_ensemble_predicts_low_complexity() -> None:
     """
     src = r"\x:Int. x"
     ensemble = [src] * 8
-    pred = compute_typical_complexity(ensemble)
+    pred = compute_typical_field_marginal_complexity(ensemble)
     assert isinstance(pred, ComplexityPrediction)
     assert pred.ensemble_size == 8
 
@@ -110,8 +110,8 @@ def test_diverse_ensemble_predicts_higher_complexity() -> None:
         r"\f:Int->Int. \x:Int. f x",
     ]
 
-    pred_homo = compute_typical_complexity(homo)
-    pred_hetero = compute_typical_complexity(hetero)
+    pred_homo = compute_typical_field_marginal_complexity(homo)
+    pred_hetero = compute_typical_field_marginal_complexity(hetero)
 
     # Heterogeneity strictly larger.
     assert pred_hetero.log_z_std > pred_homo.log_z_std
@@ -141,8 +141,8 @@ def test_complexity_invariant_under_alpha_renaming() -> None:
         r"\g:Int->Int. \w:Int. g w",
     ]
 
-    pred_x = compute_typical_complexity(ens_x)
-    pred_r = compute_typical_complexity(ens_renamed)
+    pred_x = compute_typical_field_marginal_complexity(ens_x)
+    pred_r = compute_typical_field_marginal_complexity(ens_renamed)
 
     assert pred_x.typical_log_z == pytest.approx(
         pred_r.typical_log_z, abs=1e-12, rel=1e-12
@@ -173,7 +173,7 @@ def test_complexity_regime_limit_documented() -> None:
         r"\f:Int->Int. \x:Int. f x",
         r"\x:Int. \y:Int. \z:Int. x + y + z",
     ]
-    pred_healthy = compute_typical_complexity(healthy)
+    pred_healthy = compute_typical_field_marginal_complexity(healthy)
     assert pred_healthy.regime == "well_conditioned"
     assert pred_healthy.ensemble_size == len(healthy)
     assert np.isfinite(pred_healthy.typical_log_z)
@@ -181,7 +181,7 @@ def test_complexity_regime_limit_documented() -> None:
 
     # (b) Single-instance ensemble: documented degraded regime
     # (well-defined value, but no replica averaging).
-    pred_single = compute_typical_complexity([r"\x:Int. x"])
+    pred_single = compute_typical_field_marginal_complexity([r"\x:Int. x"])
     assert pred_single.regime == "degraded"
     assert any("single-instance" in n for n in pred_single.notes)
     assert pred_single.ensemble_size == 1
@@ -193,7 +193,7 @@ def test_complexity_regime_limit_documented() -> None:
 
     # (c) Fully-empty / unparseable ensemble: degrades to "empty"
     # without raising; difficulty is +inf.
-    pred_empty = compute_typical_complexity([])
+    pred_empty = compute_typical_field_marginal_complexity([])
     assert pred_empty.regime == "empty"
     assert pred_empty.ensemble_size == 0
     assert pred_empty.difficulty == float("inf")

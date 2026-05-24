@@ -564,7 +564,7 @@ def predict_proof_difficulty(
 ) -> float:
     """Predict the difficulty of one theorem given a solved-similar corpus.
 
-    Wraps :func:`compute_typical_complexity` on the ensemble
+    Wraps :func:`compute_typical_field_marginal_complexity` on the ensemble
     ``[theorem] + list(similar_solved_corpus)``. The intuition is the
     §12.7 mean-field reading: a theorem whose addition to a solved
     corpus does not perturb ``<log Z>`` away from the solved-corpus
@@ -584,7 +584,7 @@ def predict_proof_difficulty(
         Iterable of previously-solved theorems for the same class
         (e.g. the wake-sleep solved set, spec §10.9 / §10.10 K-8).
     beta, n_grid:
-        Forwarded to :func:`compute_typical_complexity`.
+        Forwarded to :func:`compute_typical_field_marginal_complexity`.
     """
     ensemble: list[Node | str] = [theorem]
     ensemble.extend(similar_solved_corpus)
