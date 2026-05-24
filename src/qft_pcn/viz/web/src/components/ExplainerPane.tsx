@@ -114,9 +114,6 @@ function renderTab(spec: ExplainerSpec, tab: TabId) {
     );
   }
   if (tab === 'math') {
-    if (spec.tabs.math.equationIds.length === 0) {
-      return <p className="explainer-empty">Equations not yet registered for this layer.</p>;
-    }
     return (
       <>
         {spec.tabs.math.equationIds.map((id) => (

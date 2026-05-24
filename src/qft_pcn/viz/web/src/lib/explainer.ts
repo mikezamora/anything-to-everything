@@ -51,7 +51,7 @@ export const EXPLAINERS: Record<string, ExplainerSpec> = {
           { name: 'Overlay (Φ / E / Π)', meaning: 'Belief / error / precision fields of the first PCN layer' },
         ],
       },
-      math: { equationIds: [] },
+      math: { equationIds: ['metric-perturbation', 'ricci-scalar', 'laplace-beltrami'] },
       workedExample: {
         title: 'Flat patch with a single error spike',
         setup: 'Start with h_μν = 0 (g = η, R = 0). Inject a Gaussian bump in E of magnitude 1 at the origin; T_xx ≈ (∂_x E)² peaks on the bump\'s flanks.',
@@ -62,7 +62,7 @@ export const EXPLAINERS: Record<string, ExplainerSpec> = {
         takeaway: 'When E flattens (no prediction error), T_μν → 0 and h_μν relaxes back to zero: geometry literally tracks uncertainty.',
       },
       trainingDynamics: {
-        updateRuleId: '',
+        updateRuleId: 'metric-perturbation',
         expect: [
           'Curvature concentrates where error spikes; mean |R| stabilises after error decays.',
           'Overlay Φ peaks track regions the model is confidently predicting.',
@@ -98,7 +98,7 @@ export const EXPLAINERS: Record<string, ExplainerSpec> = {
           { name: 'Mean |g|', meaning: 'aggregate coupling strength (legacy scalar — hides per-pair structure)', code: 'snapshot_multifield:mean_abs_coupling' },
         ],
       },
-      math: { equationIds: [] },
+      math: { equationIds: ['multifield-yukawa', 'coupling-descent'] },
       workedExample: {
         title: 'Two correlated fields drive g_12 up',
         setup: 'Two species Φ_1, Φ_2 with identical Gaussian-bump beliefs (correlation ≈ 1) and g_12 = 0 at t = 0; learning rate η = 0.05.',
@@ -109,7 +109,7 @@ export const EXPLAINERS: Record<string, ExplainerSpec> = {
         takeaway: 'A pair with no shared structure has ⟨Φ_i Φ_j⟩ ≈ 0; its g_ij stays near zero. Co-varying pairs grow couplings; uncorrelated pairs decouple — the §4.5 selection signal.',
       },
       trainingDynamics: {
-        updateRuleId: '',
+        updateRuleId: 'coupling-descent',
         expect: [
           'Mean |g| rises when fields co-vary; pair traces let you see WHICH pairs are converging.',
           'Surfaces with no shared structure stay near-flat in coupling.',
@@ -142,7 +142,7 @@ export const EXPLAINERS: Record<string, ExplainerSpec> = {
           { name: 'Page-curve reference', meaning: 'random-state entropy ceiling (visual guide)' },
         ],
       },
-      math: { equationIds: [] },
+      math: { equationIds: ['mps-ansatz', 'entanglement-entropy'] },
       workedExample: {
         title: 'Bell pair on a 2-site MPS',
         setup: 'N = 2 sites, d_local = 2, target state |ψ⟩ = (|00⟩ + |11⟩)/√2.',
@@ -153,7 +153,7 @@ export const EXPLAINERS: Record<string, ExplainerSpec> = {
         takeaway: 'A maximally entangled cut saturates at log(χ); reducing χ_max forces truncation and lowers achievable S — the bond-dim bar is a literal capacity ceiling.',
       },
       trainingDynamics: {
-        updateRuleId: '',
+        updateRuleId: 'imag-time-evolution',
         expect: [
           'Bonds saturate to χ_max under entangling dynamics.',
           'Entropy clusters in the middle for short-range Hamiltonians (volume-law-like in the bulk, area-law at the edges).',
@@ -186,7 +186,7 @@ export const EXPLAINERS: Record<string, ExplainerSpec> = {
           { name: 'Curvature strip', meaning: '1D R(x_k) per MPS site, modulating ω via ξ', code: 'Hamiltonian.curvature' },
         ],
       },
-      math: { equationIds: [] },
+      math: { equationIds: ['hamiltonian-decomp'] },
       workedExample: {
         title: 'Single-site mass term under curvature',
         setup: 'One species, one site, ω = 1.0, ξ = 0.2, R(x) = 0.5 at that site; n is the number operator.',
@@ -197,7 +197,7 @@ export const EXPLAINERS: Record<string, ExplainerSpec> = {
         takeaway: 'Curvature is a multiplicative modulation of bare mass; live param edits in the QPCN panel show up here as updated ω rows.',
       },
       trainingDynamics: {
-        updateRuleId: '',
+        updateRuleId: 'param-update',
         expect: [
           'd_local equals ∏ species cutoffs — larger d means richer dynamics.',
           'Curvature peaks should correlate with the manifold-panel curvature; live param edits in QPCN show up in this panel\'s ω / t rows.',
@@ -232,7 +232,7 @@ export const EXPLAINERS: Record<string, ExplainerSpec> = {
           { name: '⟨n_k⟩ per site', meaning: 'real particle occupation per species per site (state.local_expectation(k, H.n(s)))', code: 'snapshot_qpcn:occupations_n' },
         ],
       },
-      math: { equationIds: [] },
+      math: { equationIds: ['free-energy-functional', 'imag-time-evolution', 'param-update'] },
       workedExample: {
         title: 'One imag-time step lowers ⟨H⟩',
         setup: 'Start with |ψ_0⟩ such that ⟨H⟩ = 1.20 with ground-state energy E_0 = 0.50; step dτ = 0.1; one target observable o with t_o = 0.30 and ⟨O⟩ = 0.50.',
@@ -243,7 +243,7 @@ export const EXPLAINERS: Record<string, ExplainerSpec> = {
         takeaway: 'Two intertwined loops: imag-time relaxation lowers ⟨H⟩ at fixed θ; gradient steps adjust θ to shrink pred-errors. Both must converge for the model to "fit".',
       },
       trainingDynamics: {
-        updateRuleId: '',
+        updateRuleId: 'param-update',
         expect: [
           'Energy decreases monotonically under imag-time (the relaxation invariant).',
           'Pred-errors shrink as parameters adapt; ⟨n_k⟩ stabilises once the ground state is found.',
@@ -277,7 +277,7 @@ export const EXPLAINERS: Record<string, ExplainerSpec> = {
           { name: 'iso err sparkline', meaning: 'per-layer mean ‖W W† − I‖_F (isometry-condition residual)' },
         ],
       },
-      math: { equationIds: [] },
+      math: { equationIds: ['entanglement-entropy', 'mps-ansatz'] },
       workedExample: {
         title: 'A 4-leaf MERA with two RG layers',
         setup: 'N = 4 leaves on the boundary; one disentangler U_1 (acts on the middle pair) and two 2→1 isometries W_1; one coarse isometry W_2 at the top.',
@@ -288,7 +288,7 @@ export const EXPLAINERS: Record<string, ExplainerSpec> = {
         takeaway: 'Each RG layer pairs a disentangler with an isometry; the iso-err sparkline must stay near zero, otherwise the tree is no longer a valid coarse-grainer.',
       },
       trainingDynamics: {
-        updateRuleId: '',
+        updateRuleId: 'imag-time-evolution',
         expect: [
           'Logarithmic entropy scaling on critical states; per-layer χ caps captured entanglement.',
           'iso-err sparkline stays near zero — the W_ℓ are valid isometries.',
@@ -320,7 +320,7 @@ export const EXPLAINERS: Record<string, ExplainerSpec> = {
           { name: 'Bias', meaning: 'classical bias on the conv output' },
         ],
       },
-      math: { equationIds: [] },
+      math: { equationIds: ['parameter-shift-rule', 'param-update'] },
       workedExample: {
         title: 'Single-θ gradient via parameter shift',
         setup: 'A single rotation R_y(θ) on one qubit, observable O = Z; current θ = π/4, target = 0.6, current ⟨O⟩ = cos(π/4) ≈ 0.707.',
@@ -331,7 +331,7 @@ export const EXPLAINERS: Record<string, ExplainerSpec> = {
         takeaway: 'No finite differences and no autodiff through the simulator — the shift rule is exact and works identically on real hardware.',
       },
       trainingDynamics: {
-        updateRuleId: '',
+        updateRuleId: 'parameter-shift-rule',
         expect: [
           'Theta heatmap evolves smoothly under parameter-shift gradient descent.',
           'Bias shifts the mean of the conv output and adapts to data offset.',
@@ -362,7 +362,7 @@ export const EXPLAINERS: Record<string, ExplainerSpec> = {
           { name: 'Total energy', meaning: 'sum of all residual term energies' },
         ],
       },
-      math: { equationIds: [] },
+      math: { equationIds: ['hamiltonian-decomp', 'imag-time-evolution'] },
       workedExample: {
         title: 'β-reduction lowers H_eval',
         setup: 'Encode (λx. x) y as a logic-MPS with one β-redex; λ_β = 1.0; initial residual on the β-rule term H_β^{(i)} = 1.',
@@ -373,7 +373,7 @@ export const EXPLAINERS: Record<string, ExplainerSpec> = {
         takeaway: 'Reduction = relaxation: a satisfied rule term reads pale; a live binder reads as a bond-entropy spike. Both fade together as the program reduces.',
       },
       trainingDynamics: {
-        updateRuleId: '',
+        updateRuleId: 'imag-time-evolution',
         expect: [
           'Term node opacity drops as residual energy decays (relaxation).',
           'Binder bond entropy spikes mark live binders — the §8.1 invariant.',
@@ -428,7 +428,7 @@ export const EXPLAINERS: Record<string, ExplainerSpec> = {
           },
         ],
       },
-      math: { equationIds: [] },
+      math: { equationIds: ['hamiltonian-decomp', 'imag-time-evolution'] },
       workedExample: {
         title: 'One Trotter step preserves a ∀-bound witness',
         setup: 'AST ∀x:Nat. x + 0 = x encoded into a MERA; encoder marks leaf 7 (the x-witness) as ∀-protected. Initial total energy ⟨H_eval⟩ = 2.4 (R-AddZero + R-Eq-Refl residuals).',
@@ -439,7 +439,7 @@ export const EXPLAINERS: Record<string, ExplainerSpec> = {
         takeaway: 'The §8.1 / §10.10 invariant in action: relaxation reduces residual energy WITHOUT mutating the bound variable. Drop the freeze and the theorem witness disintegrates within a few steps.',
       },
       trainingDynamics: {
-        updateRuleId: '',
+        updateRuleId: 'imag-time-evolution',
         expect: [
           'Total energy decreases monotonically under imag-time (the relaxation invariant).',
           'The ∀-protected leaf set stays non-empty and bitwise stable across the run; AST round-trip continues to contain "forall".',
@@ -506,7 +506,7 @@ export const EXPLAINERS: Record<string, ExplainerSpec> = {
           },
         ],
       },
-      math: { equationIds: [] },
+      math: { equationIds: ['hamiltonian-decomp', 'imag-time-evolution'] },
       workedExample: {
         title: 'Solve a single-species DSL problem',
         setup: 'DSL: 1 species, N = 4 sites, ω = 1.0, t = 0.5, target tolerance tol = 1e-4, max_steps = 200.',
@@ -517,7 +517,7 @@ export const EXPLAINERS: Record<string, ExplainerSpec> = {
         takeaway: 'A one-shot resolve: the bridge swallows a DSL, returns a fully measured `RunResult`. `solved_ast` is None on this MPS path — only a MERA-based runner populates it.',
       },
       trainingDynamics: {
-        updateRuleId: '',
+        updateRuleId: 'imag-time-evolution',
         expect: [
           'converged = yes once the energy-per-step settles within tol.',
           'solved_ast is None on this MPS path — a MERA-based runner is required to populate it.',
@@ -557,7 +557,7 @@ export const EXPLAINERS: Record<string, ExplainerSpec> = {
           { name: 'mean Π', meaning: 'average precision across all layers; rises as the network becomes more confident.' },
         ],
       },
-      math: { equationIds: [] },
+      math: { equationIds: ['free-energy-functional', 'laplace-beltrami'] },
       workedExample: {
         title: 'Two-layer stack with a single data spike',
         setup: 'L = 2 PCN layers; data Φ_0 has a single bump of amplitude 1 at one pixel; both Φ_1, Φ_2 start at 0; Π_1 = Π_2 = 1; D = 0.1.',
@@ -568,7 +568,7 @@ export const EXPLAINERS: Record<string, ExplainerSpec> = {
         takeaway: 'Top layers carry coarse / abstract beliefs; bottom layers carry fast-changing error. Precision concentrates where E shrinks — the per-card heatmaps make this visible at a glance.',
       },
       trainingDynamics: {
-        updateRuleId: '',
+        updateRuleId: 'free-energy-functional',
         expect: [
           '‖E‖₂ should decrease across the run as predictions improve.',
           'mean Π should grow in regions where E shrinks (high confidence = high precision).',
@@ -607,7 +607,7 @@ export const EXPLAINERS: Record<string, ExplainerSpec> = {
           { name: 'MetricsStrip (total F)', meaning: 'time series of total F across the run — the primary convergence diagnostic.' },
         ],
       },
-      math: { equationIds: [] },
+      math: { equationIds: ['free-energy-functional', 'coupling-descent'] },
       workedExample: {
         title: 'Per-layer F decomposition on a 2-layer stack',
         setup: 'L = 2; layer 1: ‖E_1‖₂ = 2, mean Π_1 = 0.5; layer 2: ‖E_2‖₂ = 0.5, mean Π_2 = 1.0; κ = 0, R = 0 (ignore curvature term for clarity).',
@@ -618,7 +618,7 @@ export const EXPLAINERS: Record<string, ExplainerSpec> = {
         takeaway: 'The per-layer F row tells you WHICH layer is dominating the cost; total F is the master "is the network learning?" trace.',
       },
       trainingDynamics: {
-        updateRuleId: '',
+        updateRuleId: 'free-energy-functional',
         expect: [
           'total F decreases monotonically under successful learning.',
           'Per-layer F rows reveal which layer is the current bottleneck (largest contribution).',
@@ -658,7 +658,7 @@ export const EXPLAINERS: Record<string, ExplainerSpec> = {
           { name: '⟨H⟩ readout', meaning: 'QPCN variational energy ⟨ψ|H|ψ⟩; stands in for ⟨Ô⟩ — the operator-expectation feedback that PCN tries to match.', code: 'snapshot_pcn_coupling:qpcn_observable_energy' },
         ],
       },
-      math: { equationIds: [] },
+      math: { equationIds: ['metric-perturbation', 'free-energy-functional', 'ricci-scalar'] },
       workedExample: {
         title: 'PCN error spike sources QFT curvature',
         setup: 'κ_R = 0.1; mean |T| = 0.0 (network at rest); a single PCN error spike pushes mean |T| to 0.5; QPCN ⟨H⟩ = 1.0.',
@@ -669,7 +669,7 @@ export const EXPLAINERS: Record<string, ExplainerSpec> = {
         takeaway: 'The two arrows are the load-bearing §3 bridge: if one widens forever, the system is one-way coupled (a bug). At convergence both arrows are quiet.',
       },
       trainingDynamics: {
-        updateRuleId: '',
+        updateRuleId: 'metric-perturbation',
         expect: [
           'Top arrow widens as PCN error grows; mean |R| tracks mean |T| × κ_R.',
           'Both arrows should shrink together as the joint system relaxes.',
