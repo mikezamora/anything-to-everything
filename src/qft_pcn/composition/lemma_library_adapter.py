@@ -409,20 +409,78 @@ class LemmaLibraryAdapter:
                            deriv: DerivationMetadata,
                            parent_lemma: Lemma) -> str:
         """Persist a consolidation replacement L' under the PARENT
-        lemma's ``proposition_type`` and ``encoding_meta`` (D35). L' is
-        the §10.9 "shorter solution": same proposition as the parent,
-        but its MERA delegates the bulk to the newly-promoted primitive
-        recorded in :attr:`primitive.provenance.use_log` via
+        lemma's ``proposition_type`` (D35) with a PROJECTED
+        ``encoding_meta`` (D39) restricted to the matched sub-piece's
+        leaves.
+
+        L' is the §10.9 "shorter solution": same proposition as the
+        parent, but its MERA delegates the bulk to the newly-promoted
+        primitive recorded in :attr:`primitive.provenance.use_log` via
         ``uses_primitive:{src}`` markers.
 
-        Inheriting ``encoding_meta`` from the parent (rather than
-        synthesising the stub :meth:`_save_primitive` uses) keeps
-        :func:`_n_leaves_L` non-zero on L', so it ranks meaningfully
-        in :meth:`LemmaLibrary.cheapest_for_type`.
+        D39: ``bundle = bundle_from_mera(primitive.mera)`` carries
+        ``bundle.n_leaves = primitive.mera.N`` (sub-piece width). The
+        encoding_meta MUST agree on leaf count or downstream consumers
+        (``decode_mera``, ``mine_subtrees``, ``cached_solutions``)
+        IndexError or reconstruct a phantom AST. We synthesise the
+        projected meta via :meth:`MeraEncodingMeta.project_to_leaves`
+        using the matched sub-piece's leaf interval from
+        :attr:`primitive.provenance.occurrences`. The §10.9 wake-sleep
+        consolidator builds replacement primitives from a single-member
+        cluster (``compute_canonical_form(Cluster(members=[matched_cand]),
+        ...)``), so the occurrence list has exactly one entry whose
+        ``leaf_interval`` width equals ``primitive.mera.N``. We pick
+        that occurrence (defensively: width-match) and project the
+        parent's meta to ``[lo, hi)``.
+
+        The projected ``n_leaves`` is smaller than the parent's, so
+        ``_n_leaves_L = 5 * n_nodes`` is smaller for L' than for the
+        parent. This makes L' rank STRICTLY ABOVE the parent in
+        :meth:`LemmaLibrary.cheapest_for_type` (D38: combined with the
+        adapter-level pruned-filter override of ``cheapest_for_type``).
         """
         bundle: MeraTensorBundle = bundle_from_mera(primitive.mera)
         fp = structural_fingerprint(primitive.mera)
         prop_type = parent_lemma.proposition_type
+        # D39: find the matched sub-piece's leaf interval on the parent.
+        # ``compute_canonical_form`` records every cluster-member's
+        # ``leaf_interval`` in ``provenance.occurrences``; the
+        # consolidation path uses a single-member cluster, so the list
+        # has exactly one entry. We defensively match by width to handle
+        # any future multi-member consolidations.
+        sub_piece_N = int(primitive.mera.N)
+        leaf_interval = None
+        for _src, interval in primitive.provenance.occurrences:
+            lo, hi = int(interval[0]), int(interval[1])
+            if hi - lo == sub_piece_N and lo >= 0 and \
+                    hi <= parent_lemma.encoding_meta.n_leaves:
+                leaf_interval = (lo, hi)
+                break
+        if leaf_interval is None:
+            # No occurrence aligns with the sub-piece on the parent — the
+            # primitive was promoted from a different source. Fall back
+            # to a leaf-only stub meta whose scalar shape
+            # (n_leaves, n_nodes=0, leaf_dim, L) matches the bundle but
+            # carries no AST structure. This preserves bundle/meta
+            # consistency at the cost of dropping the AST projection;
+            # ``_n_leaves_L`` then falls back to its content-hash tail
+            # parse on the lemma_id (a known limitation, noted in
+            # EXTENSIONS for richer cross-parent consolidations).
+            n_leaves = sub_piece_N
+            projected_meta = MeraEncodingMeta(
+                n_nodes=0,
+                n_leaves=n_leaves,
+                L=primitive.mera.L,
+                leaf_dim=parent_lemma.encoding_meta.leaf_dim,
+                species_of_leaf=["pad"] * n_leaves,
+                node_of_leaf=[-1] * n_leaves,
+                site_to_ast_path={},
+                binder_leaves={},
+                use_to_binder={},
+            )
+        else:
+            projected_meta = parent_lemma.encoding_meta.project_to_leaves(
+                leaf_interval[0], leaf_interval[1])
         # Namespace the content hash by parent source_run_id so
         # consolidating the same parent twice (or two distinct parents
         # to byte-identical L') do not collide in the manifest.
@@ -430,10 +488,42 @@ class LemmaLibraryAdapter:
                                source_run_id=deriv.source_run_id)
         lemma = Lemma(lemma_id=lemma_id, proposition_type=prop_type,
                       mera_tensors=bundle,
-                      encoding_meta=parent_lemma.encoding_meta,
+                      encoding_meta=projected_meta,
                       derivation=deriv, fingerprint=fp)
         self.library.save(lemma)
         return lemma_id
+
+    def cheapest_for_type(self, proposition_type: str):
+        """Adapter-level :meth:`LemmaLibrary.cheapest_for_type` that
+        filters out pruned ids (D38).
+
+        The underlying :meth:`LemmaLibrary.cheapest_for_type` iterates
+        ``self._manifest`` directly (the store is append-only by spec
+        §4); it cannot know about the adapter-side ``self.pruned`` set
+        that :meth:`replace` populates. Without this override, a
+        subsumed parent stays in the candidate list next to its
+        replacement L', and the sort tie-break by ``lemma_id`` (a
+        content-addressed sha-ish) becomes non-deterministic between
+        the two.
+
+        With D39's projected ``encoding_meta`` on L', the primary sort
+        key ``_n_leaves_L`` is STRICTLY SMALLER for L' than for the
+        parent — but we still filter the parent out so the manifest
+        reflects the §10.9 "subsume parent with shorter solution"
+        contract regardless of the parent's ``n_leaves_L`` value (e.g.
+        a same-width parent left in via a degenerate projection).
+        """
+        cands = [
+            (m["n_leaves_L"], m["trotter_steps"], lid)
+            for lid, m in self.library._manifest.items()
+            if m["proposition_type"] == proposition_type
+            and not m["proposition_type"].startswith("primitive:")
+            and lid not in self.pruned
+        ]
+        if not cands:
+            return None
+        cands.sort()
+        return self.library.load(cands[0][2])
 
     def prune(self, lemma_ids) -> int:
         """Mark ``lemma_ids`` as pruned. Core-tier entries are skipped (spec

@@ -51,6 +51,124 @@ class MeraEncodingMeta:
     forall_protected_leaves: set[int] = field(default_factory=set)  # I-Task-10 blocker #5: leaves frozen during evolution to preserve universal quantification (Forall's own bid leaf + all 5 species leaves of every bound Var use)
     typehole_regions: list = field(default_factory=list)   # M3 P5: per-TypeHole entries: dict(lam_node, candidate_tags, affected_leaves)
 
+    def project_to_leaves(self, lo: int, hi: int) -> "MeraEncodingMeta":
+        """Return a sub-meta restricted to leaves ``[lo, hi)`` (D39).
+
+        Used by :meth:`LemmaLibraryAdapter._save_consolidated` to build
+        an encoding meta that matches the sub-piece's
+        :class:`MeraTensorBundle` (``bundle.n_leaves = hi - lo``) instead
+        of inheriting the parent's full-AST meta wholesale. Without this
+        projection, ``lemma.encoding_meta.n_leaves`` exceeds
+        ``bundle.n_leaves``: leaf-indexed downstream consumers
+        (``decode_mera`` reading ``n_nodes`` and walking
+        ``LEAVES_PER_NODE * n_nodes`` leaves; ``mine_subtrees`` iterating
+        ``node_of_leaf``) IndexError or rebuild a phantom AST.
+
+        Invariants:
+        * ``hi - lo`` is a power of two (sub-piece blocks are
+          ``2^d``-wide per ``_node_aligned_intervals``; the
+          ``node_of_leaf`` array can carry ``-1`` padding for leaves
+          not assigned to a real AST node, so widths need not be a
+          multiple of ``LEAVES_PER_NODE``).
+        * Returned ``n_leaves = hi - lo``; ``n_nodes`` is the count of
+          DISTINCT non-padding node ids in
+          ``node_of_leaf[lo:hi]`` (matches the §4.4 "touched" node set
+          that the miner uses).
+        * ``site_to_ast_path`` keys (which are leaf indices in this
+          codebase) are re-indexed to ``key - lo``; entries outside
+          ``[lo, hi)`` are dropped.
+        * ``binder_leaves`` / ``use_to_binder`` keep only entries whose
+          *values* (and ``use_to_binder`` keys) lie in ``[lo, hi)``,
+          re-indexed by ``-lo``. Binders whose body extends outside the
+          sub-piece are dropped — the sub-piece is a self-contained
+          density on the projected leaves.
+        * ``forall_protected_leaves`` is restricted and re-indexed.
+
+        Note: ``layout``, ``children_of_node``, ``nested_type_index``,
+        ``hole_regions``, ``witness_node_ranges``, ``typehole_regions``
+        are NOT projected — they reference the parent's node graph and
+        have no meaningful sub-piece restriction. They are zeroed/empty
+        on the projected meta. Downstream consumers that depend on these
+        for sub-pieces will need a richer projection; the §10.9
+        consolidation path uses only the leaf-aligned fields.
+        """
+        if lo < 0 or hi < lo:
+            raise ValueError(
+                f"project_to_leaves: bad interval ({lo}, {hi})")
+        if hi > self.n_leaves:
+            raise ValueError(
+                f"project_to_leaves: hi={hi} exceeds parent n_leaves="
+                f"{self.n_leaves}")
+        new_n_leaves = hi - lo
+        if new_n_leaves <= 0 or (new_n_leaves & (new_n_leaves - 1)) != 0:
+            raise ValueError(
+                f"project_to_leaves: interval width {new_n_leaves} must "
+                f"be a positive power of two (sub-piece blocks are "
+                f"2^d-wide per spec §4.4)")
+        new_species = list(self.species_of_leaf[lo:hi])
+        # node_of_leaf for the sub-piece: re-index touched nodes to a
+        # contiguous 0..k-1 range, preserving the relative order of their
+        # first appearance in [lo, hi). Padding leaves (-1) stay -1.
+        parent_nol = self.node_of_leaf
+        touched_in_order: list[int] = []
+        seen: set[int] = set()
+        for i in range(lo, hi):
+            nd = parent_nol[i] if i < len(parent_nol) else -1
+            if nd != -1 and nd not in seen:
+                seen.add(nd)
+                touched_in_order.append(nd)
+        node_remap = {nd: k for k, nd in enumerate(touched_in_order)}
+        new_n_nodes = len(touched_in_order)
+        new_node_of_leaf = []
+        for i in range(lo, hi):
+            nd = parent_nol[i] if i < len(parent_nol) else -1
+            new_node_of_leaf.append(node_remap[nd] if nd != -1 else -1)
+        # site_to_ast_path: keys are leaf indices.
+        new_site_to_ast = {
+            k - lo: v for k, v in self.site_to_ast_path.items()
+            if lo <= k < hi
+        }
+        # binder_leaves: AST-node -> leaf. Keep entries whose leaf is
+        # in range; AST-node keys are preserved (they identify the parent
+        # AST node, not a leaf), values are re-indexed.
+        new_binder_leaves = {
+            ast_node: leaf - lo
+            for ast_node, leaf in self.binder_leaves.items()
+            if lo <= leaf < hi
+        }
+        # use_to_binder: leaf -> leaf. Keep entries whose BOTH leaves are
+        # in range (a use whose binder is outside the sub-piece is dangling
+        # in the projection — drop it; the sub-piece density does not
+        # carry that variable binding).
+        new_use_to_binder = {
+            use - lo: binder - lo
+            for use, binder in self.use_to_binder.items()
+            if lo <= use < hi and lo <= binder < hi
+        }
+        new_protected = {
+            leaf - lo for leaf in self.forall_protected_leaves
+            if lo <= leaf < hi
+        }
+        return MeraEncodingMeta(
+            n_nodes=new_n_nodes,
+            n_leaves=new_n_leaves,
+            L=self.L,
+            leaf_dim=self.leaf_dim,
+            species_of_leaf=new_species,
+            node_of_leaf=new_node_of_leaf,
+            site_to_ast_path=new_site_to_ast,
+            binder_leaves=new_binder_leaves,
+            use_to_binder=new_use_to_binder,
+            nested_type_index={},
+            layout=None,
+            children_of_node={},
+            n_nodes_max=0,
+            hole_regions=[],
+            witness_node_ranges=[],
+            forall_protected_leaves=new_protected,
+            typehole_regions=[],
+        )
+
 
 def _binder_kinds() -> set[int]:
     """Kind indices that introduce a binder (Lam, Forall, Fix)."""

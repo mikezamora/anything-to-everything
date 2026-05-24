@@ -543,3 +543,70 @@ already catalogued in `EXTENSIONS.md` are not re-listed here.
   `test_compile_constraint_rejects_count_mismatch`,
   `test_apply_init_clamp_rejects_out_of_range_leaf_typed`.
 - Audit source: pass 3 §6-§9
+
+### D38 — `cheapest_for_type` ignored adapter-side `self.pruned` — RESOLVED
+- Location: `src/qft_pcn/composition/lemma_library_adapter.py`
+  `LemmaLibraryAdapter.cheapest_for_type` (new method);
+  `lemma_library.py::cheapest_for_type` lines 649-665 retained as the
+  raw-manifest fallback for non-adapter callers.
+- Spec: §10.9 — "subsume parent with shorter solution" so cache-by-
+  proposition_type lookups prefer L' over the consolidated parent.
+- Issue: `LemmaLibrary.cheapest_for_type` iterates `self._manifest`
+  directly and has no view of adapter-side state. `replace()`
+  populates `self.pruned` on the adapter (the store is append-only by
+  spec §4), but a library-level scan still surfaces the parent
+  alongside L'. With D35's inherited `encoding_meta`, the sort keys
+  `(n_leaves_L, trotter_steps)` tied between parent and L', falling
+  to a non-deterministic `lemma_id` tie-break.
+- Resolution: `LemmaLibraryAdapter.cheapest_for_type` filters out
+  `lid in self.pruned` before sorting, then delegates the load to
+  the underlying library. Combined with D39's projected meta (which
+  makes L'`s `n_leaves_L` strictly smaller than the parent's), the
+  sort now puts L' first deterministically; the pruned-filter is a
+  belt-and-suspenders guarantee even for degenerate same-width
+  projections. New test
+  `test_cheapest_for_type_skips_pruned_parents` pins it.
+- Audit source: pass 4 §10 D38.
+
+### D39 — Consolidated L' bundle/encoding_meta leaf-count mismatch — RESOLVED
+- Location: `src/qft_pcn/composition/lemma_library_adapter.py`
+  `_save_consolidated`; `src/qft_pcn/logic/mera_encoder.py`
+  `MeraEncodingMeta.project_to_leaves` (new method).
+- Spec: §4.2 / §5.4 — a persisted Lemma's `MeraTensorBundle` and
+  `MeraEncodingMeta` describe the same tensor network; downstream
+  consumers (`decode_mera`, `mine_subtrees`, `cached_solutions`)
+  read both and assume they agree on leaf count.
+- Issue: L' was built from `primitive.mera` (a re-purified sub-piece
+  of the parent's matched candidate, width
+  `primitive.mera.N`), so `bundle.n_leaves = primitive.mera.N`. But
+  the inherited `encoding_meta` (D35) was the PARENT's, with the
+  parent's full-AST `n_leaves`, `node_of_leaf`, `species_of_leaf`,
+  `site_to_ast_path`, `binder_leaves`, `use_to_binder`. Any
+  leaf-indexed consumer (decode_mera at index >= bundle.n_leaves,
+  mine_subtrees iterating `node_of_leaf`) IndexErrored or rebuilt a
+  phantom AST. The §10.9 depth>1 iterative-consolidation claim
+  collapsed on cycle 2 when L' was consumed as a parent.
+- Resolution: added `MeraEncodingMeta.project_to_leaves(lo, hi)`
+  that synthesises a sub-meta restricted to the matched sub-piece's
+  leaves: `n_leaves = hi - lo`, `n_nodes` = count of distinct
+  touched non-padding nodes in `node_of_leaf[lo:hi]` (matches the
+  §4.4 miner's "touched" set), `species_of_leaf` restricted,
+  `node_of_leaf` remapped to a contiguous 0..k-1 range,
+  `site_to_ast_path` / `binder_leaves` / `use_to_binder` filtered
+  to in-range leaves and re-indexed by `-lo`,
+  `forall_protected_leaves` restricted. `_save_consolidated`
+  recovers the matched interval from
+  `primitive.provenance.occurrences` (width-match defensively
+  handles the single-member-cluster wake-sleep path
+  unambiguously) and persists the projected meta with L'. A
+  fallback stub-meta path (`n_nodes=0`, `node_of_leaf=[-1]*N`,
+  empty AST maps) keeps the bundle/meta consistency invariant for
+  any future caller that loses the leaf-interval. Three new tests:
+  `test_save_consolidated_projects_encoding_meta` (n_leaves
+  matches sub-piece, not parent),
+  `test_save_consolidated_decode_reconstructs_sub_piece_ast`
+  (every leaf index in `site_to_ast_path` / `binder_leaves` /
+  `use_to_binder` lies in `[0, sub_n)`; phantom parent leaves no
+  longer leak), and `test_cheapest_for_type_skips_pruned_parents`
+  (combined D38+D39: L' wins the cache ranking).
+- Audit source: pass 4 §10 D39.

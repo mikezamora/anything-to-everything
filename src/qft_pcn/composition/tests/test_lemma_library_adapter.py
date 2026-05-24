@@ -275,3 +275,180 @@ def test_save_primitive_refuses_when_avg_trace_distance_exceeds_eps_register(
     clean_id = adapter.register(clean)
     assert clean_id is not None
     assert clean_id in lib.all_ids()
+
+
+# --- D38 / D39 -----------------------------------------------------------
+
+def _parent_lemma_for_consolidation(adapter, lib, source_id: str = "parent0"):
+    r"""Register a real solved-problem lemma whose encoding has enough
+    leaves that a node-aligned sub-interval is a strict subset.
+    ``\x. \y. x`` encodes to two binders (Lam) -> several nodes;
+    encode_mera yields a meta with n_leaves >= 10. Returns
+    ``(parent_id, parent_lemma)``."""
+    state, meta = encode_mera(parse(r"\x:Int. \y:Int. x"))
+    pid = adapter.register((state, meta, source_id))
+    assert pid is not None, "parent solved-triple must register"
+    return pid, lib.load(pid)
+
+
+def _consolidation_primitive(parent_lemma, sub_n_leaves: int,
+                             source_id: str = "child0",
+                             parent_sid_for_log: str = "parent0"):
+    """Build a CanonicalPrimitive whose ``mera.N == sub_n_leaves`` and whose
+    provenance carries a single occurrence on ``parent_sid_for_log`` with
+    interval ``(0, sub_n_leaves)`` -- the node-aligned sub-piece on the
+    parent's leftmost leaves. The MERA itself is a vacuum product MERA of
+    width ``sub_n_leaves`` (independent of the parent's tensors; D39 only
+    requires the bundle/meta shape to match, not the parent's amplitudes)."""
+    from src.qft_pcn.qft.mera import MERA
+    leaf = np.zeros(parent_lemma.encoding_meta.leaf_dim, dtype=complex)
+    leaf[0] = 1.0
+    mera = MERA.from_product([leaf] * sub_n_leaves)
+    rho = np.array([[1.0 + 0j]])
+    prov = Provenance(
+        source_ids=(source_id,),
+        occurrences=((parent_sid_for_log, (0, sub_n_leaves)),),
+        discovered_in_cycle=1,
+    )
+    return CanonicalPrimitive(
+        rho_canonical=rho, mera=mera, chi=1,
+        avg_trace_distance=0.0, provenance=prov,
+    )
+
+
+def test_save_consolidated_projects_encoding_meta(tmp_path):
+    """D39: ``_save_consolidated`` must persist L' with an encoding_meta
+    whose ``n_leaves`` matches the sub-piece's ``bundle.n_leaves``
+    (= primitive.mera.N), NOT inherit the parent's full-AST n_leaves.
+
+    Without this, downstream consumers indexing leaves by
+    ``encoding_meta.n_leaves`` IndexError past ``bundle.n_leaves``, and
+    ``decode_mera`` reconstructs a phantom AST from leaves that don't
+    exist in L'.
+    """
+    lib = LemmaLibrary(tmp_path)
+    adapter = LemmaLibraryAdapter(lib)
+    parent_id, parent_lemma = _parent_lemma_for_consolidation(adapter, lib)
+    parent_n_leaves = parent_lemma.encoding_meta.n_leaves
+    # Sub-piece: a power-of-2 leftmost interval on the parent's leaves
+    # (``_node_aligned_intervals`` enumerates widths 2, 4, 8, ...; the
+    # MERA binary ascend requires a power-of-two width).
+    sub_n = 4
+    assert parent_n_leaves > sub_n, (
+        f"parent must have strictly more leaves than the sub-piece for "
+        f"D39 to be observable; got parent={parent_n_leaves} sub={sub_n}")
+    prim = _consolidation_primitive(parent_lemma, sub_n,
+                                    parent_sid_for_log=parent_id)
+    new_id = adapter.replace(parent_id, prim)
+    L_prime = lib.load(new_id)
+    # Core D39 invariant: bundle and meta agree on leaf count.
+    assert L_prime.encoding_meta.n_leaves == sub_n, (
+        f"D39: L'.encoding_meta.n_leaves must equal sub-piece N={sub_n}, "
+        f"got {L_prime.encoding_meta.n_leaves} (parent had "
+        f"{parent_n_leaves})")
+    assert L_prime.encoding_meta.n_leaves != parent_n_leaves, (
+        "D39: L'.encoding_meta.n_leaves must NOT inherit the parent's "
+        "full-AST leaf count")
+    # Derived: n_nodes scales with sub-piece, species_of_leaf restricted.
+    assert L_prime.encoding_meta.n_nodes == len(set(parent_lemma.encoding_meta.node_of_leaf[:sub_n]) - {-1})
+    assert len(L_prime.encoding_meta.species_of_leaf) == sub_n
+    # Bundle/meta consistency: indexing leaves up to meta.n_leaves stays
+    # within the bundle's leaf array.
+    bundle = L_prime.mera_tensors
+    assert bundle.n_leaves == L_prime.encoding_meta.n_leaves, (
+        f"bundle.n_leaves ({bundle.n_leaves}) must equal "
+        f"meta.n_leaves ({L_prime.encoding_meta.n_leaves})")
+
+
+def test_save_consolidated_decode_reconstructs_sub_piece_ast(tmp_path):
+    """D39: with the projected meta, leaf-indexed consumers of L' see
+    only the sub-piece's leaves, not phantom parent indices. We check
+    every structural invariant a downstream decoder/iterator relies on:
+
+    * ``meta.n_leaves == bundle.n_leaves`` (no IndexError when iterating
+      leaves up to ``meta.n_leaves``).
+    * ``len(meta.node_of_leaf) == bundle.n_leaves`` and
+      ``len(meta.species_of_leaf) == bundle.n_leaves`` (both are
+      leaf-indexed by every consumer).
+    * Every leaf referenced in ``meta.site_to_ast_path`` /
+      ``meta.binder_leaves`` / ``meta.use_to_binder`` lies in
+      ``[0, bundle.n_leaves)`` (no parent-AST phantom leaves leak
+      through).
+    * ``meta.n_nodes`` equals the count of distinct touched nodes in
+      the projected ``node_of_leaf`` (a phantom-AST decoder reading
+      this scalar walks the correct number of nodes).
+
+    Pre-D39 fix: the inherited meta carries the parent's full-AST
+    ``n_leaves``, ``site_to_ast_path`` keyed on parent leaf indices >=
+    bundle.n_leaves, and parent ``n_nodes``. Any leaf-indexed consumer
+    (decode_mera, mine_subtrees) IndexErrors or rebuilds a phantom AST
+    from indices that no longer exist. Post-fix: every invariant
+    above holds.
+    """
+    lib = LemmaLibrary(tmp_path)
+    adapter = LemmaLibraryAdapter(lib)
+    parent_id, parent_lemma = _parent_lemma_for_consolidation(adapter, lib)
+    sub_n = 4
+    prim = _consolidation_primitive(parent_lemma, sub_n,
+                                    parent_sid_for_log=parent_id)
+    new_id = adapter.replace(parent_id, prim)
+    L_prime = lib.load(new_id)
+    bundle = L_prime.mera_tensors
+    meta = L_prime.encoding_meta
+    assert meta.n_leaves == bundle.n_leaves == sub_n
+    assert len(meta.node_of_leaf) == sub_n, (
+        f"D39: node_of_leaf must have one entry per sub-piece leaf; "
+        f"got {len(meta.node_of_leaf)} entries for {sub_n} leaves")
+    assert len(meta.species_of_leaf) == sub_n
+    # No parent-AST phantom leaves leak through into the projected meta.
+    for leaf in meta.site_to_ast_path.keys():
+        assert 0 <= leaf < sub_n, (
+            f"D39: site_to_ast_path leaf {leaf} out of sub-piece range "
+            f"[0, {sub_n}); parent leaf would have leaked through")
+    for _ast_node, leaf in meta.binder_leaves.items():
+        assert 0 <= leaf < sub_n
+    for use, binder in meta.use_to_binder.items():
+        assert 0 <= use < sub_n and 0 <= binder < sub_n
+    # n_nodes is the count of distinct touched parent nodes (after
+    # remap to a contiguous 0..k-1 range).
+    expected_n_nodes = len(
+        set(parent_lemma.encoding_meta.node_of_leaf[:sub_n]) - {-1})
+    assert meta.n_nodes == expected_n_nodes
+
+
+def test_cheapest_for_type_skips_pruned_parents(tmp_path):
+    """D38: the adapter's ``cheapest_for_type`` must filter out pruned
+    parent lemmas. After ``replace(parent_id, L')``, ``parent_id`` is in
+    ``adapter.pruned`` (the store is append-only, so the parent stays on
+    disk). Without the filter, the library-level ``cheapest_for_type``
+    iterates the manifest and sees BOTH the parent and L' under the same
+    proposition_type; sort-key ties (after D39's projected meta) fall to
+    the lemma_id content-hash tie-break, which is non-deterministic and
+    may return the parent instead of L'.
+
+    With the D38 fix, the adapter's ``cheapest_for_type`` excludes the
+    parent and returns L'.
+    """
+    lib = LemmaLibrary(tmp_path)
+    adapter = LemmaLibraryAdapter(lib)
+    parent_id, parent_lemma = _parent_lemma_for_consolidation(adapter, lib)
+    parent_prop_type = parent_lemma.proposition_type
+    sub_n = 4
+    prim = _consolidation_primitive(parent_lemma, sub_n,
+                                    parent_sid_for_log=parent_id)
+    new_id = adapter.replace(parent_id, prim)
+    # The parent and L' both carry parent_prop_type and both live on disk.
+    assert parent_id in lib.all_ids()
+    assert new_id in lib.all_ids()
+    assert lib.load(new_id).proposition_type == parent_prop_type
+    assert parent_id in adapter.pruned
+    # Adapter-level cheapest_for_type filters the pruned parent out.
+    result = adapter.cheapest_for_type(parent_prop_type)
+    assert result is not None
+    assert result.lemma_id == new_id, (
+        f"D38: adapter.cheapest_for_type must return L' (not pruned parent); "
+        f"got {result.lemma_id}, expected {new_id} (parent was {parent_id})")
+    # Sanity: the underlying library-level cheapest_for_type would not
+    # filter the parent (it scans manifest directly and has no view of
+    # adapter.pruned). Without the adapter override the test was
+    # non-deterministic.
