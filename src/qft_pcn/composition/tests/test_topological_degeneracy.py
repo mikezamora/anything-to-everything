@@ -17,6 +17,8 @@ counts are read off the binding diagram's first Betti number.
 """
 from __future__ import annotations
 
+import warnings
+
 import pytest
 
 from src.qft_pcn.composition.topological_degeneracy import (
@@ -205,6 +207,19 @@ def test_a_plus_b_equals_b_plus_a_has_two_strategies():
     least 2.
     """
     H, state = _build_commutativity_h()
+    # NOTE (E14 follow-on): the tight assertion (``count == 2``) is
+    # the desired §12.3 pin — the categorical analysis identifies
+    # exactly two essentially-different proof strategies for
+    # commutativity. The current §12.6 constraint Hessian, however,
+    # produces spurious extra near-zero modes for this fixture
+    # (empirically ~71 at k>=100), so we can only assert the lower
+    # bound here. Refining §12.6 to project out the spurious modes
+    # (e.g. by symplectic-quotient or pure-gauge-mode subtraction
+    # before counting eigenvalues at zero) is the substrate-side
+    # work that would unblock the tight ``== 2`` pin. To avoid racing
+    # with concurrent EXTENSIONS.md edits this gap is recorded
+    # inline-only; promote to EXTENSIONS.md when §12.6 refinement is
+    # scheduled.
     count = count_ground_subspace_strategies(H, state)
     assert count >= 2, (
         f"commutativity has at least two essentially-different proofs; "
@@ -257,6 +272,33 @@ def test_ground_count_invariant_under_continuous_deformation():
         f"ground-subspace count must be invariant under continuous "
         f"threshold deformation (Wen 1989); got {counts}"
     )
+
+
+def test_saturation_warning_when_count_equals_k():
+    """E14 follow-on: warn when the eigsh window is fully consumed.
+
+    On the commutativity fixture the §12.6 constraint Hessian has
+    far more near-zero eigenvalues than the default ``k=10`` window
+    (empirically ~71 at k>=100). With ``k=10`` every returned
+    eigenvalue falls below the ground threshold, so the count
+    saturates at ``k_eff`` and the true degeneracy is strictly
+    larger. The implementation must emit a ``UserWarning`` so the
+    caller knows to raise ``k``.
+    """
+    H, state = _build_commutativity_h()
+    with pytest.warns(UserWarning, match=r"saturates the requested"):
+        saturated = count_ground_subspace_strategies(H, state, k=10)
+    # Sanity: the saturated count equals the requested window (or 1
+    # if the floor kicked in, which it does not here).
+    assert saturated == 10
+
+    # And the warning does NOT fire when ``k`` is large enough that
+    # the eigsh window is not fully consumed.
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", UserWarning)
+        # Going dense (k >= n-1) cannot saturate; the implementation
+        # silences the warning on the dense path by design.
+        _ = count_ground_subspace_strategies(H, state, k=10_000)
 
 
 def test_negative_genus_rejected():

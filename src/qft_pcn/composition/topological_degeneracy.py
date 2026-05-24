@@ -75,6 +75,7 @@ graph invariant the spec demands).
 """
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass
 from typing import Any
 
@@ -379,8 +380,12 @@ def count_ground_subspace_strategies(
     # Dense path is fine for the term-basis sizes that arise here
     # (~ 8 * n_nodes); Lanczos via scipy.sparse.linalg.eigsh is used
     # only when the basis is large enough for it to pay off.
+    # ``k_eff`` records the number of eigenvalues actually examined; on
+    # the dense path the full spectrum is returned (k_eff = n) so the
+    # saturation guard below is vacuous, exactly as it should be.
     if n <= 8 or k >= n - 1:
         eigvals = np.linalg.eigvalsh(M)
+        k_eff = n
     else:
         try:
             from scipy.sparse.linalg import eigsh  # type: ignore[import-untyped]
@@ -392,12 +397,30 @@ def count_ground_subspace_strategies(
             # or Lanczos fails to converge (the matrix is small enough
             # for dense to be cheap anyway).
             eigvals = np.linalg.eigvalsh(M)
+            k_eff = n
 
     # Count eigenvalues at or below the ground-mode threshold. The
     # constraint Hessian is PSD by construction (Gram of H_i|psi>),
     # so negative entries (if any) are numerical noise and still
     # qualify as ground modes.
     count = int(np.sum(np.asarray(eigvals) <= float(ground_threshold)))
+
+    # Saturation guard: if the eigsh window was fully consumed (every
+    # one of the ``k_eff`` returned eigenvalues fell below the ground
+    # threshold), the true ground-subspace dimension may exceed
+    # ``k_eff`` and the result is a *lower bound*, not the genuine
+    # count. Warn so callers know to raise ``k``. Vacuous on the dense
+    # path where ``k_eff == n`` (the full spectrum was examined).
+    if count == k_eff and k_eff < n:
+        warnings.warn(
+            f"count_ground_subspace_strategies: ground-mode count "
+            f"({count}) saturates the requested Lanczos window "
+            f"k_eff={k_eff} (n={n}); the true ground-subspace "
+            f"dimension may be larger. Increase ``k`` to obtain a "
+            f"non-saturated estimate.",
+            stacklevel=2,
+        )
+
     # Guarantee >= 1: the variational vacuum is itself a ground state.
     return max(count, 1)
 
