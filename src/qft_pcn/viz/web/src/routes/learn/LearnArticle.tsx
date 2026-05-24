@@ -13,13 +13,13 @@ import type { ArticleSpec, ArticleSection } from '../../lib/article-types';
 import { AnnotatedEquation } from '../../components/AnnotatedEquation';
 
 interface Props {
-  articleId: string;
+  articleId?: string;
+  article?: ArticleSpec;
 }
 
-export function LearnArticle({ articleId }: Props) {
-  const article: ArticleSpec | undefined = ARTICLES.find(
-    (a) => a.id === articleId,
-  );
+export function LearnArticle({ articleId, article: directArticle }: Props) {
+  const article: ArticleSpec | undefined =
+    directArticle ?? ARTICLES.find((a) => a.id === articleId);
   if (!article) {
     return (
       <article className="learn-article learn-article-missing">
