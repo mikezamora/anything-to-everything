@@ -126,7 +126,14 @@ export function buildTree(
 
   let count = nLeaves;
   for (let layer = 0; layer < nLayers && count > 1; layer++) {
-    count = Math.max(1, Math.floor(count / 2));
+    // Round UP so odd counts don't silently drop the last leaf — the
+    // substrate's binary MERA is defined for N = 2^L leaves, but snapshots
+    // with odd counts (or any non-power-of-2) must still be drawn truthfully;
+    // the trailing unpaired finer node becomes a 1-child parent at this layer
+    // (effectively a pass-through). Using floor() previously elided that node
+    // from the topology entirely.
+    const prevCount = count;
+    count = Math.max(1, Math.ceil(prevCount / 2));
     // Poincaré-style inward compression: radius shrinks toward the centre.
     const radius = 1.0 * Math.pow(0.55, layer + 1);
     const bond = bondDims[layer] ?? 1;
@@ -134,11 +141,16 @@ export function buildTree(
     // disentanglers exist within the same RG step on the substrate but
     // are not drawn as separate nodes here (D-6).
     const cur = ring(count, radius, layer + 1, 'isometry', bond);
-    // connect each coarse node to two finer nodes.
+    // connect each coarse node to its (up to two) finer children. The last
+    // parent of an odd layer has only one child — emit a single edge instead
+    // of wrapping with modulo (which would have spuriously linked it back to
+    // leaf 0 and produced a wrong-topology cross-disk edge).
     cur.forEach((node, i) => {
       const w = 0.6 + (bond / maxBond) * 4;
-      const c1 = prev[(2 * i) % prev.length];
-      const c2 = prev[(2 * i + 1) % prev.length];
+      const c1Idx = 2 * i;
+      const c2Idx = 2 * i + 1;
+      const c1 = c1Idx < prevCount ? prev[c1Idx] : undefined;
+      const c2 = c2Idx < prevCount ? prev[c2Idx] : undefined;
       if (c1) edges.push({ a: node, b: c1, width: w });
       if (c2) edges.push({ a: node, b: c2, width: w });
     });
@@ -153,9 +165,16 @@ function MeraScene({ nLeaves, layerDims, bondDims }: {
   layerDims: number[];
   bondDims: number[];
 }) {
+  // Value-stable memo deps: `layerDims` / `bondDims` arrive from JSON.parse'd
+  // frames, so a new array identity lands every frame even when the values
+  // are unchanged. Keying on a string fingerprint avoids per-frame Three.js
+  // rebuilds (which thrashed GPU buffers).
+  const layerDimsKey = layerDims.join(',');
+  const bondDimsKey = bondDims.join(',');
   const { nodes, edges } = useMemo(
     () => buildTree(nLeaves, layerDims, bondDims),
-    [nLeaves, layerDims, bondDims],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [nLeaves, layerDimsKey, bondDimsKey],
   );
 
   return (
@@ -188,7 +207,15 @@ function MeraScene({ nLeaves, layerDims, bondDims }: {
         return (
           <mesh key={`n${i}`} position={[n.x, n.y, 0.1]}>
             {n.kind === 'isometry' ? (
-              <circleGeometry args={[r, 3]} />
+              // Downward-pointing triangle glyph for the 2->1 isometry.
+              // `circleGeometry(radius, 3, thetaStart)` with thetaStart=-π/2
+              // places the first vertex at angle -90° (i.e. straight down),
+              // and the remaining two at 30° and 150° — a clean isoceles
+              // triangle with its tip pointing down toward the disk centre.
+              // The previous form `args=[r, 3]` produced a triangle whose
+              // tip pointed right (+X), which read as a rotated/degenerate
+              // shape rather than an isometry glyph.
+              <circleGeometry args={[r, 3, -Math.PI / 2]} />
             ) : (
               <circleGeometry args={[r, 16]} />
             )}
