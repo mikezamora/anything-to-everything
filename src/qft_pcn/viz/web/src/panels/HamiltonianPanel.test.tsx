@@ -90,6 +90,39 @@ describe('HamiltonianPanel readouts', () => {
     ).toBeTruthy();
   });
 
+  it('renders the active-terms table when terms are populated', () => {
+    const { container } = render(<HamiltonianPanel frame={hamiltonianFrame} />);
+    const tbl = container.querySelector(
+      '[data-testid="hamiltonian-active-terms"]',
+    );
+    expect(tbl).toBeTruthy();
+    const text = tbl!.textContent ?? '';
+    expect(text).toContain('mass');
+    expect(text).toContain('yukawa');
+    expect(text).toContain('kinetic');
+    expect(text).toContain('gauge|scalar');
+    expect(text).toContain('0-1');
+  });
+
+  it('omits the active-terms table when terms is absent', () => {
+    const noTermsFrame = {
+      step: 0,
+      layer_states: {
+        hamiltonian: {
+          n_sites: 2,
+          d_local: 2,
+          species_dims: [2],
+          species: ['x'],
+          per_species: { x: { bare_mass: 1.0, kinetic: 0.5 } },
+        },
+      },
+    } as any;
+    const { container } = render(<HamiltonianPanel frame={noTermsFrame} />);
+    expect(
+      container.querySelector('[data-testid="hamiltonian-active-terms"]'),
+    ).toBeNull();
+  });
+
   it('renders a KaTeX-rendered H = ... block citing the real §3.3.4 decomposition', () => {
     const { container } = render(<HamiltonianPanel frame={hamiltonianFrame} />);
     const katex = container.querySelector('[data-testid="hamiltonian-katex"]');
