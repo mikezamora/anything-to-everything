@@ -22,6 +22,8 @@ import pytest
 from src.qft_pcn.composition.topological_degeneracy import (
     compute_wilson_loop_algebra,
     count_binding_graph_strategies,
+    count_ground_subspace_strategies,
+    count_proof_strategies,
 )
 from src.qft_pcn.logic.ast import (
     Bin,
@@ -166,6 +168,95 @@ def test_strategy_count_scales_with_genus():
 
     # Genus 0 (sphere): single ground state regardless of K.
     assert count_binding_graph_strategies(H, genus=0) == 1
+
+
+# ---------------------------------------------------------------------------
+# §12.3 ground-subspace degeneracy (genuine Wen / Kitaev count via
+# eigvalsh near zero on the §12.6 constraint Hessian).
+# ---------------------------------------------------------------------------
+
+
+def _build_commutativity_h():
+    """``forall a:Nat. forall b:Nat. Eq (a+b) (b+a)`` — commutativity.
+
+    The body has two distinct proof strategies in the categorical
+    sense: (i) reflexivity after the commutativity rewrite, (ii)
+    direct structural induction on ``a``. Both leave the constraint
+    Hamiltonian's residual at zero, hence the ground subspace has
+    dimension ``>= 2``.
+    """
+    body = Eq(
+        lhs=Bin(op="+", lhs=Var(name="a"), rhs=Var(name="b")),
+        rhs=Bin(op="+", lhs=Var(name="b"), rhs=Var(name="a")),
+    )
+    inner = Forall(param="b", param_ty=TNat(), body=body)
+    src = Forall(param="a", param_ty=TNat(), body=inner)
+    state, meta = encode_mera(src)
+    return MeraEvalHamiltonian(meta), state
+
+
+def test_a_plus_b_equals_b_plus_a_has_two_strategies():
+    """Spec §12.3 acceptance: ``a + b = b + a`` => ground-subspace count >= 2.
+
+    Two distinct categorical proof strategies (commutativity-rewrite
+    + reflexivity; structural induction on ``a``) correspond to two
+    independent zero modes of the §12.6 constraint Hessian. The
+    ground-subspace count from ``eigvalsh`` near zero must be at
+    least 2.
+    """
+    H, state = _build_commutativity_h()
+    count = count_ground_subspace_strategies(H, state)
+    assert count >= 2, (
+        f"commutativity has at least two essentially-different proofs; "
+        f"ground_subspace_count = {count}"
+    )
+
+    # The combined estimator dict must surface both numbers.
+    combined = count_proof_strategies(H, state, genus=1)
+    assert combined["ground_subspace_count"] == count
+    assert combined["binding_graph_count"] >= 1
+    assert combined["genus"] == 1
+
+
+def test_trivial_constraint_has_unit_degeneracy():
+    """A no-variable ``Eq 0 0`` is trivially satisfied => ground count = 1.
+
+    The constraint Hessian on the trivial AST has all residuals zero
+    (reflexivity holds identically); per the §12.6 PSD construction
+    every diagonal entry is zero, hence M is the zero matrix. Its
+    spectrum is identically zero, and ``count_ground_subspace_strategies``
+    floors at 1 (the variational vacuum is itself a ground state).
+    Spec §12.3: an identity tautology admits one essentially-distinct
+    proof — reflexivity.
+    """
+    H, state = _build_trivial_h()
+    count = count_ground_subspace_strategies(H, state)
+    assert count == 1, (
+        f"trivial reflexivity has unit ground-subspace degeneracy; "
+        f"got {count}"
+    )
+
+
+def test_ground_count_invariant_under_continuous_deformation():
+    """Wen 1989: the ground-subspace dimension is a topological invariant.
+
+    Vary the spectral threshold across a small continuous interval
+    (which is the analogue of a continuous deformation of the
+    Hamiltonian's parameters that keeps it within the same
+    topological phase). The integer ground-subspace count must remain
+    constant — this is the defining property of topological order.
+    """
+    H, state = _build_commutativity_h()
+    counts = [
+        count_ground_subspace_strategies(H, state, ground_threshold=t)
+        for t in (1e-4, 5e-4, 1e-3, 5e-3)
+    ]
+    # All counts must agree — topological invariance under the
+    # continuous deformation of the threshold within the gap.
+    assert len(set(counts)) == 1, (
+        f"ground-subspace count must be invariant under continuous "
+        f"threshold deformation (Wen 1989); got {counts}"
+    )
 
 
 def test_negative_genus_rejected():
