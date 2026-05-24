@@ -45,47 +45,40 @@ Each entry: **What's needed**, **Why deferred**, **Wire-up when ready**.
   `snapshot_mera` emits `iso_residuals` (per-layer mean
   `‖W W† − I‖_F`); `MeraPanel` renders the residual sparkline + an
   `iso err (max)` readout.
+- **PCN — per-layer KL divergence** (resolved af0dc57):
+  `QFTPCNLayer.kl_divergence(phi_below)` returns the entropy-like
+  portion of the per-layer free energy (drops the `kappa_R * R`
+  geometric regulariser). `snapshot_pcn_dynamics` emits `per_layer_kl`
+  alongside `per_layer_free_energy`; `PcnDynamicsPanel` adds an opt-in
+  KL column to the per-layer table.
+- **hamiltonian — term list with active-term highlighting** (resolved
+  e44ae4b): `Hamiltonian.__init__` builds a parallel `terms` list of
+  `{kind, species, site, coeff}` dicts (mass / curvature / source /
+  quartic / density / yukawa / kinetic). `snapshot_hamiltonian`
+  serialises and surfaces it; `HamiltonianPanel` renders an
+  Active-terms table when `st.terms` is non-empty.
 
 ---
 
-<a id="logic-parse-only-presets-for-bridge-dsl-keywords"></a>
-## logic — parse-only presets for bridge-DSL keywords (forall/Eq/Nat/List/Cons/Nil)
+## RETIRED
 
-- **What's needed:** `logic.encoder.encode(ast, N, chi_max)` to support
-  the extended-calculus node kinds (`Forall`, `Eq`, `Zero`, `Succ`,
-  `NatLit`, `Nil`, `Cons`). Today the flat `_tensors.py` index space is
-  capped at 65536, but encoding any of those nodes immediately overflows
-  it (e.g. `Zero` requests index 73728, `Forall` 125952, `Cons` 107520).
-- **Why deferred:** Adding presets that fail at substrate-encode time
-  would ship a broken UX and break `test_viz_presets`. The §1.1 / §10.10
-  induction-theorem demo for these node kinds already lives on the
-  MERA-based `mera_relax` layer, where `encode_mera` does support them
-  in full. The flat-MPS `logic` layer remains restricted to the
-  arithmetic / if / lambda subset.
-- **Wire-up when ready:** Expand `_tensors.py`'s leaf basis to cover the
-  extended-calculus kind/value enumerations, then add the two presets
-  (`logic.forall-add-zero`, `logic.list-cons-nil`) to `presets.py`.
-  `_build_logic` already honours `params["logic"]["expr"]` and the
-  PARAM_SCHEMA already documents the `expr` key.
+- **logic — parse-only presets for bridge-DSL keywords** (retired —
+  superseded by `mera_relax`): bumping `KIND_CUTOFF` from 8 to 16 in
+  `logic/encoding.py` is necessary but not sufficient to make the
+  proposed presets work. The widening (a) requires hand-updating
+  several test-contract assertions that hard-code `KIND_CUTOFF=8` /
+  `D_LOCAL=65536` (legitimate test-suite churn), and (b) doubles the
+  per-site Hilbert dim from 65536 to 131072 (still factored, so it
+  fits). However, a parallel encoder bug surfaces for `Forall` nodes
+  in `_tensors.py:_bid_bond_tensor_at_site` ("VAR site k: candidate
+  binder at lam_site=0 not in left_live (bookkeeping bug)"), so
+  `forall x:Nat. Eq (x + Zero) x` still fails to encode on the flat
+  MPS path even with the cutoff bump. The `mera_relax.forall-add-zero`
+  preset already provides a working live demo for the same proposition
+  via the MERA-native encoder, which is the §1.1 / §10.10
+  induction-theorem demo's intended path. Retiring this entry.
 
-<a id="hamiltonian-term-list-with-active-term-highlighting"></a>
-## hamiltonian — term list with active-term highlighting
-
-- **What's needed:** `snapshot_hamiltonian` to enumerate active terms with
-  rule_id / site / coefficient (the logic snapshot already does this).
-- **Why deferred:** Not exposed today.
-- **Wire-up when ready:** `HamiltonianPanel` already has the layout slot;
-  drop the surrounding `null` guard once `terms` is present.
-
-<a id="pcn-layer-kl-divergence"></a>
-## PCN — per-layer KL divergence
-
-- **What's needed:** A `QFTPCNLayer.kl_divergence() -> float` method exposing
-  the per-layer KL term so `PcnDynamicsPanel` can decompose F = accuracy + KL.
-- **Why deferred:** Substrate currently exposes only the aggregate
-  `free_energy(phi_below, kappa_R)`.
-- **Wire-up when ready:** Snapshot `per_layer_kl` next to `per_layer_free_energy`
-  in `snapshot_pcn_dynamics`; the panel already has the chart slot.
+---
 
 <a id="lossless-dsl-runspec-round-trip"></a>
 ## DSL — lossless RunSpec round-trip
